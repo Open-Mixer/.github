@@ -160,9 +160,62 @@ jobs:
           chmod 755 debs && chmod 644 debs/*.deb
           packaging/openmixer-release/install-check.sh debs/openmixer-release_*_all.deb "$DEB_PROBE"
 
+  # Before anything is published: the channel with this release in it still installs everything that installed
+  # before, on every Debian and Fedora release and architecture it serves (channel-installability).
+  installability-rpm:
+    name: Installability (rpm)
+    needs: [preflight, rpm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:44
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openmixer-release-rpm
+          path: collected
+
+      - uses: ./.github/actions/channel-installability
+        with:
+          kind: rpm
+          packages: collected
+          base-url: ${{ env.BASE_URL }}
+
+  installability-deb:
+    name: Installability (deb)
+    needs: [preflight, deb]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openmixer-release-deb
+          path: built
+
+      # the layout publish-deb gives it: the same Architecture: all file in the tree of every Debian release
+      - name: Lay the package out by Debian release
+        run: |
+          set -euo pipefail
+          for suite in bookworm trixie; do
+            mkdir -p "collected/$suite"
+            cp built/openmixer-release_*_all.deb "collected/$suite/"
+          done
+
+      - uses: ./.github/actions/channel-installability
+        with:
+          kind: deb
+          packages: collected
+          base-url: ${{ env.BASE_URL }}
+
   publish-rpm:
     name: Sign and publish the RPM
-    needs: [preflight, rpm, deb, deb-install]
+    needs: [preflight, rpm, deb, deb-install, installability-rpm, installability-deb]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -218,7 +271,7 @@ jobs:
 
   publish-deb:
     name: Sign and publish the DEB
-    needs: [preflight, rpm, deb, deb-install]
+    needs: [preflight, rpm, deb, deb-install, installability-rpm, installability-deb]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:

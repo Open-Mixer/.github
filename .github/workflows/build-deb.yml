@@ -46,6 +46,14 @@ on:
         type: boolean
         default: false
         description: 'Sign and publish. Takes effect on a tag only; false or a branch is a dry run.'
+      stage:
+        type: string
+        default: 'all'
+        description: 'all builds and publishes; build stops before the publish, leaving the packages as artifacts of the run; publish publishes the artifacts a build stage of the same run left, without building. release-c-lib.yml builds both kinds, runs channel-installability over them, and only then publishes either'
+      same-pass:
+        type: string
+        default: ''
+        description: 'Packages other repositories release in the same pass, space separated: a breakage of the channel they cause or suffer is reported, not red (channel-installability)'
       target-repo:
         type: string
         default: 'FreeMixer/freemixer.github.io'
@@ -139,6 +147,12 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
+      - name: Read the stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case $STAGE in all|build|publish) ;; *) echo "::error::stage is all, build or publish, not '$STAGE'"; exit 1 ;; esac
+
       # git history is the changelog: nothing here reads a CHANGELOG.md
       - uses: actions/checkout@v4
         with:
@@ -171,6 +185,7 @@ jobs:
   build:
     name: Build (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: preflight
+    if: inputs.stage != 'publish'
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
@@ -253,7 +268,10 @@ jobs:
 
   publish:
     name: Sign and publish
-    needs: build
+    needs: [preflight, build]
+    # the publish stage takes the packages a build stage of this run left; channel-installability inside the
+    # publish action refuses a release that would leave a package of the channel uninstallable
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
@@ -278,6 +296,7 @@ jobs:
       - id: publish
         uses: FreeMixer/.github/.github/actions/publish-debs@v1
         with:
+          same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: ${{ env.DO_PUBLISH }}

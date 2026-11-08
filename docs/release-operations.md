@@ -37,6 +37,32 @@ for the event, so it never turns a published release red.
 `verify-install: false` skips the clean-container install check. The release is then not proven installable,
 and the dispatch goes out on the publish alone.
 
+## The installability gate
+
+No release may leave a package of the channel uninstallable. `channel-installability` builds the channel as it
+would be after the release, the published index plus the new packages, and asks the package manager's own solver,
+on the newest version of each package, as apt installs it (apt does not go back to an older version, so a library
+published alone above its consumers' ceiling breaks them although the old library is still in the tree):
+
+- DEB: `dose-debcheck` over each Debian release and architecture the channel serves, the Debian release (main,
+  updates, security) as background, before and after. A package installable before and not after is red, named
+  with the dependency that is not met.
+- RPM: `dnf repoclosure --newest` over each Fedora release and architecture, the same way.
+- Ceilings (R-107): every dependency between our own packages that a new package declares has a floor and a
+  ceiling, and a new version outside the range a published consumer declares is red, naming the consumer: release it
+  in the same pass.
+
+It runs before anything is signed: inside `publish-debs` and `publish-rpms` (on the tree they pulled, or the served
+channel in a dry run), and in `release-c-lib.yml` between the build of both kinds (`stage: build`) and the publish
+of either (`stage: publish`). A package released by another repository in the same pass is named in `same-pass`; a
+breakage it causes or suffers is then reported, not red, and its own release is checked when it publishes. A package
+already uninstallable before the release is reported as a warning. Exit 2 means the measurement could not be taken,
+and is not a pass.
+
+`tests/channel-installability.sh ceiling|deb|rpm` proves each arm on a throwaway channel, offline. To check a
+release by hand against the live channel: `.github/actions/channel-installability/run.sh deb <dir of <suite>/*.deb>`
+in a Debian container, or `run.sh rpm <dir of rpms>` in a Fedora one.
+
 ## The lost-race retry of channel-push
 
 Two releases that publish to the same Pages repository can race for the tip of its branch. `channel-push`

@@ -43,6 +43,15 @@ inputs:
   public-key-url:
     description: where dnf fetches the public key from, when the channel tree does not hold it yet; empty skips that comparison
     default: ''
+  installability:
+    description: 'true (the default) refuses a release that leaves a package of the channel uninstallable (channel-installability), before anything is signed; false only for a package nothing depends on'
+    default: 'true'
+  same-pass:
+    description: packages other repositories release in the same pass, space separated (channel-installability)
+    default: ''
+  served-url:
+    description: where the channel's rpm/ tree is served, read by the installability check of a dry run, which pulls no tree
+    default: https://www.openmixer.org/rpm
   signed-dir:
     description: directory receiving the signed copies of the published packages
     default: signed
@@ -95,6 +104,22 @@ runs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 "$PUBLIC_KEY_URL" > "$keys"
         fi
         "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID"
+
+    # Before the tree is assembled and signed: the channel with this release in it still installs everything that
+    # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
+    # reads the tree it pulled, a dry run the served channel.
+    - name: Check no package of the channel becomes uninstallable
+      if: inputs.installability != 'false'
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.rpm-dir }}
+        SIGN: ${{ inputs.sign }}
+        SAME_PASS: ${{ inputs.same-pass }}
+        SERVED: ${{ inputs.served-url }}
+      run: |
+        set -o pipefail
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else channel=$SERVED; fi
+        "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
       shell: bash
