@@ -45,6 +45,15 @@ inputs:
   changelogs-url:
     description: where the channel's deb/changelogs/ directory is served, for the Changelogs field of the Release files; empty leaves the field out
     default: https://www.openmixer.org/deb/changelogs
+  installability:
+    description: 'true (the default) refuses a release that leaves a package of the channel uninstallable (channel-installability), before anything is signed; false only for a package nothing depends on'
+    default: 'true'
+  same-pass:
+    description: packages other repositories release in the same pass, space separated (channel-installability)
+    default: ''
+  served-url:
+    description: where the channel's deb/ tree is served, read by the installability check of a dry run, which pulls no tree
+    default: https://www.openmixer.org/deb
   signed-dir:
     description: directory receiving the published copies, laid out <suite>/*.deb
     default: signed
@@ -99,6 +108,22 @@ runs:
         # shellcheck disable=SC2086 # the co-signer is one fingerprint or empty
         "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check build/channel/deb/openmixer.asc \
           "$OPENMIXER_GPG_KEY_ID" ${OPENMIXER_GPG_COSIGN_KEY_ID:-}
+
+    # Before the tree is assembled and signed: the channel with this release in it still installs everything that
+    # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
+    # reads the tree it pulled, a dry run the served channel.
+    - name: Check no package of the channel becomes uninstallable
+      if: inputs.installability != 'false'
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.deb-dir }}
+        SIGN: ${{ inputs.sign }}
+        SAME_PASS: ${{ inputs.same-pass }}
+        SERVED: ${{ inputs.served-url }}
+      run: |
+        set -o pipefail
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/deb; else channel=$SERVED; fi
+        "$GITHUB_ACTION_PATH/../channel-installability/run.sh" deb "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
       shell: bash
