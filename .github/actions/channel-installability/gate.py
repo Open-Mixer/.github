@@ -15,6 +15,12 @@ packages" on a clean bookworm and trixie). Three arms:
            RED, named with the dependency that is not met.
   rpm      dnf repoclosure --newest over the channel's repositories of each Fedora release and architecture (the
            architecture's tree and noarch), with the Fedora release as the system repositories, before and after.
+  newest   each of our packages installed by itself on a clean machine (apt-get -s, dnf install --assumeno) resolves,
+           with every one of our packages it pulls in, to the newest version published: dnf backtracks, and in the
+           middle of a pass takes an old build without a ceiling beside the new library (plugin-hostd 0.17.0 asks only
+           for protocol >= 0.2.0) while repoclosure passes. A fallback the release brings is RED, with the reason.
+  hygiene  every published build, old ones too, whose dependencies on our own packages lack a floor or a ceiling is
+           flagged, to be removed from the index or superseded (reported, not red).
   ceiling  every dependency between the channel's own packages that a new package declares has a floor AND a ceiling
            (R-107: below 1.0 the ceiling is the next minor, from 1.0 the next major); and a new version outside the
            range a published consumer declares is RED unless that consumer's new release is in the same pass.
@@ -32,6 +38,7 @@ Exit status: 0 green, 1 red, 2 the check could not be made (an index that does n
   gate.py source-deb --control debian/control --changelog debian/changelog [--arch A]...   (stanzas, on stdout)
 """
 import argparse
+import functools
 import glob
 import gzip
 import lzma
@@ -388,6 +395,158 @@ def ceiling_check(kind, published, new, same_pass=()):
     return reds, warns, notes
 
 
+# ----------------------------------------------------------------------------------------------- hygiene
+
+def hygiene(kind, published):
+    """Every published build, old ones too, whose dependencies on our own packages lack a floor or a ceiling: a
+    package manager that backtracks (dnf) can fall back to it and install it beside the new library it does not fit,
+    so it should leave the index or be superseded. Grouped by package and dependency; reported, not red."""
+    ours = {p.name for p in published}
+    groups = {}
+    for p in published:
+        by = {}
+        for name, op, ver in p.deps:
+            if name in ours and name != p.name:
+                by.setdefault(name, set()).add(op)
+        for dep, ops in by.items():
+            ops.discard(None)
+            has_floor, has_ceiling = bool(ops & FLOOR_OPS), bool(ops & CEILING_OPS)
+            if has_floor and has_ceiling:
+                continue
+            if has_floor and kind == "deb" and re.match(r"^lib.*\d$", dep) and ops <= {">="}:
+                continue  # a shlibs floor: the soname is the ceiling
+            missing = " and ".join(x for x, ok in (("floor", has_floor), ("ceiling", has_ceiling)) if not ok)
+            groups.setdefault((p.name, dep, missing), set()).add(p.version)
+    cmpk = functools.cmp_to_key(deb_cmp if kind == "deb" else rpm_cmp)
+    return [f"HYGIENE: {name} {' '.join(sorted(vs, key=cmpk))} depend on {dep} with no {missing}: remove these builds "
+            f"from the index or supersede them" for (name, dep, missing), vs in sorted(groups.items())]
+
+
+# ----------------------------------------------------------------------------------------------- newest arm
+
+def newest_judge(where, before, after, same_pass, reds, warns, notes):
+    """before and after map (requested package, our package resolved older) to a message. A fallback the release
+    brings is RED; one that was there before is reported."""
+    for k in sorted(after):
+        req, dep = k
+        if k in before:
+            warns.append(f"{where}: already before this release: {after[k]}")
+        elif {req, dep} & set(same_pass):
+            notes.append(f"{where}: until the rest of the pass is released: {after[k]}")
+        else:
+            reds.append(f"{where}: {after[k]}")
+
+
+INST = re.compile(r"^Inst (\S+) (?:\[[^]]*\] )?\((\S+) ")
+
+
+def apt_newest(stanzas, bg_files, arch, names, work, tag):
+    """apt-get -s install of each package alone on a clean machine of arch, the channel being the given stanzas.
+    Returns {(package, our package): message} for every one of our packages that does not resolve to its newest
+    version, and every package that does not install."""
+    root = os.path.join(work, f"apt-{tag}")
+    for d in ("bg", "chan", "state/lists/partial", "cache/archives/partial", "parts"):
+        os.makedirs(os.path.join(root, d), exist_ok=True)
+    open(os.path.join(root, "state/status"), "w").close()
+    with open(os.path.join(root, "bg/Packages"), "w") as out:
+        for b in bg_files:
+            out.write(open(b).read().rstrip("\n") + "\n\n")
+    with open(os.path.join(root, "chan/Packages"), "w") as out:
+        for f, raw in stanzas:
+            # apt simulates only what it could download: a package built here has no Filename, Size or hash yet
+            extra = "" if "Filename" in f else f"\nFilename: ./{f['Package']}.deb"
+            extra += "" if "Size" in f else "\nSize: 1"
+            extra += "" if "SHA256" in f else "\nSHA256: " + "0" * 64
+            out.write(raw.rstrip("\n") + extra + "\n")
+            out.write("\n")
+    with open(os.path.join(root, "sources.list"), "w") as out:
+        out.write(f"deb [trusted=yes] file:{root}/bg ./\ndeb [trusted=yes] file:{root}/chan ./\n")
+    opts = ["-o", f"Dir::State={root}/state", "-o", f"Dir::State::status={root}/state/status",
+            "-o", f"Dir::Cache={root}/cache", "-o", f"Dir::Etc::SourceList={root}/sources.list",
+            "-o", f"Dir::Etc::SourceParts={root}/parts", "-o", f"Dir::Etc::PreferencesParts={root}/parts",
+            "-o", f"Dir::Etc::Preferences={root}/parts/none", "-o", f"APT::Architecture={arch}",
+            "-o", f"APT::Architectures={arch}", "-o", "Debug::NoLocking=1", "-o", "Acquire::Languages=none",
+            "-o", "Acquire::AllowInsecureRepositories=1", "-o", "APT::Get::AllowUnauthenticated=1",
+            "-o", "APT::Install-Recommends=0", "-o", "APT::Sandbox::User=root"]
+    r = subprocess.run(["apt-get", *opts, "update"], capture_output=True, text=True)
+    if r.returncode:
+        raise Cannot(f"apt-get update of the {tag} view failed: {r.stderr.strip()[-400:]}")
+    newest = {}
+    for f, _ in stanzas:
+        n, v = f["Package"], f.get("Version", "")
+        if n not in newest or deb_cmp(v, newest[n]) > 0:
+            newest[n] = v
+    found = {}
+    for name in sorted(names):
+        r = subprocess.run(["apt-get", *opts, "-s", "install", name], capture_output=True, text=True)
+        if r.returncode:
+            why = " ".join(l.strip() for l in (r.stdout + r.stderr).splitlines()
+                           if ":" in l and ("Depends" in l or "Breaks" in l or "Conflicts" in l or l.startswith("E:")))
+            found[(name, name)] = f"apt-get install {name} fails on a clean machine: {why or r.stderr.strip()[-300:]}"
+            continue
+        for m in INST.finditer(r.stdout):
+            pkg, ver = m.group(1).split(":")[0], m.group(2)
+            if pkg in newest and deb_cmp(ver, newest[pkg]) < 0:
+                found[(name, pkg)] = (f"installing {name} resolves {pkg} to {ver}, not its newest {newest[pkg]} "
+                                      f"(apt-get -s)")
+    return found
+
+
+ROW = re.compile(r"^ (\S+)\s+(\S+)\s+(?:\d+:)?(\S+)\s+(\S+)\s")
+
+
+def dnf_transaction(base, specs):
+    """dnf install --assumeno: (rows [(name, arch, evr, repo)], problem text or '')."""
+    r = subprocess.run(base + ["install", "--assumeno", "--setopt=install_weak_deps=False"] + list(specs),
+                       capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    rows = [m.groups() for line in out.splitlines() for m in [ROW.match(line)] if m]
+    problem = ""
+    if "Problem" in out or "Failed to resolve" in out or "No match" in out:
+        problem = " ".join(l.strip() for l in out.splitlines()
+                           if l.strip().startswith(("Problem", "- ", "No match", "Failed")))[:600]
+    return rows, problem
+
+
+def dnf_newest(base, ids, pkgs, arch):
+    """Each of our packages installed on a clean machine resolves to its newest version, and so does every one of
+    our packages it pulls in. One transaction of all of them first; a fallback in it, or a transaction that does not
+    resolve, is then attributed package by package. dnf backtracks, so an old build without a ceiling can be taken
+    beside a new library: that is the fallback this finds. Returns {(package, our package): message}."""
+    view = [p for p in pkgs if p.arch in (arch, "noarch")]
+    newest = {}
+    for p in view:
+        if p.name not in newest or rpm_cmp(p.version, newest[p.name]) > 0:
+            newest[p.name] = p.version
+    names = sorted(newest)
+    ours = set(ids)
+
+    def fallbacks(rows):
+        return {(n, evr) for n, a_, evr, repo in rows if repo in ours and n in newest
+                and rpm_cmp(evr, newest[n]) < 0}
+
+    rows, problem = dnf_transaction(base, names)
+    if rows and not problem and not fallbacks(rows):
+        return {}
+    found = {}
+    for name in names:
+        rows, problem = dnf_transaction(base, [name])
+        if problem and not rows:
+            _, why = dnf_transaction(base, [f"{name}-{newest[name]}"])
+            found[(name, name)] = f"dnf install {name} does not resolve on a clean machine: {why or problem}"
+            continue
+        for dep, evr in sorted(fallbacks(rows)):
+            forced = [name] + ([f"{dep}-{newest[dep]}"] if dep != name else [f"{name}-{newest[name]}"])
+            rows2, why = dnf_transaction(base, forced)
+            if not why:
+                # the newest resolves, and something else then falls back: an old build without a ceiling
+                other = sorted(f"{n} {e}" for n, e in fallbacks(rows2) if n != dep)
+                why = (f"with {dep} {newest[dep]} requested, dnf takes {', '.join(other)} instead"
+                       if other else "dnf takes the older build although the newest resolves")
+            found[(name, dep)] = f"installing {name} falls back to {dep} {evr}, not its newest {newest[dep]}: {why}"
+    return found
+
+
 # ----------------------------------------------------------------------------------------------- fetching
 
 def fetch(src, dest):
@@ -557,6 +716,15 @@ def deb_arm(a):
                 judge(f"debian/{suite} {arch}", before, after, new_names, a.same_pass, reds, warns, notes)
                 say(f"debian/{suite} {arch}: {sum(map(len, before.values()))} uninstallable before, "
                     f"{sum(map(len, after.values()))} after")
+                if not a.no_newest:
+                    view_b, view_a = pick(before_all), pick(before_all) + pick(new)
+                    names_a = {f["Package"] for f, _ in view_a}
+                    nb = apt_newest(view_b, bg, arch, {f["Package"] for f, _ in view_b}, work, f"{suite}-{arch}-before")
+                    na = apt_newest(view_a, bg, arch, names_a, work, f"{suite}-{arch}-after")
+                    newest_judge(f"debian/{suite} {arch} newest", nb, na, a.same_pass, reds, warns, notes)
+                    say(f"debian/{suite} {arch}: {len(names_a)} packages installed alone, {len(nb)} not at their "
+                        f"newest before, {len(na)} after")
+            warns += [f"debian/{suite}: {x}" for x in hygiene("deb", deb_pkgs(published))]
             r, w, n = ceiling_check("deb", deb_pkgs(published), deb_pkgs(new), a.same_pass)
             reds += [f"debian/{suite}: {x}" for x in r]
             warns += [f"debian/{suite}: {x}" for x in w]
@@ -676,6 +844,20 @@ def rpm_arm(a):
                     f"{sum(map(len, before.values()))} unresolved before, {sum(map(len, after.values()))} after")
                 judge(where, before, after, new_names, a.same_pass, reds, warns, notes)
                 published = repoquery(base, pub, ids, excl)
+                if not a.no_newest:
+                    # every version stays in view here: the fallback to an old build is what is looked for
+                    sysrepos = [f"--disablerepo={r}" for r in system_omx_repos()]
+                    # an empty install root is the clean machine, of the architecture checked, whatever the host is
+                    root = os.path.join(work, f"root-{rel}-{arch}")
+                    os.makedirs(root, exist_ok=True)
+                    clean = [f"--installroot={root}", "--use-host-config"]
+                    vb = base + clean + excl_opts + sysrepos + [f"--repofrompath={i},{u}" for i, u in pub]
+                    va = vb + [f"--repofrompath={i},{u}" for i, u in newrepo]
+                    nb = dnf_newest(vb, ids, published, arch)
+                    na = dnf_newest(va, ids + ["omx-gate-new"], published + new_pkgs, arch)
+                    newest_judge(f"{where} newest", nb, na, a.same_pass, reds, warns, notes)
+                    say(f"{where}: {len(nb)} of our packages not at their newest before, {len(na)} after")
+                warns += [f"{where}: {x}" for x in hygiene("rpm", published)]
                 r, w, n = ceiling_check("rpm", published, new_pkgs, a.same_pass)
                 reds += [f"{where}: {x}" for x in r]
                 warns += [f"{where}: {x}" for x in w]
@@ -756,6 +938,7 @@ def main(argv=None):
         p.add_argument("--drop", action="append", help="leave this NAME or NAME=VERSION (rpm: a NEVRA glob) out of "
                                                        "the published channel")
         p.add_argument("--keep", action="store_true", help="keep the work directory")
+        p.add_argument("--no-newest", action="store_true", help="skip the arm that installs each package alone")
 
     d = sub.add_parser("deb")
     common(d)
