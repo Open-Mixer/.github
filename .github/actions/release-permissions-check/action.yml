@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: release-permissions-check
+description: Fail when a release workflow grants less than the shared workflow it calls asks for
+
+inputs:
+  workflows:
+    description: the release workflow files to read, space separated
+    default: .github/workflows/release.yml
+
+runs:
+  using: composite
+  steps:
+    - name: The check goes red on a caller that lacks a permission
+      shell: bash
+      run: ${{ github.action_path }}/selftest.sh
+    - name: Read the release workflows
+      shell: bash
+      env:
+        WORKFLOWS: ${{ inputs.workflows }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086
+        python3 -I "${{ github.action_path }}/check.py" $WORKFLOWS

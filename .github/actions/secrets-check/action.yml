@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: secrets-check
+description: Fail when a secret a release needs is missing or empty, or a workflow falls back from one secret to another
+
+# The caller passes its secrets as `secrets: ${{ toJSON(secrets) }}`; the values are only tested for emptiness.
+inputs:
+  names:
+    description: the secrets the release needs, space separated
+    required: true
+  secrets:
+    description: toJSON(secrets) of the caller
+    required: true
+  workflows:
+    description: workflow files to scan for a secret-to-secret fallback, space separated
+    default: .github/workflows/release.yml
+
+runs:
+  using: composite
+  steps:
+    - name: The check goes red on an empty secret and on a fallback
+      shell: bash
+      run: ${{ github.action_path }}/selftest.sh
+    - name: Read the secrets and the workflows
+      shell: bash
+      env:
+        SECRETS_JSON: ${{ inputs.secrets }}
+        NAMES: ${{ inputs.names }}
+        WORKFLOWS: ${{ inputs.workflows }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2086
+        python3 -I "${{ github.action_path }}/check.py" "$NAMES" $WORKFLOWS
