@@ -847,7 +847,11 @@ def rpm_arm(a):
                 if not a.no_newest:
                     # every version stays in view here: the fallback to an old build is what is looked for
                     sysrepos = [f"--disablerepo={r}" for r in system_omx_repos()]
-                    vb = base + excl_opts + sysrepos + [f"--repofrompath={i},{u}" for i, u in pub]
+                    # an empty install root is the clean machine, of the architecture checked, whatever the host is
+                    root = os.path.join(work, f"root-{rel}-{arch}")
+                    os.makedirs(root, exist_ok=True)
+                    clean = [f"--installroot={root}", "--use-host-config"]
+                    vb = base + clean + excl_opts + sysrepos + [f"--repofrompath={i},{u}" for i, u in pub]
                     va = vb + [f"--repofrompath={i},{u}" for i, u in newrepo]
                     nb = dnf_newest(vb, ids, published, arch)
                     na = dnf_newest(va, ids + ["omx-gate-new"], published + new_pkgs, arch)
