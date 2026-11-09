@@ -2,7 +2,8 @@
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
 # FreeMixer/.github
 
-Organisation defaults and the reusable package release workflows.
+Organisation defaults and the reusable package release workflows. `SECURITY.md` is the security policy of
+every repository that has none of its own.
 
 ## Releasing a package
 
