@@ -42,6 +42,7 @@ jobs:
       - run: tests/pinned-keys.sh
       - run: tests/install-clean-retry.sh
       - run: tests/reusable-workflows.sh
+      - run: tests/arch-binary-names.sh
       - run: tests/runner-selection.sh
       - run: tests/release-checks.sh
       - run: tests/wave-deps.sh
