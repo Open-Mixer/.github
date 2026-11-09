@@ -118,12 +118,9 @@ runs:
         SERVED: ${{ inputs.served-url }}
       run: |
         set -o pipefail
-        # a dry run judges the architectures it built: its x86 build's architecture-independent packages beside the
-        # published builds of an architecture it did not build read as a break the release (every architecture) does not make
-        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else
-          channel=$SERVED
-          ARCHES=$("$GITHUB_ACTION_PATH/../channel-installability/built-arches.sh" rpm "$PKG_DIR"); export ARCHES
-        fi
+        # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
+        # release builds every architecture), and every architecture is still checked
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else channel=$SERVED; export UNBUILT_ARCH_PASS=true; fi
         "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree

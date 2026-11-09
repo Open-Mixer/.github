@@ -10,6 +10,8 @@
 #            the tree (apt takes the newest and does not go back: plugin-hostd-protocol 0.5.0); a patch
 #            inside the ceiling is green; a package broken before the release is reported, not held against it.
 #   rpm      dnf repoclosure --newest, the same three cases on rpms built here.
+#            And a dry run that built x86_64 only: a noarch contract bumped with aarch64 not built is red alone, green with
+#            --unbuilt-arch-pass (aarch64 still checked), and a break on the built architecture stays red.
 # Usage: tests/channel-installability.sh [ceiling|deb|rpm]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -199,6 +201,47 @@ arm_rpm() {
   [ ! -e "$d/pulled/fedora/44/noarch/repodata" ] && ok 'rpm: ... leaving the pulled tree without metadata' || bad 'rpm: the gate wrote into the pulled tree'
   expect 2 'could not take the measurement' 'rpm: a repository that cannot be read is not a pass' -- \
     rpm --channel "$d/nowhere" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new-patch"
+  arm_rpm_unbuilt "$d"
+}
+
+# A dry run builds x86_64 only (omx-plugins 0.19.2): its noarch contract 0.19.2 replaces 0.19.1 on aarch64 too, where the
+# published plug 0.19.1 pins contract 0.19.1 and the dry run built no plug. Without --unbuilt-arch-pass that is red; with
+# it, plug (built on x86_64) counts as released in the same pass on aarch64, and a real break on x86_64 stays red.
+arm_rpm_unbuilt() {
+  local d=$1/unbuilt; mkdir -p "$d/top" "$d/new" "$d/new-broken" "$d/empty"
+  local c=$d/channel/fedora/44
+  mkdir -p "$c/x86_64" "$c/aarch64" "$c/noarch"
+  mka() { # name version arch requires... ; noarch, or an arch-specific package with no files
+    local n=$1 v=$2 arch=$3; shift 3
+    { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\n' "$n" "$v"
+      [ "$arch" != noarch ] || printf 'BuildArch: noarch\n'
+      for r in "$@"; do printf 'Requires: %s\n' "$r"; done
+      printf '%%description\nt\n%%files\n'; } > "$d/top/$n-$v-$arch.spec"
+    rpmbuild -bb --target "$arch" -D "_topdir $d/top" -D 'dist .fc44' -D 'debug_package %{nil}' "$d/top/$n-$v-$arch.spec" >/dev/null 2>&1 \
+      || { echo "rpmbuild $n $v $arch failed" >&2; return 1; }
+    find "$d/top/RPMS" -name "$n-$v-1.fc44.$arch.rpm"
+  }
+  mv "$(mka plug-contract 0.19.1 noarch)" "$c/noarch/"
+  mv "$(mka plug 0.19.1 x86_64 'plug-contract = 0.19.1-1.fc44')" "$c/x86_64/"
+  mv "$(mka plug 0.19.1 aarch64 'plug-contract = 0.19.1-1.fc44')" "$c/aarch64/"
+  mv "$(mka plug-contract 0.19.2 noarch)" "$d/new/"
+  mv "$(mka plug 0.19.2 x86_64 'plug-contract = 0.19.2-1.fc44')" "$d/new/"
+  for r in x86_64 aarch64 noarch; do createrepo_c -q "$c/$r"; done
+  local args=(rpm --channel "$d/channel" --fedora 44 --arch x86_64 --arch aarch64 --reposdir "$d/empty" --no-newest)
+  expect 1 'fedora/44 aarch64: plug 0.19.1-1.fc44.aarch64 was installable and is not' \
+    'rpm (dry run): a noarch contract bumped with aarch64 not built is red without --unbuilt-arch-pass' -- "${args[@]}" --new-dir "$d/new"
+  expect 0 'counted in the same pass' 'rpm (dry run): ... and green with it, aarch64 still checked' -- \
+    "${args[@]}" --new-dir "$d/new" --unbuilt-arch-pass
+  grep -qF 'fedora/44 aarch64: plug 0.19.1-1.fc44.aarch64 is uninstallable until the rest of the pass (plug)' "$t/out" \
+    && ok 'rpm (dry run): ... naming aarch64 plug as the rest of the pass' || bad 'rpm (dry run): aarch64 not reported'
+  # a consumer on the built architecture that the release does not rebuild is still red
+  # (a channel of its own: dnf keeps what it read of a repository by its address)
+  cp -a "$d/channel" "$d/channel-other"
+  mv "$(mka other 1.0 x86_64 'plug-contract = 0.19.1-1.fc44')" "$d/channel-other/fedora/44/x86_64/"
+  createrepo_c -q --update "$d/channel-other/fedora/44/x86_64"
+  expect 1 'fedora/44 x86_64: other 1.0-1.fc44.x86_64 was installable and is not' \
+    'rpm (dry run): a break on the built architecture stays red with --unbuilt-arch-pass' -- \
+    rpm --channel "$d/channel-other" --fedora 44 --arch x86_64 --arch aarch64 --reposdir "$d/empty" --no-newest --new-dir "$d/new" --unbuilt-arch-pass
 }
 
 arms=("$@")

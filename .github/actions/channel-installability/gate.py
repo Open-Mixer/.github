@@ -26,7 +26,9 @@ packages" on a clean bookworm and trixie). Three arms:
            range a published consumer declares is RED unless that consumer's new release is in the same pass.
 
 A package named in --same-pass (released by another repository in the same pass) excuses a breakage of its own or one
-it causes: its own release is checked when it publishes. "before" is the published channel without the exact versions
+it causes: its own release is checked when it publishes. --unbuilt-arch-pass (a dry run, whose matrix builds one
+architecture) does the same, on an architecture the release brings no binary package for, for the binary packages it
+built on another: the release builds them there at the new version. Every architecture is still checked. "before" is the published channel without the exact versions
 this release brings, so a gate re-run after a partial publish judges the release, not the channel it already changed.
 
 Exit status: 0 green, 1 red, 2 the check could not be made (an index that does not download, a tool that is missing):
@@ -686,6 +688,16 @@ def judge(where, before, after, new_names, same_pass, reds, warns, notes):
             reds.append(f"{where}: {name} {version} {state}: {why}")
 
 
+def unbuilt_pass(a, here, elsewhere):
+    """--same-pass for one architecture: with --unbuilt-arch-pass, an architecture the release built no binary package
+    for takes the binary packages it built on another as released in the same pass, at the new version."""
+    if not getattr(a, "unbuilt_arch_pass", False) or here:
+        return list(a.same_pass)
+    if elsewhere:
+        say(f"no binary package built for this architecture: {' '.join(sorted(elsewhere))} counted in the same pass")
+    return list(a.same_pass) + sorted(elsewhere)
+
+
 def deb_arm(a):
     reds, warns, notes = [], [], []
     work = tempfile.mkdtemp(prefix="gate-deb-")
@@ -711,9 +723,11 @@ def deb_arm(a):
             for arch in arches:
                 bg = a.bg or debian_background(suite, arch, a.mirror, a.security, work)
                 pick = lambda ss: [s for s in ss if s[0].get("Architecture") in (arch, "all")]  # noqa: E731
+                same_pass = unbuilt_pass(a, {f["Package"] for f, _ in new if f.get("Architecture") == arch},
+                                         {f["Package"] for f, _ in new if f.get("Architecture") not in (arch, "all")})
                 before = run_dose(pick(before_all), bg, arch, work, f"{suite}-{arch}-before")
                 after = run_dose(pick(before_all) + pick(new), bg, arch, work, f"{suite}-{arch}-after")
-                judge(f"debian/{suite} {arch}", before, after, new_names, a.same_pass, reds, warns, notes)
+                judge(f"debian/{suite} {arch}", before, after, new_names, same_pass, reds, warns, notes)
                 say(f"debian/{suite} {arch}: {sum(map(len, before.values()))} uninstallable before, "
                     f"{sum(map(len, after.values()))} after")
                 if not a.no_newest:
@@ -721,7 +735,7 @@ def deb_arm(a):
                     names_a = {f["Package"] for f, _ in view_a}
                     nb = apt_newest(view_b, bg, arch, {f["Package"] for f, _ in view_b}, work, f"{suite}-{arch}-before")
                     na = apt_newest(view_a, bg, arch, names_a, work, f"{suite}-{arch}-after")
-                    newest_judge(f"debian/{suite} {arch} newest", nb, na, a.same_pass, reds, warns, notes)
+                    newest_judge(f"debian/{suite} {arch} newest", nb, na, same_pass, reds, warns, notes)
                     say(f"debian/{suite} {arch}: {len(names_a)} packages installed alone, {len(nb)} not at their "
                         f"newest before, {len(na)} after")
             warns += [f"debian/{suite}: {x}" for x in hygiene("deb", deb_pkgs(published))]
@@ -816,6 +830,11 @@ def rpm_arm(a):
             for arch in arches:
                 where = f"fedora/{rel} {arch}"
                 mine = [f for f in rpms if re.search(rf"\.fc{rel}\.({arch}|noarch)\.rpm$", f)]
+                rpm_name = lambda f: os.path.basename(f).rsplit("-", 2)[0]  # noqa: E731
+                same_pass = unbuilt_pass(
+                    a, {rpm_name(f) for f in rpms if re.search(rf"\.fc{rel}\.{arch}\.rpm$", f)},
+                    {rpm_name(f) for f in rpms if re.search(rf"\.fc{rel}\.[^.]+\.rpm$", f)
+                     and not re.search(rf"\.fc{rel}\.({arch}|noarch)\.rpm$", f)})
                 newdir = os.path.join(work, f"new-{rel}-{arch}")
                 os.makedirs(newdir)
                 for f in mine:
@@ -842,7 +861,7 @@ def rpm_arm(a):
                 new_names = {p.name for p in new_pkgs}
                 say(f"{where}: {len(new_pkgs)} new ({' '.join(sorted(new_names)) or 'none'}), "
                     f"{sum(map(len, before.values()))} unresolved before, {sum(map(len, after.values()))} after")
-                judge(where, before, after, new_names, a.same_pass, reds, warns, notes)
+                judge(where, before, after, new_names, same_pass, reds, warns, notes)
                 published = repoquery(base, pub, ids, excl)
                 if not a.no_newest:
                     # every version stays in view here: the fallback to an old build is what is looked for
@@ -855,10 +874,10 @@ def rpm_arm(a):
                     va = vb + [f"--repofrompath={i},{u}" for i, u in newrepo]
                     nb = dnf_newest(vb, ids, published, arch)
                     na = dnf_newest(va, ids + ["omx-gate-new"], published + new_pkgs, arch)
-                    newest_judge(f"{where} newest", nb, na, a.same_pass, reds, warns, notes)
+                    newest_judge(f"{where} newest", nb, na, same_pass, reds, warns, notes)
                     say(f"{where}: {len(nb)} of our packages not at their newest before, {len(na)} after")
                 warns += [f"{where}: {x}" for x in hygiene("rpm", published)]
-                r, w, n = ceiling_check("rpm", published, new_pkgs, a.same_pass)
+                r, w, n = ceiling_check("rpm", published, new_pkgs, same_pass)
                 reds += [f"{where}: {x}" for x in r]
                 warns += [f"{where}: {x}" for x in w]
                 notes += [f"{where}: {x}" for x in n]
@@ -959,6 +978,9 @@ def main(argv=None):
                                                        "the published channel")
         p.add_argument("--keep", action="store_true", help="keep the work directory")
         p.add_argument("--no-newest", action="store_true", help="skip the arm that installs each package alone")
+        p.add_argument("--unbuilt-arch-pass", action="store_true",
+                       help="a dry run: on an architecture with no binary package built, the binary packages built on "
+                            "another count as released in the same pass")
 
     d = sub.add_parser("deb")
     common(d)
