@@ -36,7 +36,7 @@ inputs:
     description: the SITE_GPG_KEY secret, armored; signs the channel commit
     default: ''
   channel:
-    default: FreeMixer/freemixer.github.io
+    default: Open-Mixer/open-mixer.github.io
   branch:
     default: main
   requires:
@@ -70,21 +70,21 @@ runs:
         find "$DEB_DIR" -name '*.deb' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no DEB under $DEB_DIR"; exit 1; }
 
-    - uses: FreeMixer/.github/.github/actions/import-gpg-key@v1
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true'
       with:
         gpg-key: ${{ inputs.gpg-key }}
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: FreeMixer/.github/.github/actions/import-gpg-key@v1
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true' && inputs.cosign-key != ''
       with:
         gpg-key: ${{ inputs.cosign-key }}
         gpg-passphrase: ${{ inputs.cosign-passphrase }}
         id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
 
-    - uses: FreeMixer/.github/.github/actions/channel-pull@v1
+    - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
@@ -139,7 +139,7 @@ runs:
       run: echo "PUBLISH_DEBS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
     - id: push
-      uses: FreeMixer/.github/.github/actions/channel-push@v1
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}

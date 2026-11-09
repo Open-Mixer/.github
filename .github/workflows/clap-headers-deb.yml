@@ -40,7 +40,7 @@ jobs:
         with:
           publish: ${{ inputs.publish }}
           require-tag: 'false'
-          target: FreeMixer/freemixer.github.io
+          target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
@@ -92,7 +92,7 @@ jobs:
     container:
       image: debian:trixie
     concurrency:
-      group: publish-FreeMixer/freemixer.github.io
+      group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
       DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}

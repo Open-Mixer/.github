@@ -30,7 +30,7 @@ ident() { # name email subject: one empty commit on a fresh topic branch, author
 ident "Pau Aliagas" linuxnow@gmail.com "ordinary change"
 CE=commits@openmixer.org ident "Pau Aliagas" linuxnow@gmail.com "ordinary change"
 "$chk" main..HEAD >/dev/null || fail "ordinary author and committer were refused"
-ident GitHub noreply@github.com "Merge pull request #393 from FreeMixer/hostd-385-fix"
+ident GitHub noreply@github.com "Merge pull request #393 from Open-Mixer/hostd-385-fix"
 "$chk" main..HEAD >/dev/null || fail "a GitHub merge was refused"
 ident "$cn" "$ae" "ordinary change"
 if "$chk" main..HEAD >/dev/null; then fail "a commit authored by $cn passed"; fi
@@ -42,7 +42,7 @@ ident GitHub noreply@github.com "Merge pull request #393 from FreeMixer/${cl}/ho
 if "$chk" main..HEAD >/dev/null; then fail "a merge of a ${cl}/ branch passed"; fi
 ident GitHub noreply@github.com "Merge branch '${cl}/x' into main"
 if "$chk" main..HEAD >/dev/null; then fail "a local merge of a ${cl}/ branch passed"; fi
-ident GitHub noreply@github.com "Merge pull request #5 from FreeMixer/fix/.${cl}-dir-note"
+ident GitHub noreply@github.com "Merge pull request #5 from Open-Mixer/fix/.${cl}-dir-note"
 "$chk" main..HEAD >/dev/null || fail "a branch that only mentions .${cl} was refused"
 git checkout -q main
 

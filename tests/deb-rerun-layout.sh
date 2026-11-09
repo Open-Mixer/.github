@@ -71,7 +71,7 @@ attempt() { # attempt <n> <publish pattern> <release pattern>: the publish job, 
     rm -rf "$dir/collected" "$dir/signed"
     mkdir -p "$run/release"
     download "$3" "$run/release/collected"
-    (cd "$run/release" && env PATH="$work/bin:$PATH" GH_LOG="$run/gh.log" GH_TOKEN=x TAG=v1.0 GITHUB_REPOSITORY=FreeMixer/t \
+    (cd "$run/release" && env PATH="$work/bin:$PATH" GH_LOG="$run/gh.log" GH_TOKEN=x TAG=v1.0 GITHUB_REPOSITORY=Open-Mixer/t \
         RUNNER_TEMP="$run" bash "$work/attach.sh") >> "$run/publish.log" 2>&1
 }
 

@@ -5,5 +5,5 @@ clap-headers https://github.com/free-audio/clap 195b42a004144fab0b3cf95e9c067187
 pugl https://gitlab.com/lv2/pugl.git e6e7f24d09fb528e697817300b60ca0afe19e2b6
 nanovg https://github.com/memononen/nanovg.git ce3bf745eb2d2dbc14a50bf2446783f691ac4353
 # mod-host: the FreeMixer fork, which packages itself (its spec and debian/); move this to its release tag to publish
-mod-host https://github.com/FreeMixer/mod-host aba7c05a8ae7aabdde6220361ec001a8a0a57b33
+mod-host https://github.com/Open-Mixer/mod-host aba7c05a8ae7aabdde6220361ec001a8a0a57b33
 surge-xt https://github.com/surge-synthesizer/surge 72a602284b7a599ee3a93d7a830236776e0abb2b

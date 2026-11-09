@@ -37,7 +37,7 @@ inputs:
     default: ''
   channel:
     description: the channel repository
-    default: FreeMixer/freemixer.github.io
+    default: Open-Mixer/open-mixer.github.io
   branch:
     default: main
   public-key-url:
@@ -68,14 +68,14 @@ runs:
         find "$RPM_DIR" -name '*.rpm' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no RPM under $RPM_DIR"; exit 1; }
 
-    - uses: FreeMixer/.github/.github/actions/import-gpg-key@v1
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true'
       with:
         gpg-key: ${{ inputs.gpg-key }}
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: FreeMixer/.github/.github/actions/channel-pull@v1
+    - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
@@ -131,7 +131,7 @@ runs:
       run: echo "PUBLISH_RPMS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
     - id: push
-      uses: FreeMixer/.github/.github/actions/channel-push@v1
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}

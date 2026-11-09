@@ -4,7 +4,7 @@
 
 plugin-hostd and omx-clap-host link `libmod-host-protocol.so.0`, the socket and protocol library of mod-host. Every
 mod-host package FreeMixer ships, and every source build of the library in CI, comes from one place: the
-[FreeMixer fork of mod-host](https://github.com/FreeMixer/mod-host), branch `freemixer`, which carries each change
+[FreeMixer fork of mod-host](https://github.com/Open-Mixer/mod-host), branch `freemixer`, which carries each change
 as a commit and offers each one upstream. No patch is applied here.
 
 ## The fixes, and where they live
@@ -32,7 +32,7 @@ additions (packaging, CI, fuzz harnesses, a test for #116).
 | `mod-host-113.patch` | #113 | Split socket input into NUL-terminated commands (#113) |
 | `mod-host-113b.patch` | follow-up to #113 | End each protocol test command with its NUL (follow-up to #113) |
 | `mod-host-116.patch` | #116 | protocol: the command table holds 128 commands, and one past it is refused out loud |
-| `mod-host-bind.patch` | FreeMixer/mod-host#12 | socket: both ports listen on 127.0.0.1 unless told otherwise |
+| `mod-host-bind.patch` | Open-Mixer/mod-host#12 | socket: both ports listen on 127.0.0.1 unless told otherwise |
 
 ## What is built, and from where
 

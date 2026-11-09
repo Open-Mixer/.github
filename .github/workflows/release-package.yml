@@ -30,7 +30,7 @@ permissions:
 
 env:
   BASE_URL: https://www.openmixer.org
-  CHANNEL: FreeMixer/freemixer.github.io
+  CHANNEL: Open-Mixer/open-mixer.github.io
   # a package of each tree the repository adds, installed through it by the install check
   RPM_PROBE: plugin-hostd-devel
   DEB_PROBE: clap-headers
@@ -168,7 +168,7 @@ jobs:
     container:
       image: fedora:44
     concurrency:
-      group: publish-FreeMixer/freemixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
+      group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
       DO_PUBLISH: ${{ needs.preflight.outputs.publish }}
@@ -224,7 +224,7 @@ jobs:
     container:
       image: debian:trixie
     concurrency:
-      group: publish-FreeMixer/freemixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
+      group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
       DO_PUBLISH: ${{ needs.preflight.outputs.publish }}

@@ -7,7 +7,7 @@ name: Build RPM (reusable)
 #   on: { push: { tags: ['v*'] }, workflow_dispatch: {} }
 #   jobs:
 #     rpm:
-#       uses: FreeMixer/.github/.github/workflows/build-rpm.yml@v1
+#       uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
 #       with: { package-name: plugin-hostd }
 #       secrets: inherit
 #
@@ -50,7 +50,7 @@ on:
         description: 'Sign and publish. Takes effect on a tag only; false or a branch is a dry run.'
       target-repo:
         type: string
-        default: 'FreeMixer/freemixer.github.io'
+        default: 'Open-Mixer/open-mixer.github.io'
         description: 'Pages repository whose rpm/ tree receives the packages'
       base-url:
         type: string
@@ -151,7 +151,7 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
-      - uses: FreeMixer/.github/.github/actions/release-preflight@v1
+      - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
           publish: ${{ inputs.publish }}
           tag: ${{ inputs.source-ref }}
@@ -203,11 +203,11 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
-      - uses: FreeMixer/.github/.github/actions/mod-host-rpms@v1
+      - uses: Open-Mixer/.github/.github/actions/mod-host-rpms@openmixer-v1
         if: inputs.needs-mod-host
 
       # for the build only: the repository exists in this container and is never a dependency of a release
-      - uses: FreeMixer/.github/.github/actions/add-openmixer@v1
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         if: inputs.channel-deps
         with:
           base-url: ${{ inputs.base-url }}
@@ -216,7 +216,7 @@ jobs:
         if: inputs.channel-deps
         run: dnf repoquery --repo openmixer --repo openmixer-noarch --whatprovides 'pkgconfig(plugin-hostd)'
 
-      - uses: FreeMixer/.github/.github/actions/build-rpm@v1
+      - uses: Open-Mixer/.github/.github/actions/build-rpm@openmixer-v1
         with:
           tag: ${{ env.RELEASE_TAG }}
 
@@ -301,7 +301,7 @@ jobs:
           path: collected
 
       - id: publish
-        uses: FreeMixer/.github/.github/actions/publish-rpms@v1
+        uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
           rpm-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
@@ -347,7 +347,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: FreeMixer/.github/.github/actions/changelog@v1
+      - uses: Open-Mixer/.github/.github/actions/changelog@openmixer-v1
         with:
           mode: notes
           tag: ${{ github.ref_name }}
@@ -381,7 +381,7 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 40
     steps:
-      - uses: FreeMixer/.github/.github/actions/pages-live@v1
+      - uses: Open-Mixer/.github/.github/actions/pages-live@openmixer-v1
         with:
           channel: ${{ inputs.target-repo }}
           commit: ${{ needs.publish.outputs.commit }}
@@ -403,7 +403,7 @@ jobs:
         fedora: ${{ fromJSON(inputs.fedora-versions) }}
         arch: ${{ fromJSON(inputs.arch-matrix) }}
     steps:
-      - uses: FreeMixer/.github/.github/actions/add-openmixer@v1
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
           base-url: ${{ inputs.base-url }}
 
@@ -441,7 +441,7 @@ jobs:
       issues: write
       actions: read
     steps:
-      - uses: FreeMixer/.github/.github/actions/release-failure-issue@v1
+      - uses: Open-Mixer/.github/.github/actions/release-failure-issue@openmixer-v1
         with:
           tag: ${{ inputs.source-ref || github.ref_name }}
           token: ${{ github.token }}

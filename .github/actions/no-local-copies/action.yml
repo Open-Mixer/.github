@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: no-local-copies
-description: Fail when the repository keeps a copy of a shared check instead of calling FreeMixer/.github's
+description: Fail when the repository keeps a copy of a shared check instead of calling Open-Mixer/.github's
 
 # The check is proven first: each kind of copy, planted in a scratch tree, must go red, and the check without its
 # rules must not. Then the caller's checkout is read. The caller has checked the repository out.

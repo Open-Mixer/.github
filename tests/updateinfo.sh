@@ -31,7 +31,7 @@ Version: $v
 Release: 1%{?dist}
 Summary: A demo for the channel
 License: GPL-3.0-or-later
-URL: https://github.com/FreeMixer/demo
+URL: https://github.com/Open-Mixer/demo
 BuildArch: noarch
 %description
 Demo.

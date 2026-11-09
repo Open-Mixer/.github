@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
-# FreeMixer/.github
+# Open-Mixer/.github
 
 Organisation defaults and the reusable package release workflows.
 
@@ -34,7 +34,7 @@ rule is the format of the file, a format with no comment syntax carries no heade
 
 Call the shared workflows and actions by the `v1` tag, never by `main`:
 
-    uses: FreeMixer/.github/.github/workflows/build-rpm.yml@v1
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
 
 `v1` moves on compatible releases, so a repository on `v1` picks up fixes and additions without an edit.
 `v1.0.0` and every other full version tag never move. A breaking change gets a new major tag, `v2`.

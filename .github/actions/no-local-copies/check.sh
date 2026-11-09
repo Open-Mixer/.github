@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # no-local-copies check.sh [ROOT] | --self-test
 #
-# A FreeMixer repository runs the shared checks from FreeMixer/.github and keeps no copy of them: no commit message
+# A FreeMixer repository runs the shared checks from Open-Mixer/.github and keeps no copy of them: no commit message
 # checker, no pattern list, no private-refs engine, no SPDX check, no allow list (the engine reads none, and one left
 # lying in a tree is refused), and a commit-msg hook that is the shared stub byte for byte: a missing hook is as red as
 # a different one. A copy is found by its name and by its content, so a renamed copy is red too. A release workflow
@@ -47,7 +47,7 @@ check() { # <root>
     (cd "$root" && xargs python3 "$HERE/no-local-copies/release-order.py" <<<"$wf") || bad=1
   fi
   [ "$bad" = 0 ] || return 1
-  echo "no-local-copies: the shared checks run from FreeMixer/.github, and no copy is kept"
+  echo "no-local-copies: the shared checks run from Open-Mixer/.github, and no copy is kept"
 }
 
 if [ "${1:-}" = --self-test ]; then
@@ -56,12 +56,12 @@ if [ "${1:-}" = --self-test ]; then
 on: {push: {tags: ["v*"]}}
 jobs:
   rpm:
-    uses: FreeMixer/.github/.github/workflows/build-rpm.yml@v1
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
     with: {package-name: x}'
   REL_PLAIN="$REL_HEAD
   deb:
     needs: rpm
-    uses: FreeMixer/.github/.github/workflows/build-deb.yml@v1
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
     with: {package-name: x}"
   REL_GUARDED="$REL_PLAIN
     if: \${{ !cancelled() && needs.rpm.result == 'success' }}"
@@ -69,7 +69,7 @@ jobs:
     if: \${{ !cancelled() }}"
   REL_NONEEDS="$REL_HEAD
   deb:
-    uses: FreeMixer/.github/.github/workflows/build-deb.yml@v1
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
     with: {package-name: x}"
   plant() { # <name> <path> <content>: a clean tree plus one planted file must be red
     rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/tools"
