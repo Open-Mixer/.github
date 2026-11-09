@@ -190,6 +190,13 @@ arm_rpm() {
   grep -qF 'already-broken 1.0-1.fc44.noarch was already uninstallable before' "$t/out" && ok 'rpm: a package broken before is reported, not red' \
     || bad 'rpm: the earlier breakage is not reported'
   expect 0 - 'rpm: the whole pass in one release is green' -- "${args[@]}" --new-dir "$d/new-pass"
+  # a pulled tree: channel-pull removes the dnf metadata, and the gate still measures the bytes it holds
+  cp -a "$d/channel" "$d/pulled"; find "$d/pulled" -type d -name repodata -prune -exec rm -rf {} +
+  expect 0 - 'rpm: a pulled tree without dnf metadata is measured, green for the whole pass' -- \
+    rpm --channel "$d/pulled" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new-pass"
+  expect 1 'clap-host 0.30.6-1.fc44.noarch was installable and is not' 'rpm: ... and red for the library alone' -- \
+    rpm --channel "$d/pulled" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new-alone"
+  [ ! -e "$d/pulled/fedora/44/noarch/repodata" ] && ok 'rpm: ... leaving the pulled tree without metadata' || bad 'rpm: the gate wrote into the pulled tree'
   expect 2 'could not take the measurement' 'rpm: a repository that cannot be read is not a pass' -- \
     rpm --channel "$d/nowhere" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new-patch"
 }

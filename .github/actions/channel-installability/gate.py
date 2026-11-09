@@ -868,9 +868,29 @@ def rpm_arm(a):
     return report("rpm", reds, warns, notes)
 
 
+_indexed = {}
+
+
 def channel_path(channel, rel, arch):
     p = join(channel, "fedora", rel, arch) + "/"
-    return p if re.match(r"^[a-z]+://", p) else os.path.abspath(p)
+    if re.match(r"^[a-z]+://", p):
+        return p
+    p = os.path.abspath(p)
+    # A pulled tree (channel-pull) has its dnf metadata removed, so the publish regenerates it from the bytes the tree
+    # holds; the gate indexes the same bytes in a scratch directory of its own and leaves the tree as it was pulled. A
+    # directory that does not exist stays as it is: an unreadable repository is not a pass.
+    if os.path.isdir(p) and not exists(join(p, "repodata", "repomd.xml")):
+        if p not in _indexed:
+            scratch = tempfile.mkdtemp(prefix="gate-pulled-")
+            for f in glob.glob(join(p, "**", "*.rpm"), recursive=True):
+                link = join(scratch, os.path.basename(f))
+                if not os.path.lexists(link):
+                    os.symlink(f, link)
+            if subprocess.run(["createrepo_c", "-q", scratch]).returncode:
+                raise Cannot(f"createrepo_c failed on the pulled tree {p}")
+            _indexed[p] = scratch + "/"
+        return _indexed[p]
+    return p
 
 
 # ----------------------------------------------------------------------------------------------- source stanzas
