@@ -45,7 +45,7 @@ uses for stageboxes. Besides libreac, reac-pw and reac-stageboxes above:
 
 ## On a Zynthian
 
-The FreeMixer forks of [zynthian-ui](https://github.com/Open-Mixer/zynthian-ui) and
+The Open-Mixer forks of [zynthian-ui](https://github.com/Open-Mixer/zynthian-ui) and
 [zynthian-sys](https://github.com/Open-Mixer/zynthian-sys) (branch `vangelis`) add an engine that runs a Zynthian
 chain's LV2 and CLAP plugins through plugin-hostd, with the plugin menus ordered from the measurements
 [plugin-qualify](https://github.com/Open-Mixer/plugin-qualify) records. Those records, one set per machine class (a
@@ -74,6 +74,6 @@ Each ships fuzz targets written to its contract. Enrollments open: [plugin-hostd
 ## Also here
 
 - [openmixer-www](https://github.com/Open-Mixer/openmixer-www): the website and documentation, <https://www.openmixer.org>.
-- [freemixer.github.io](https://github.com/Open-Mixer/freemixer.github.io): the package repositories the install above uses.
+- [open-mixer.github.io](https://github.com/Open-Mixer/open-mixer.github.io): the package repositories the install above uses.
 - [plugin-db-qualification](https://github.com/Open-Mixer/plugin-db-qualification): plugin-db's qualification layer, plugin-qualify's records per machine class, packaged as `plugin-db-qualification-<class>-<set>`.
 - [.github](https://github.com/Open-Mixer/.github): this page and the release workflow every package shares.
