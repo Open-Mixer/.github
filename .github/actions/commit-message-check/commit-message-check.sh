@@ -105,7 +105,7 @@ def selftest():
         ("committer", (("Pau", nm), ("x@example.invalid", em), "fix x", 1), True),
         ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from FreeMixer/{cl}/a", 2), True),
         ("ordinary", (("Pau Aliagas", "Pau Aliagas"), ("linuxnow@gmail.com", "commits@openmixer.org"), "fix x", 1), False),
-        ("github-merge", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, "Merge pull request #1 from FreeMixer/fix/a", 2), False),
+        ("github-merge", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, "Merge pull request #1 from Open-Mixer/fix/a", 2), False),
     ]
     def irun(i, b):
         return [k for k, a, want in ifx if bool(ident_hits(a[0], a[1], a[2], a[3], i, b)) != want]

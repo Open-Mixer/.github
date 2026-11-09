@@ -5,7 +5,7 @@ name: fuzz
 #
 #   jobs:
 #     fuzz:
-#       uses: FreeMixer/.github/.github/workflows/fuzz.yml@v1
+#       uses: Open-Mixer/.github/.github/workflows/fuzz.yml@main
 #       with:
 #         build: make fuzz-build
 #         run: make fuzz FUZZ_TIME=60
@@ -62,7 +62,7 @@ jobs:
       - name: The checkout is a git directory this job may read
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - if: inputs.channel
-        uses: FreeMixer/.github/.github/actions/add-openmixer@v1
+        uses: Open-Mixer/.github/.github/actions/add-openmixer@main
       - if: inputs.channel-packages != ''
         name: What the build takes from the channel
         run: ${{ inputs.channel-packages }}

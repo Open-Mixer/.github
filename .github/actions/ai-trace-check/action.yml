@@ -11,6 +11,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: FreeMixer/.github/.github/actions/commit-message-check@main
+    - uses: Open-Mixer/.github/.github/actions/commit-message-check@main
       with:
         base-ref: ${{ inputs.base-ref }}

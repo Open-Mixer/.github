@@ -13,9 +13,9 @@ description: On a run for the wave branch, build the named siblings from that br
 # A repository lists the siblings it builds on, inside out, in .github/wave-deps (one or more per line, # comments),
 # and places the action after its checkout and add-openmixer, before the build dependencies are installed:
 #
-#       - uses: FreeMixer/.github/.github/actions/add-openmixer@v1
+#       - uses: Open-Mixer/.github/.github/actions/add-openmixer@main
 #       - uses: actions/checkout@v4
-#       - uses: FreeMixer/.github/.github/actions/wave-deps@v1
+#       - uses: Open-Mixer/.github/.github/actions/wave-deps@main
 #
 # (or names them in the repos input, which then wins over the file).
 #

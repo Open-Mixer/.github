@@ -23,19 +23,19 @@ on:
         required: true
         type: choice
         options:
-          - FreeMixer/omx-contract
-          - FreeMixer/libdiginet
-          - FreeMixer/libmackie
-          - FreeMixer/libsurface
-          - FreeMixer/plugin-db
-          - FreeMixer/plugin-hostd-protocol
-          - FreeMixer/omx-dsp
-          - FreeMixer/omx-clap-core
-          - FreeMixer/plugin-hostd
-          - FreeMixer/plugin-qualify
-          - FreeMixer/omx-panel
-          - FreeMixer/omx-plugins
-          - FreeMixer/plugin-db-qualification
+          - Open-Mixer/omx-contract
+          - Open-Mixer/libdiginet
+          - Open-Mixer/libmackie
+          - Open-Mixer/libsurface
+          - Open-Mixer/plugin-db
+          - Open-Mixer/plugin-hostd-protocol
+          - Open-Mixer/omx-dsp
+          - Open-Mixer/omx-clap-core
+          - Open-Mixer/plugin-hostd
+          - Open-Mixer/plugin-qualify
+          - Open-Mixer/omx-panel
+          - Open-Mixer/omx-plugins
+          - Open-Mixer/plugin-db-qualification
           - FreeREAC/libreac
           - FreeREAC/reac-pw
           - FreeREAC/reac-stageboxes
@@ -87,22 +87,22 @@ jobs:
           # what each repository's own release.yml passes to build-rpm.yml
           arm='["x86_64", "aarch64"]' mod=false deps=true bins=
           case "$REPOSITORY" in
-            FreeMixer/omx-contract) package=omx-contract bins='omx-contract omx-contract-data omx-contract-devel' deps=false ;;
-            FreeMixer/libdiginet) package=libdiginet bins='libdiginet libdiginet-devel diginet-tools' deps=false ;;
-            FreeMixer/libmackie) package=libmackie bins='libmackie libmackie-devel' deps=false ;;
-            FreeMixer/libsurface)
+            Open-Mixer/omx-contract) package=omx-contract bins='omx-contract omx-contract-data omx-contract-devel' deps=false ;;
+            Open-Mixer/libdiginet) package=libdiginet bins='libdiginet libdiginet-devel diginet-tools' deps=false ;;
+            Open-Mixer/libmackie) package=libmackie bins='libmackie libmackie-devel' deps=false ;;
+            Open-Mixer/libsurface)
               package=libsurface
               bins='libsurface libsurface-devel libsurface-diginet libsurface-diginet-devel libsurface-mackie libsurface-mackie-devel surface-c24' ;;
-            FreeMixer/plugin-db) package=plugin-db bins='plugin-db-devel plugin-db-contract' ;;
-            FreeMixer/plugin-hostd-protocol)
+            Open-Mixer/plugin-db) package=plugin-db bins='plugin-db-devel plugin-db-contract' ;;
+            Open-Mixer/plugin-hostd-protocol)
               package=plugin-hostd-protocol bins='plugin-hostd-protocol plugin-hostd-protocol-devel plugin-hostd-protocol-contract' ;;
-            FreeMixer/omx-dsp) package=omx-dsp bins=omx-dsp-devel ;;
-            FreeMixer/omx-clap-core) package=omx-clap-host mod=true ;;
-            FreeMixer/plugin-hostd) package=plugin-hostd mod=true ;;
-            FreeMixer/plugin-qualify) package=plugin-qualify ;;
-            FreeMixer/omx-panel) package=omx-panel bins=omx-panel ;;
-            FreeMixer/omx-plugins) package=omx-plugins bins='omx-plugins omx-plugins-clap omx-plugins-lv2' ;;
-            FreeMixer/plugin-db-qualification)
+            Open-Mixer/omx-dsp) package=omx-dsp bins=omx-dsp-devel ;;
+            Open-Mixer/omx-clap-core) package=omx-clap-host mod=true ;;
+            Open-Mixer/plugin-hostd) package=plugin-hostd mod=true ;;
+            Open-Mixer/plugin-qualify) package=plugin-qualify ;;
+            Open-Mixer/omx-panel) package=omx-panel bins=omx-panel ;;
+            Open-Mixer/omx-plugins) package=omx-plugins bins='omx-plugins omx-plugins-clap omx-plugins-lv2' ;;
+            Open-Mixer/plugin-db-qualification)
               # noarch data, built once
               package=plugin-db-qualification bins=plugin-db-qualification-x86-64-fedora44 arm='["x86_64"]' deps=false ;;
             FreeREAC/libreac)

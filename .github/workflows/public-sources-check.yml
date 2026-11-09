@@ -11,7 +11,7 @@ name: public-sources-check
 #
 #   jobs:
 #     public-sources:
-#       uses: FreeMixer/.github/.github/workflows/public-sources-check.yml@v1
+#       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@main
 on:
   workflow_call:
     inputs:
@@ -34,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: FreeMixer/.github/.github/actions/commit-message-check@v1
+      - uses: Open-Mixer/.github/.github/actions/commit-message-check@main
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
 
@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: FreeMixer/.github/.github/actions/private-refs-check@v1
+      - uses: Open-Mixer/.github/.github/actions/private-refs-check@main
 
   public-layout:
     name: no dated document, no dated folder, no evidence or notes folder
@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: FreeMixer/.github/.github/actions/public-layout-check@v1
+      - uses: Open-Mixer/.github/.github/actions/public-layout-check@main
 
   no-local-copies:
     name: the shared checks are not copied here
@@ -62,4 +62,4 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: FreeMixer/.github/.github/actions/no-local-copies@v1
+      - uses: Open-Mixer/.github/.github/actions/no-local-copies@main

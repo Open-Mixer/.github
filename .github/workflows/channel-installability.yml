@@ -13,7 +13,7 @@ name: channel-installability (reusable)
 #
 #   installability:
 #     needs: [rpm-build, deb-build]
-#     uses: FreeMixer/.github/.github/workflows/channel-installability.yml@v1
+#     uses: Open-Mixer/.github/.github/workflows/channel-installability.yml@main
 #     with:
 #       rpm-artifacts: omx-dsp-rpms-fc*
 #       deb-artifacts: omx-dsp-debs-*-*
@@ -75,7 +75,7 @@ jobs:
           find collected -name '*.deb' | sort | tee collected.txt
           test -s collected.txt || { echo "::error::no DEB in the artifacts $PATTERN"; exit 1; }
 
-      - uses: FreeMixer/.github/.github/actions/channel-installability@v1
+      - uses: Open-Mixer/.github/.github/actions/channel-installability@main
         with:
           kind: deb
           packages: collected
@@ -105,7 +105,7 @@ jobs:
           find collected -name '*.rpm' | sort | tee collected.txt
           test -s collected.txt || { echo "::error::no RPM in the artifacts $PATTERN"; exit 1; }
 
-      - uses: FreeMixer/.github/.github/actions/channel-installability@v1
+      - uses: Open-Mixer/.github/.github/actions/channel-installability@main
         with:
           kind: rpm
           packages: collected

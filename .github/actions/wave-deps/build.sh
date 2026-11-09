@@ -12,7 +12,7 @@
 #
 # <prefix> holds rpm/ (a dnf repository) or deb/ (a flat apt repository) and a stamp naming what built it. Each sibling
 # is cloned from https://github.com/<owner>/<repo> at <branch>, given the version the wave releases it as (below), built
-# with the build-rpm or build-deb script of this checkout of FreeMixer/.github with its tests skipped (its own CI runs
+# with the build-rpm or build-deb script of this checkout of Open-Mixer/.github with its tests skipped (its own CI runs
 # them) and put in the repository before the next one builds, so a sibling builds on the ones listed before it.
 #
 # The version: a wave branch holds the next release's code at the last release's version, and the repositories that

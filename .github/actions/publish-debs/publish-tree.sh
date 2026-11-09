@@ -137,7 +137,7 @@ for cell in "${!cells[@]}"; do
     [ "${cell##*/}" = all ] && continue
     for pkg in $requires; do
         compgen -G "$tree/debian/$cell/${pkg}_*.deb" >/dev/null ||
-            { echo "debian/$cell holds no $pkg: publish it first (workflow mod-host-protocol-deb of FreeMixer/.github)" >&2; exit 1; }
+            { echo "debian/$cell holds no $pkg: publish it first (workflow mod-host-protocol-deb of Open-Mixer/.github)" >&2; exit 1; }
     done
 done
 

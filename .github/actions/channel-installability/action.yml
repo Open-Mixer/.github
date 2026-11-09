@@ -17,7 +17,7 @@ description: Refuse a release that would leave a package of the channel uninstal
 #
 # Placed before anything is signed or published, in a Debian (deb) or Fedora (rpm) container:
 #
-#       - uses: FreeMixer/.github/.github/actions/channel-installability@v1
+#       - uses: Open-Mixer/.github/.github/actions/channel-installability@main
 #         with: { kind: deb, packages: collected }
 #
 # publish-debs and publish-rpms run it themselves, on the channel tree they pulled, before they assemble it.
