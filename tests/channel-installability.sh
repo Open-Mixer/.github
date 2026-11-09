@@ -115,6 +115,7 @@ arm_deb() {
     stanza clap-host 0.30.6 amd64 'libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)'
     stanza hostd-tests 0.19.1 amd64 'hostd (= 0.19.1), python3'
     stanza already-broken 1.0 all 'nothing-provides-this'
+    stanza panel 0.9.1 all 'hostd (>= 0.15~)'
   } > "$d/channel/debian/bookworm/Packages"
   stanza libproto0 0.5.0 amd64 > "$d/lib-alone"
   stanza libproto0 0.4.5 amd64 > "$d/lib-patch"
@@ -129,6 +130,10 @@ arm_deb() {
   grep -qF 'libproto0:amd64 (< 0.5~)' "$t/out" && ok 'deb: ... naming the unmet dependency' || bad 'deb: unmet dependency not named'
   grep -qF 'hostd 0.19.1 was installable and is not' "$t/out" && ok 'deb: ... and hostd' || bad 'deb: hostd not named'
   grep -qF 'hostd-tests 0.19.1 was installable and is not' "$t/out" && ok 'deb: ... and what installs through it' || bad 'deb: hostd-tests not named'
+  grep -qF 'RED deb: debian/bookworm amd64 newest: apt-get install clap-host fails on a clean machine: clap-host : Depends: libproto0 (< 0.5~)' "$t/out" \
+    && ok 'deb (newest): apt-get -s names the package and the reason' || bad 'deb (newest): apt-get -s finding missing'
+  grep -qF 'HYGIENE: panel 0.9.1 depend on hostd with no ceiling' "$t/out" \
+    && ok 'deb (hygiene): a published build without a ceiling is flagged' || bad 'deb (hygiene): not flagged'
   expect 0 - 'deb: a patch inside the ceiling is green' -- "${args[@]}" --new-index "$d/lib-patch"
   grep -qF 'already-broken 1.0 was already uninstallable before' "$t/out" && ok 'deb: a package broken before is reported, not red' \
     || bad 'deb: the earlier breakage is not reported'
@@ -161,6 +166,9 @@ arm_rpm() {
   mv "$(mk hostd 0.19.1 '(libproto >= 0.4.4 with libproto < 0.5)')" "$d/channel/fedora/44/noarch/"
   mv "$(mk clap-host 0.30.6 'libproto >= 0.4.4' 'libproto < 0.5')" "$d/channel/fedora/44/noarch/"
   mv "$(mk already-broken 1.0 'nothing-provides-this')" "$d/channel/fedora/44/noarch/"
+  # an old build without a ceiling, and a consumer of it: dnf can fall back to it
+  mv "$(mk hostd 0.17.0 'libproto >= 0.2')" "$d/channel/fedora/44/noarch/"
+  mv "$(mk panel 1.0 'hostd >= 0.15')" "$d/channel/fedora/44/noarch/"
   mv "$(mk libproto 0.5.0)" "$d/new-alone/"
   mv "$(mk libproto 0.4.5)" "$d/new-patch/"
   cp "$d/new-alone/"*.rpm "$d/new-pass/"
@@ -174,6 +182,10 @@ arm_rpm() {
   grep -qF 'libproto < 0.5' "$t/out" && ok 'rpm: ... naming the unmet dependency' || bad 'rpm: unmet dependency not named'
   grep -qF 'hostd 0.19.1-1.fc44.noarch was installable and is not' "$t/out" && ok 'rpm: ... and hostd (a rich dependency)' || bad 'rpm: hostd not named'
   grep -qF 'published clap-host 0.30.6-1.fc44 declares (libproto < 0.5): release it in the same pass' "$t/out" && ok 'rpm: ... and the ceiling arm names the consumer' || bad 'rpm: ceiling arm silent'
+  grep -qF 'RED rpm: fedora/44 x86_64 newest: installing panel falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44: with libproto 0.5.0-1.fc44 requested, dnf takes hostd 0.17.0-1.fc44 instead' "$t/out" \
+    && ok 'rpm (newest): a fallback to an old build is red, naming the package' || bad 'rpm (newest): fallback not found'
+  grep -qF 'HYGIENE: hostd 0.17.0-1.fc44 depend on libproto with no ceiling' "$t/out" \
+    && ok 'rpm (hygiene): the old build without a ceiling is flagged' || bad 'rpm (hygiene): not flagged'
   expect 0 - 'rpm: a patch inside the ceiling is green' -- "${args[@]}" --new-dir "$d/new-patch"
   grep -qF 'already-broken 1.0-1.fc44.noarch was already uninstallable before' "$t/out" && ok 'rpm: a package broken before is reported, not red' \
     || bad 'rpm: the earlier breakage is not reported'

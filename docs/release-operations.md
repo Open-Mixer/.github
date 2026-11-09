@@ -51,6 +51,13 @@ published alone above its consumers' ceiling breaks them although the old librar
 - Ceilings (R-107): every dependency between our own packages that a new package declares has a floor and a
   ceiling, and a new version outside the range a published consumer declares is red, naming the consumer: release it
   in the same pass.
+- Newest: each of our packages is installed by itself on a clean machine (`apt-get -s install`, `dnf install
+  --assumeno`), and it and every one of our packages it pulls in must resolve to the newest version published. dnf
+  backtracks: in the middle of a pass it can take an old build that declares no ceiling (plugin-hostd 0.17.0, which
+  asks only for protocol 0.2.0 or later) and install it beside the new library, so repoclosure passes while the user
+  silently gets old packages. A fallback the release brings is red, named with dnf's or apt's own reason.
+- Hygiene: every published build, old ones included, whose dependencies on our own packages have no floor and
+  ceiling is flagged (`HYGIENE:`), so it can be removed from the index or superseded. It is reported, not red.
 
 It runs before anything is signed: inside `publish-debs` and `publish-rpms` (on the tree they pulled, or the served
 channel in a dry run), and in `release-c-lib.yml` between the build of both kinds (`stage: build`) and the publish
