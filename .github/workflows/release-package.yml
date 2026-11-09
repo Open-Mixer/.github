@@ -18,11 +18,6 @@ name: openmixer-release
 on:
   push:
     tags: ['openmixer-release-*']
-  pull_request:
-    paths:
-      - 'packaging/openmixer-release/**'
-      - '.github/workflows/release-package.yml'
-      - '.github/actions/add-openmixer/**'
   workflow_dispatch: {}
 
 permissions:

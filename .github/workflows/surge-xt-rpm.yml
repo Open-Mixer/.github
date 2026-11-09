@@ -16,12 +16,6 @@ on:
         description: 'Sign and publish; only a run on the main branch publishes'
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - 'packaging/surge-xt/**'
-      - '.github/actions/pinned-rpms/**'
-      - '.github/pins.txt'
-      - '.github/workflows/surge-xt-rpm.yml'
 
 permissions:
   contents: read

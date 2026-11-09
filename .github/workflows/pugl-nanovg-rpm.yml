@@ -16,13 +16,6 @@ on:
         description: 'Sign and publish; only a run on the main branch publishes'
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - 'packaging/pugl/**'
-      - 'packaging/nanovg/**'
-      - '.github/actions/pinned-rpms/**'
-      - '.github/pins.txt'
-      - '.github/workflows/pugl-nanovg-rpm.yml'
 
 permissions:
   contents: read
