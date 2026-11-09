@@ -118,7 +118,12 @@ runs:
         SERVED: ${{ inputs.served-url }}
       run: |
         set -o pipefail
-        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else channel=$SERVED; fi
+        # a dry run judges the architectures it built: its x86 build's architecture-independent packages beside the
+        # published builds of an architecture it did not build read as a break the release (every architecture) does not make
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else
+          channel=$SERVED
+          ARCHES=$("$GITHUB_ACTION_PATH/../channel-installability/built-arches.sh" rpm "$PKG_DIR"); export ARCHES
+        fi
         "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
