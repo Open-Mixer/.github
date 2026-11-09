@@ -45,7 +45,7 @@ uses for stageboxes. Besides libreac, reac-pw and reac-stageboxes above:
 
 ## On a Zynthian
 
-The Open-Mixer forks of [zynthian-ui](https://github.com/Open-Mixer/zynthian-ui) and
+The OpenMixer forks of [zynthian-ui](https://github.com/Open-Mixer/zynthian-ui) and
 [zynthian-sys](https://github.com/Open-Mixer/zynthian-sys) (branch `vangelis`) add an engine that runs a Zynthian
 chain's LV2 and CLAP plugins through plugin-hostd, with the plugin menus ordered from the measurements
 [plugin-qualify](https://github.com/Open-Mixer/plugin-qualify) records. Those records, one set per machine class (a
