@@ -118,7 +118,9 @@ runs:
         SERVED: ${{ inputs.served-url }}
       run: |
         set -o pipefail
-        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else channel=$SERVED; fi
+        # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
+        # release builds every architecture), and every architecture is still checked
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else channel=$SERVED; export UNBUILT_ARCH_PASS=true; fi
         "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
