@@ -47,6 +47,7 @@ jobs:
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test
