@@ -175,8 +175,12 @@ jobs:
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
     timeout-minutes: 90
+    # bookworm privileged only to lower the runner kernel's mmap_rnd_bits: with the hosted image's 32 bits, bookworm's
+    # gcc 12 AddressSanitizer dies in DEADLYSIGNAL loops until the timeout (plugin-hostd-protocol v0.5.2's package
+    # tests: 90 minutes and a 3.6 GB log); newer libasan copes
     container:
       image: debian:${{ matrix.suite }}
+      options: ${{ matrix.suite == 'bookworm' && '--privileged' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -185,6 +189,13 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
+      - name: Address space randomisation AddressSanitizer can run under
+        if: matrix.suite == 'bookworm'
+        run: |
+          if [ "$(cat /proc/sys/vm/mmap_rnd_bits)" -gt 28 ]; then echo 28 > /proc/sys/vm/mmap_rnd_bits; fi
+          echo "vm.mmap_rnd_bits=$(cat /proc/sys/vm/mmap_rnd_bits)"
+          [ "$(cat /proc/sys/vm/mmap_rnd_bits)" -le 28 ]
+
       - name: Install the build tools
         env:
           EXTRA: ${{ inputs.build-packages }}
