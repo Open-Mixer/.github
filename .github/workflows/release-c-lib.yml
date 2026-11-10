@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: release-c-lib
-# A C library's release: its RPMs, then its DEBs, through build-rpm.yml and build-deb.yml. A tag push publishes; any
+# A C library's release: its RPMs and its DEBs, built side by side, through build-rpm.yml and build-deb.yml. A tag push publishes; any
 # other run is a dry run (publish false), and a pull request's dry run passes arm false.
 #
 #   on: {push: {tags: ['v*']}, workflow_dispatch: {}}
@@ -76,9 +76,8 @@ jobs:
       runner: ${{ inputs.runner }}
       arch-matrix: ${{ inputs.arm && '["x86_64", "aarch64"]' || '["x86_64"]' }}
     secrets: inherit
+  # beside the RPMs: the two publish jobs share one concurrency group per target, so their pushes never race
   deb:
-    needs: rpm
-    if: ${{ !cancelled() && needs.rpm.result == 'success' }}
     uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
     with:
       package-name: ${{ inputs.package-name }}

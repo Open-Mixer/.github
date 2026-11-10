@@ -366,8 +366,11 @@ jobs:
           ls -l signed
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" signed/*.rpm --clobber --repo "$GITHUB_REPOSITORY"
+          elif gh release create "$TAG" signed/*.rpm --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --repo "$GITHUB_REPOSITORY"; then
+            :
           else
-            gh release create "$TAG" signed/*.rpm --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --repo "$GITHUB_REPOSITORY"
+            # lost the race to the DEB job, which builds beside this one
+            gh release upload "$TAG" signed/*.rpm --clobber --repo "$GITHUB_REPOSITORY"
           fi
 
   # Pages deploys the pushed commit on its own time, and five releases in a row make it slow. The wait is a job
