@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Calf Plugin Pack for DSSI
+GenericName=Audio Effects
+Comment=Process and produce sounds using a set of plugins with DSSI interface
+Icon=calf
+Type=Application
+Exec=calf
+Terminal=false
+Categories=Audio;AudioVideo;Midi;X-Synthesis;X-Jack;
