@@ -35,7 +35,7 @@ git rev-parse --verify -q "$ref^{commit}" >/dev/null || die "$ref is not a commi
 
 subjects() {
     local prev
-    prev=$(git describe --tags --abbrev=0 "$ref^" 2>/dev/null || true)
+    prev=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$ref^" 2>/dev/null || true)
     git log --no-merges --format='%s' "${prev:+$prev..}$ref" | drop_by_patterns
 }
 
