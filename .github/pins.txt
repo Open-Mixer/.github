@@ -10,3 +10,4 @@ surge-xt https://github.com/surge-synthesizer/surge 72a602284b7a599ee3a93d7a8302
 # synthv1 and samplv1: upstream's v1.5.1 tag; the specs carry the teardown fix merged after it (packaging/<name>/overlay)
 synthv1 https://github.com/rncbc/synthv1 b1165dc283d98deb5f46d0506bc1f7b3bccb82fa
 samplv1 https://github.com/rncbc/samplv1 3a18dd469221d141830f08fdb6b907017d7ff974
+lv2-swh-plugins https://github.com/swh/lv2 5098e09e255eaed14e0d40ca5e7e6dfcb782d7ea
