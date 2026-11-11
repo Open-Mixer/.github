@@ -43,6 +43,7 @@ jobs:
       - run: tests/reusable-workflows.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
+      - run: tests/staged-packages.sh
       - run: tests/release-preflight-served.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository

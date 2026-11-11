@@ -17,6 +17,14 @@ name: Build RPM (reusable)
 # publishes nothing and only assembles an UNSIGNED tree as an artifact. Unsigned metadata pushed to the
 # channel would have clients trust it, and a published NEVRA cannot be taken back.
 #
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the staged target only, the fc44 x86_64 RPMs (noarch with them),
+# publishes nothing to the channel and leaves them on the prerelease staged-v<version> of the calling repository,
+# where the next layer of the release chain installs them (actions/install-staged) instead of waiting for the channel.
+# staged-deps names such layers, [owner/]repo@version[:package,...], installed in the build container before the
+# build dependencies; it needs staged: true, the staged target being the only one they exist for. Neither runs on a
+# tag, and a staged run takes no source-ref. The real release publishes once, from the v<version> tag, at the end of
+# the wave, and then removes the prerelease staged-v<version> and its tag (the unstage job).
+#
 # The packaging lives in the calling repository: exactly one packaging/*.spec, whose Version: is the
 # version, and a tag that must be v<Version> on the commit being built. A BuildRequires the channel already
 # serves (plugin-hostd-devel) comes from the channel's repository, enabled inside the build container only.
@@ -48,6 +56,14 @@ on:
         type: boolean
         default: false
         description: 'Sign and publish. Takes effect on a tag only; false or a branch is a dry run.'
+      staged:
+        type: boolean
+        default: false
+        description: 'Build the staged target only (fc44 x86_64), publish nothing to the channel, and put the packages on the prerelease staged-v<version> of the calling repository (actions/stage-release). Excludes publish.'
+      staged-deps:
+        type: string
+        default: ''
+        description: 'Staged packages of inner layers installed in the build container before the build dependencies: [owner/]repo@version[:package,package], space separated (actions/install-staged). Empty installs none.'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -134,6 +150,25 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
+      # staged-deps without staged would hand every leg of the matrix packages staged for one target only, and on a
+      # tag it would build the release against unsigned snapshots; a staged run stages the commit it runs on
+      - name: A staged run publishes nothing, and staged packages never build a release
+        if: inputs.staged || inputs.staged-deps != ''
+        env:
+          STAGED: ${{ inputs.staged }}
+          STAGED_DEPS: ${{ inputs.staged-deps }}
+          PUBLISH: ${{ inputs.publish }}
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          no() { echo "::error::$*"; exit 1; }
+          [ "$REF_TYPE" != tag ] || no "staged and staged-deps are for a manual run from a branch, never a tag: a tag builds the release, against the channel's packages"
+          [ "$STAGED" = true ] || no "staged-deps needs staged: true: packages are staged for fc44 x86_64 only, and every other leg of the matrix would refuse them"
+          [ "$PUBLISH" != true ] || no "staged and publish exclude each other: a staged run leaves its packages on the staged-v prerelease and never publishes to the channel"
+          [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
+          [ -z "$SOURCE_REF" ] || no "a staged run builds the commit it runs on: source-ref would build one commit and stage it as another"
+
       # git history is the changelog: nothing here reads a CHANGELOG.md
       - uses: actions/checkout@v4
         with:
@@ -173,8 +208,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ${{ fromJSON(inputs.fedora-versions) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        fedora: ${{ fromJSON(inputs.staged && '["44"]' || inputs.fedora-versions) }}
+        arch: ${{ fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
@@ -212,6 +247,11 @@ jobs:
         with:
           base-url: ${{ inputs.base-url }}
 
+      - uses: Open-Mixer/.github/.github/actions/install-staged@openmixer-v1
+        if: inputs.staged-deps != ''
+        with:
+          packages: ${{ inputs.staged-deps }}
+
       - name: Show what the channel provides the build
         if: inputs.channel-deps
         run: dnf repoquery --repo openmixer --repo openmixer-noarch --whatprovides 'pkgconfig(plugin-hostd)'
@@ -223,7 +263,7 @@ jobs:
       - name: Refuse an empty build, and one of another architecture
         env:
           ARCH: ${{ matrix.arch }}
-          FIRST_ARCH: ${{ fromJSON(inputs.arch-matrix)[0] }}
+          FIRST_ARCH: ${{ fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix)[0] }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
         run: |
@@ -272,12 +312,13 @@ jobs:
         with:
           name: ${{ inputs.package-name }}-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
-          if-no-files-found: ${{ matrix.arch == fromJSON(inputs.arch-matrix)[0] && 'error' || 'ignore' }}
+          if-no-files-found: ${{ matrix.arch == fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix)[0] && 'error' || 'ignore' }}
           retention-days: 30
 
   publish:
     name: Sign and publish
     needs: build
+    if: ${{ !inputs.staged }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
@@ -331,6 +372,54 @@ jobs:
         if: env.DO_PUBLISH != 'true'
         run: |
           echo "::warning::dry run: nothing was signed or published. The unsigned tree is attached to this run."
+
+  # A staged run publishes nothing to the channel: the fc44 x86_64 RPMs (noarch with them) go on the prerelease staged-v<version> of the
+  # calling repository, for the next layer's install-staged. No v* tag is made; the real release still publishes from it.
+  staged:
+    name: Stage the RPMs (staged-v<version>)
+    needs: build
+    if: ${{ !cancelled() && inputs.staged && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: version
+        run: |
+          v=$(sed -n 's/^Version:[[:space:]]*//p' packaging/*.spec)
+          echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*$' || { echo "::error::no release version in the packaging: '$v'"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.package-name }}-rpms-fc*
+          merge-multiple: true
+          path: collected
+
+      - uses: Open-Mixer/.github/.github/actions/stage-release@openmixer-v1
+        with:
+          kind: rpm
+          version: ${{ steps.version.outputs.version }}
+          dir: collected
+
+  # The release is published: the staged packages of this version go, prerelease and tag. They sort above the
+  # release's files, so a consumer that still named them in staged-deps would keep building against the snapshot.
+  unstage:
+    name: Remove the staged packages (staged-v<version>)
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.publish && github.ref_type == 'tag' && inputs.source-repository == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/stage-release@openmixer-v1
+        with:
+          kind: remove
+          version: ${{ inputs.source-ref || github.ref_name }}
 
   release:
     name: GitHub release
