@@ -40,5 +40,6 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
+        set -f # split on spaces and newlines, never matched against the checkout's files
         # shellcheck disable=SC2086
         "$GITHUB_ACTION_PATH/install-staged.sh" $PACKAGES

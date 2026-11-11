@@ -11,7 +11,11 @@
       file whose upstream version is not <v>
   staged.py floor --kind <rpm|deb> --tree <dir> <name> <version>
       refuses (exit 1) a staged version outside a floor or ceiling the consumer's packaging/*.spec (rpm) or
-      debian/control (deb) puts on <name>; silent when the consumer names no range for it
+      debian/control (deb) puts on <name>; silent when the consumer names no range for it. Only what the build and
+      the install obey is read: Requires and BuildRequires tags, and the Depends, Pre-Depends and Build-Depends*
+      fields; an Obsoletes, a Breaks, a comment, a description or a changelog line is not a floor. A range written
+      with %global/%define macros or %{version} is read through them; one that still holds a macro or a substvar
+      is named in a ::warning:: as not checked
 """
 import argparse, glob, json, os, re, sys
 
@@ -212,21 +216,62 @@ OPS = {">=": lambda c: c >= 0, ">": lambda c: c > 0, ">>": lambda c: c > 0, "=":
        "<=": lambda c: c <= 0, "<": lambda c: c < 0, "<<": lambda c: c < 0}
 
 
+RPM_DEPS = re.compile(r"^(?:Build)?Requires(?:\([^)]*\))?[ \t]*:(.*)$", re.I | re.M)
+DEB_DEPS = {"depends", "pre-depends", "build-depends", "build-depends-indep", "build-depends-arch"}
+
+
+def _spec_deps(text):
+    """The Requires/BuildRequires values of a spec, its own simple macros expanded."""
+    macros = dict(re.findall(r"^%(?:global|define)[ \t]+(\w+)[ \t]+(\S+)[ \t]*$", text, re.M))
+    ver = re.search(r"^Version[ \t]*:[ \t]*(\S+)", text, re.I | re.M)
+    if ver:
+        macros.setdefault("version", ver.group(1))
+    out = "\n".join(RPM_DEPS.findall(text))
+    for _ in range(8):
+        new = re.sub(r"%\{(\w+)\}", lambda m: macros.get(m.group(1), m.group(0)), out)
+        if new == out:
+            break
+        out = new
+    return re.sub(r"-%\{\??release\}", "", out)  # = %{version}-%{release}: the version decides
+
+
+def _control_deps(text):
+    """The dependency fields of a debian/control, continuation lines with them."""
+    out, keep = [], False
+    for line in text.splitlines():
+        if line.startswith("#"):
+            continue
+        if line[:1] in " \t":
+            if keep:
+                out.append(line)
+            continue
+        field, sep, value = line.partition(":")
+        keep = bool(sep) and field.strip().lower() in DEB_DEPS
+        if keep:
+            out.append(value)
+    return "\n".join(out)
+
+
 def floor(a):
     name = re.escape(a.name)
     if a.kind == "rpm":
         files = sorted(glob.glob(os.path.join(a.tree, "packaging", "*.spec")))
         rx = re.compile(r"(?<![\w.+-])" + name + r"(?:%\{\?_isa\})?\s*(>=|<=|=|<|>)\s*([^\s)]+)")
+        deps = _spec_deps
     else:
         files = [p for p in [os.path.join(a.tree, "debian", "control")] if os.path.isfile(p)]
         rx = re.compile(r"(?<![\w.+-])" + name + r"\s*\(\s*(>=|<=|>>|<<|=)\s*([^)\s]+)\s*\)")
+        deps = _control_deps
     bad = []
     for path in files:
-        for op, ver in rx.findall(open(path).read()):
+        where = os.path.relpath(path, a.tree)
+        for op, ver in rx.findall(deps(open(path).read())):
             if "%" in ver or "$" in ver:
+                print(f"::warning::install-staged: {a.name} {op} {ver} ({where}) holds a macro this check cannot "
+                      f"read: the staged {a.version} is not checked against it", file=sys.stderr)
                 continue
             if not OPS[op](CMP[a.kind](a.version, ver)):
-                bad.append(f"{a.name} {a.version} does not meet {op} {ver} ({os.path.relpath(path, a.tree)})")
+                bad.append(f"{a.name} {a.version} does not meet {op} {ver} ({where})")
     if bad:
         die("; ".join(bad))
 

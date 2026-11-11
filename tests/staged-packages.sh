@@ -10,6 +10,14 @@
 #   - the version comparisons are rpm's and dpkg's (a +git snapshot meets a floor, a ~git one does not);
 #   - stage-release creates a prerelease (never a release, never latest), uploads, removes the stale files of its own
 #     kind only, refuses a staged tag that is a real release and a file of another version;
+#   - a re-stage from a newer commit moves the staged tag and the notes there; the release of v<version> removes
+#     staged-v<version>, release and tag (stage-release remove, the unstage job), never a real or an unread release;
+#   - the precheck of both workflows, run as written: staged-deps needs staged, neither runs on a tag, a staged run
+#     takes no source-ref, publish or other repository;
+#   - the floor check reads dependency fields only (not an Obsoletes, a Breaks, a comment or a changelog line), reads
+#     a range through the spec's own macros and names the one it cannot read; a release read that fails is reported
+#     as that, only a 404 as "nothing staged"; a DEB with an epoch installs; the action never globs its package list;
+#     the staged job reads Version: after a tab;
 #   - build-rpm.yml and build-deb.yml, rendered with staged on and off: the matrix narrows to the staged targets, the
 #     channel publish is skipped, the staged job runs, the snapshot sorts above the release (DEB), and install-staged
 #     runs after the channel is added and before the build.
@@ -135,7 +143,7 @@ cat > "$t/bin/gh" <<'SH'
 #!/bin/bash
 echo "gh $*" >> "$GH_LOG"
 if [ "$1 $2" = "release view" ]; then
-    [ -f "$GH_VIEW" ] || exit 1
+    [ -f "$GH_VIEW" ] || { echo "${GH_VIEW_ERR:-release not found}" >&2; exit 1; }
     cat "$GH_VIEW"; exit 0
 fi
 exit 0
@@ -264,6 +272,171 @@ step = d["runs"]["steps"][0]
 assert "SEPARATOR" in step.get("env", {}) and '-s "$SEPARATOR"' in step["run"], "build-deb action: separator not passed as -s"
 print("ok   build-deb action: the snapshot separator reaches build-deb.sh")
 PY
+
+# ---- a step of a workflow or an action, run as the runner would: its script with its env names set here
+step() { # <file> <job|-> <name pattern> <out>: writes the step's run to <out>, prints its `if` and its env as JSON
+    python3 -I - "$@" <<'PY'
+import json, re, sys, yaml
+path, job, pat, out = sys.argv[1:5]
+d = yaml.safe_load(open(path))
+steps = d["runs"]["steps"] if job == "-" else d["jobs"][job]["steps"]
+hit = [s for s in steps if re.search(pat, s.get("name", "") + " " + s.get("run", ""))]
+assert len(hit) == 1, f"{path} {job}: {len(hit)} steps match {pat!r}"
+open(out, "w").write(hit[0]["run"])
+print(json.dumps({"if": hit[0].get("if", ""), "env": hit[0].get("env", {})}))
+PY
+}
+wf_rpm=$here/.github/workflows/build-rpm.yml; wf_deb=$here/.github/workflows/build-deb.yml
+
+# the precheck: what a staged run and a staged-deps run may not be
+for wf in "$wf_rpm" "$wf_deb"; do
+    meta=$(step "$wf" preflight 'staged' "$t/pre.sh")
+    python3 -I - "$meta" "$wf" <<'PY'
+import json, re, sys
+m, wf = json.loads(sys.argv[1]), sys.argv[2]
+assert "inputs.staged-deps" in m["if"] and re.search(r"inputs\.staged(?!-)", m["if"]), f"{wf}: the precheck does not run for staged-deps alone: {m['if']}"
+want = {"STAGED": "inputs.staged", "STAGED_DEPS": "inputs.staged-deps", "PUBLISH": "inputs.publish",
+        "SOURCE_REPOSITORY": "inputs.source-repository", "SOURCE_REF": "inputs.source-ref", "REF_TYPE": "github.ref_type"}
+for k, v in want.items():
+    assert m["env"].get(k, "").replace(" ", "") == "${{" + v + "}}", f"{wf}: precheck env {k} is {m['env'].get(k)!r}"
+PY
+    pre() { env -i PATH="$PATH" STAGED=false STAGED_DEPS= PUBLISH=false SOURCE_REPOSITORY= SOURCE_REF= REF_TYPE=branch "$@" bash -e "$t/pre.sh" 2>&1; }
+    pre STAGED=true >/dev/null || fail "$wf: a plain staged run is refused"
+    pre STAGED=true STAGED_DEPS=plugin-hostd@0.20.3 >/dev/null || fail "$wf: a staged run with staged-deps is refused"
+    err=$(pre STAGED_DEPS=plugin-hostd@0.20.3) && fail "$wf: staged-deps without staged passed"
+    echo "$err" | grep -q 'staged: true' || fail "$wf: staged-deps without staged not explained: $err"
+    err=$(pre STAGED_DEPS=plugin-hostd@0.20.3 PUBLISH=true REF_TYPE=tag) && fail "$wf: staged-deps on a tag passed"
+    echo "$err" | grep -q 'never a tag' || fail "$wf: staged-deps on a tag not explained: $err"
+    err=$(pre STAGED=true REF_TYPE=tag) && fail "$wf: a staged run on a tag passed"
+    echo "$err" | grep -q 'never a tag' || fail "$wf: staged on a tag not explained: $err"
+    err=$(pre STAGED=true SOURCE_REF=v0.20.3) && fail "$wf: a staged run with source-ref passed"
+    echo "$err" | grep -q 'source-ref' || fail "$wf: source-ref not named: $err"
+    err=$(pre STAGED=true PUBLISH=true) && fail "$wf: staged with publish passed"
+    echo "$err" | grep -q 'publish' || fail "$wf: publish not named: $err"
+    err=$(pre STAGED=true SOURCE_REPOSITORY=o/r) && fail "$wf: staged with source-repository passed"
+done
+ok "precheck: staged-deps needs staged, neither runs on a tag, a staged run takes no source-ref, publish or other repository"
+
+# a re-stage from a newer commit: the tag and the notes follow the commit the files were built at
+st rpm "$t/rpms" "$view" >/dev/null || fail "stage-release over an existing staged release"
+grep -q '^gh api -X PATCH repos/Open-Mixer/plugin-hostd/git/refs/tags/staged-v0.20.3 .*sha=5f455d37cfb5' "$t/log" || fail "a re-stage leaves the tag at the first commit: $(cat "$t/log")"
+grep -q 'force=true' "$t/log" || fail "the tag move is not forced"
+grep '^gh release edit staged-v0.20.3' "$t/log" | grep -q -- '--notes .*5f455d37cfb5' || fail "a re-stage leaves the notes at the first commit: $(cat "$t/log")"
+mv=$(grep -n 'git/refs/tags' "$t/log" | cut -d: -f1); up=$(grep -n '^gh release upload' "$t/log" | cut -d: -f1)
+[ "$up" -lt "$mv" ] || fail "the tag moves before the files it describes are there"
+st rpm "$t/rpms" >/dev/null || fail "stage-release rpm on a fresh version"
+grep -q 'git/refs/tags\|release edit' "$t/log" && fail "a fresh staged release was moved or edited"
+ok "stage-release: a re-stage moves the tag and the notes to the built commit, after the upload; a fresh one is left as created"
+
+# the real release removes the staged one: its files sort above the release's
+rm_() { # [view json]; gh release view fails with GH_VIEW_ERR when there is no view
+    : > "$t/log"; rm -f "$t/view.json"
+    [ -z "${1:-}" ] || echo "$1" > "$t/view.json"
+    PATH=$t/bin:$PATH GH_LOG=$t/log GH_VIEW=$t/view.json GH_VIEW_ERR=${GH_VIEW_ERR:-release not found} \
+        GITHUB_REPOSITORY=Open-Mixer/plugin-hostd bash "$stage" remove v0.20.3
+}
+rm_ '{"isPrerelease": true, "assets": []}' >/dev/null || fail "remove: an existing staged release"
+grep -q '^gh release delete staged-v0.20.3 .*--cleanup-tag' "$t/log" || fail "the staged release and its tag stay after the release: $(cat "$t/log")"
+out=$(rm_) || fail "remove: nothing staged is not an error: $out"
+grep -q '^gh release delete' "$t/log" && fail "deleted a release that is not there"
+err=$(rm_ '{"isPrerelease": false, "assets": []}' 2>&1) && fail "remove: deleted a real release"
+grep -q '^gh release delete' "$t/log" && fail "remove: a real release was deleted"
+echo "$err" | grep -q 'not a prerelease' || fail "remove: real release not named: $err"
+err=$(GH_VIEW_ERR='HTTP 403: API rate limit exceeded' rm_ 2>&1) && fail "remove: an unreadable release read as nothing staged"
+echo "$err" | grep -q 'rate limit' || fail "remove: the read failure is not shown: $err"
+for wf in "$wf_rpm" "$wf_deb"; do
+    python3 -I - "$wf" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1])); j = d["jobs"].get("unstage")
+assert j, f"{sys.argv[1]}: no unstage job"
+needs = j["needs"] if isinstance(j["needs"], list) else [j["needs"]]
+assert "publish" in needs and "needs.publish.result == 'success'" in j["if"] and "github.ref_type == 'tag'" in j["if"] \
+    and "inputs.publish" in j["if"], f"{sys.argv[1]}: unstage must follow a published tag: {j['if']}"
+assert "inputs.source-repository == ''" in j["if"], f"{sys.argv[1]}: unstage would run for another repository's release"
+assert j.get("permissions", {}).get("contents") == "write", f"{sys.argv[1]}: unstage cannot delete the release"
+s = [x for x in j["steps"] if "/actions/stage-release@" in x.get("uses", "")]
+assert s and s[0]["with"]["kind"] == "remove" and "github.ref_name" in s[0]["with"]["version"], f"{sys.argv[1]}: unstage does not remove the tag's version"
+PY
+done
+ok "the release of v<version> removes staged-v<version>, release and tag; never a real release, never on an unread one"
+
+# the floor check reads dependency fields only, and a range written with a macro
+cons 0.20.3 0.21
+cat >> "$t/tree/packaging/omx-panel.spec" <<'SPEC'
+Obsoletes: plugin-hostd-contract < 0.20
+# plugin-hostd-contract >= 9.0 one day
+%description
+Needs plugin-hostd-contract >= 8.0 at run time.
+%changelog
+- plugin-hostd-contract >= 7.0 was the old floor
+SPEC
+printf 'Breaks: plugin-hostd-contract (>= 0.30)\nDescription: panel\n needs plugin-hostd-contract (>= 9.0) one day\n' >> "$t/tree/debian/control"
+out=$(run rpm:fc44.x86_64 plugin-hostd@0.20.3 2>&1) || fail "rpm: a range outside Requires/BuildRequires refused the staged version: $out"
+out=$(run deb:trixie.amd64 plugin-hostd@0.20.3 2>&1) || fail "deb: a range outside the dependency fields refused the staged version: $out"
+printf 'Name: omx-panel\nVersion: 0.20.4\n%%global hostd_min 0.20.4\nBuildRequires: plugin-hostd-contract >= %%{hostd_min}\n' > "$t/tree/packaging/omx-panel.spec"
+err=$(run rpm:fc44.x86_64 plugin-hostd@0.20.3 2>&1) && fail "rpm: a floor written with a macro was skipped"
+echo "$err" | grep -q 'plugin-hostd-contract 0.20.3.*>= 0.20.4' || fail "macro floor not named: $err"
+printf 'Name: omx-panel\nVersion:\t0.20.4\nRequires(post): plugin-hostd-contract = %%{version}-%%{release}\n' > "$t/tree/packaging/omx-panel.spec"
+err=$(run rpm:fc44.x86_64 plugin-hostd@0.20.3 2>&1) && fail "rpm: = %{version}-%{release} was skipped"
+echo "$err" | grep -q 'plugin-hostd-contract 0.20.3.*= 0.20.4' || fail "%{version} range not named: $err"
+printf 'Name: omx-panel\nVersion: 0.13.3\nBuildRequires: plugin-hostd-contract >= %%{?nonesuch}\n' > "$t/tree/packaging/omx-panel.spec"
+out=$(run rpm:fc44.x86_64 plugin-hostd@0.20.3 2>&1) || fail "rpm: a macro the check cannot read refused the build: $out"
+echo "$out" | grep -q '::warning::.*plugin-hostd-contract >= %{?nonesuch}.*not checked' || fail "an unread range is skipped silently: $out"
+ok "floor: only Requires/BuildRequires and the Debian dependency fields count; a macro range is read, or said to be unchecked"
+
+# the release read: only a 404 means nothing was staged
+cons 0.20.3 0.21
+mkdir -p "$t/curlbin"
+cat > "$t/curlbin/curl" <<'SH'
+#!/bin/bash
+# the release read answers $CURL_CODE with $CURL_BODY; curl -o <file> -w '%{http_code}'
+while [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done
+printf '%s' "$CURL_BODY" > "$out"; printf '%s' "$CURL_CODE"
+SH
+chmod +x "$t/curlbin/curl"
+err=$(PATH=$t/curlbin:$PATH CURL_CODE=403 CURL_BODY='{"message": "API rate limit exceeded for 203.0.113.7"}' run rpm:fc44.x86_64 plugin-hostd@0.20.3 2>&1) && fail "a 403 on the release read passed"
+echo "$err" | grep -q 'has no staged release' && fail "a rate limit reads as nothing staged: $err"
+echo "$err" | grep -q '403' && echo "$err" | grep -q 'rate limit exceeded' || fail "the read failure is not shown: $err"
+err=$(PATH=$t/curlbin:$PATH CURL_CODE=404 CURL_BODY='{"message": "Not Found"}' run rpm:fc44.x86_64 plugin-hostd@0.20.3 2>&1) && fail "a 404 passed"
+echo "$err" | grep -q 'has no staged release staged-v0.20.3' || fail "a 404 is not 'no staged release': $err"
+ok "a release that cannot be read is said so, with the answer; only a 404 is 'nothing staged'"
+
+# a DEB with an epoch: the file name carries none, its Version field does
+mkrel Open-Mixer/omx-epoch staged-v1.2.0 true omx-epoch_1.2.0+gitabcdef0_trixie_amd64.deb
+mkdir -p "$t/debbin"
+cat > "$t/debbin/dpkg-deb" <<'SH'
+#!/bin/bash
+case $3 in Package) echo omx-epoch ;; Version) echo "$DEB_VERSION" ;; esac
+SH
+printf '#!/bin/bash\nexit 0\n' > "$t/debbin/apt-get"; cp "$t/debbin/apt-get" "$t/debbin/dpkg-query"
+chmod +x "$t/debbin"/*
+inst_deb() { PATH=$t/debbin:$PATH STAGED_API="file://$api" STAGED_TARGET=deb:trixie.amd64 STAGED_DIR="$t/got" STAGED_TREE="$t/tree" bash "$inst" omx-epoch@1.2.0 2>&1; }
+out=$(DEB_VERSION=1:1.2.0+gitabcdef0 inst_deb) || fail "a DEB with an epoch is refused: $out"
+err=$(DEB_VERSION=1:1.2.1+gitabcdef0 inst_deb) && fail "a DEB holding another version passed"
+echo "$err" | grep -q 'holds omx-epoch 1:1.2.1+gitabcdef0' || fail "the contents check lost its message: $err"
+ok "a DEB with an epoch installs; a file that holds another version is still refused"
+
+# the action hands its packages over as written: no glob of the working directory
+step "$here/.github/actions/install-staged/action.yml" - 'install-staged.sh' "$t/act.sh" >/dev/null
+mkdir -p "$t/act/path" "$t/act/cwd"; touch "$t/act/cwd/plugin-hostd@0.20.3:zzz"
+printf '#!/bin/bash\nprintf "%%s\\n" "$@"\n' > "$t/act/path/install-staged.sh"; chmod +x "$t/act/path/install-staged.sh"
+got=$(cd "$t/act/cwd" && GITHUB_ACTION_PATH=$t/act/path PACKAGES=$'plugin-hostd@0.20.3:*  omx-plugins@0.19.3\nomx-clap-core@0.31.2' bash "$t/act.sh")
+[ "$got" = $'plugin-hostd@0.20.3:*\nomx-plugins@0.19.3\nomx-clap-core@0.31.2' ] || fail "the action expands its packages against the checkout: $got"
+ok "install-staged action: space or newline separated, never globbed"
+
+# the staged job reads the version however the packaging spaces it
+rdv() { # <workflow> <tree>
+    step "$1" staged 'Read the version' "$t/ver.sh" >/dev/null
+    : > "$t/ghout"; (cd "$2" && GITHUB_OUTPUT=$t/ghout bash -e "$t/ver.sh" 2>&1) && cat "$t/ghout"
+}
+mkdir -p "$t/vt/packaging" "$t/vt/debian"
+printf 'Name: x\nVersion:\t0.20.3\n' > "$t/vt/packaging/x.spec"
+[ "$(rdv "$wf_rpm" "$t/vt")" = version=0.20.3 ] || fail "build-rpm.yml: 'Version:<tab>0.20.3' is not read: $(rdv "$wf_rpm" "$t/vt" || true)"
+printf 'Name: x\nVersion: 0.20.3\n' > "$t/vt/packaging/x.spec"
+[ "$(rdv "$wf_rpm" "$t/vt")" = version=0.20.3 ] || fail "build-rpm.yml: 'Version: 0.20.3' is not read"
+printf 'x (1:0.20.3-1) unstable; urgency=medium\n' > "$t/vt/debian/changelog"
+[ "$(rdv "$wf_deb" "$t/vt")" = version=0.20.3 ] || fail "build-deb.yml: the changelog version is not read"
+ok "the staged job reads Version: after a tab or spaces, and the changelog's upstream version"
 
 # the step scripts parse
 for f in "$inst" "$stage"; do bash -n "$f" || fail "syntax $f"; done
