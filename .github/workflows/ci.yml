@@ -212,6 +212,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: tests/surge-xt-package.sh
 
+  rncbc-v1-package:
+    name: the synthv1 and samplv1 packages, their pins, their patch and where they sort
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: fedora:44
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build
+      - uses: actions/checkout@v4
+      - run: tests/rncbc-v1-package.sh
+
   mod-host-rpm:
     name: mod-host RPMs from the fork, and where they sort
     runs-on: ubuntu-latest
