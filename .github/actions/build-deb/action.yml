@@ -16,6 +16,9 @@ inputs:
   out:
     description: directory the DEBs are copied to
     default: debs
+  separator:
+    description: what joins a snapshot's version and commit; ~git sorts below the release, +git above it (a staged build, which must meet a consumer's (>= <version>) floor)
+    default: '~git'
 
 runs:
   using: composite
@@ -25,9 +28,10 @@ runs:
         TREE: ${{ inputs.tree }}
         TAG: ${{ inputs.tag }}
         OUT: ${{ inputs.out }}
+        SEPARATOR: ${{ inputs.separator }}
       run: |
         set -euo pipefail
         git config --global --add safe.directory "$(readlink -f "$TREE")"
-        args=(-C "$TREE")
+        args=(-C "$TREE" -s "$SEPARATOR")
         [ -z "$TAG" ] || args+=(-t "$TAG")
         "$GITHUB_ACTION_PATH/build-deb.sh" "${args[@]}" "$OUT"
