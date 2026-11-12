@@ -202,6 +202,17 @@ jobs:
       - run: tests/srpm-publish.sh
       - run: tests/every-arch-dir-repodata.sh
 
+  build-rpm-same-bytes:
+    name: two RPM builds of one commit give the same bytes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:44
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build gcc git python3 findutils diffutils
+      - uses: actions/checkout@v4
+      - run: tests/build-rpm-same-bytes.sh
+
   deb-changelog:
     name: apt changelog from the published tree
     runs-on: ubuntu-latest
@@ -212,6 +223,8 @@ jobs:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils dpkg-dev debhelper build-essential python3 apt ca-certificates
       - uses: actions/checkout@v4
       - run: tests/deb-changelog.sh
+      - run: apt-get install -y --no-install-recommends git
+      - run: tests/build-deb-same-bytes.sh
 
   deb-rerun-layout:
     name: a rerun of a DEB release keeps its packages
