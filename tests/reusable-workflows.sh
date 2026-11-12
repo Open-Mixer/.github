@@ -60,7 +60,7 @@ lines[n - 1] = line.replace(fork, "") if how == "strip" else line.replace(fork +
 open(out, "w").write("\n".join(lines))
 sys.exit(0 if lines[n - 1] != line else 3)
 PY
-for w in ci-node ci-c fuzz build-rpm build-deb; do
+for w in public-sources-check ci-node ci-c fuzz build-rpm build-deb; do
   src=$here/.github/workflows/$w.yml
   lines=$(grep -n "runs-on: .*github.event.pull_request.head.repo.full_name != github.repository" "$src" | cut -d: -f1 || true)
   [ -n "$lines" ] || { echo "FAIL sabotage: $w.yml has no fork fallback to strip"; fail=1; continue; }
