@@ -33,7 +33,12 @@ name=$(basename "${specs[0]}" .spec)
 version=$(sed -n 's/^Version: *//p' "${specs[0]}")
 [ -n "$version" ] || { echo "no Version in the spec" >&2; exit 1; }
 
-top=$(mktemp -d)
+# Two builds of one commit give the same bytes (tests/build-rpm-same-bytes.sh): the build tree is one fixed path per
+# package, because its path lands in the source package's header (rpm keeps the build scripts with the path written out)
+# and in the debug info, and the source archive carries no clock (gzip -n). One build of a package at a time on a
+# machine.
+top=/tmp/omx-build/$name
+rm -rf "$top"
 mkdir -p "$top/SOURCES" "$top/SPECS" "$out"
 spec=$top/SPECS/$name.spec
 cp "${specs[0]}" "$spec"
@@ -54,7 +59,7 @@ grep -q '^%changelog' "$spec" || printf '\n%%changelog\n' >> "$spec"
 sed -i '/^%changelog/q' "$spec"
 "$(dirname "$(readlink -f "$0")")/../changelog/changelog.sh" rpm -C "$tree" "$ref" "$version-$release" >> "$spec"
 
-git -C "$tree" archive --prefix="$name-$version/" HEAD | gzip > "$top/SOURCES/$name-$version.tar.gz"
+git -C "$tree" archive --prefix="$name-$version/" HEAD | gzip -n > "$top/SOURCES/$name-$version.tar.gz"
 rpmbuild --define "_topdir $top" "${check[@]}" -ba "$spec"
 find "$top/RPMS" "$top/SRPMS" -name '*.rpm' -exec cp {} "$out/" \;
 ls "$out"/*.rpm
