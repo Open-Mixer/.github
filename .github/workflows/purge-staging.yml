@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Purge the staging channel
+
+# The dispatch door of the purge. GitHub dispatches only workflows that exist on the default branch, and the purge lives
+# on openmixer-v1 with the other shared workflows (purge-staging.yml there, docs/release-operations.md of that branch).
+# This file only calls it, with the same inputs and the secrets it names; the work and its guards are all there.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target-repo:
+        type: string
+        default: 'Open-Mixer/open-mixer.github.io'
+        description: 'The channel repository whose staging/ is emptied'
+      fedora-versions:
+        type: string
+        default: '["44", "45"]'
+        description: 'JSON array of the Fedora releases whose empty staging index must exist'
+      suite-matrix:
+        type: string
+        default: '["bookworm", "trixie"]'
+        description: 'JSON array of the Debian releases whose empty staging index must exist'
+      reason:
+        type: string
+        default: 'purge'
+        description: 'The wave or pass, for the commit message'
+      dry-run:
+        type: boolean
+        default: false
+        description: 'Purge a pulled copy and push nothing'
+
+permissions:
+  contents: read
+
+jobs:
+  purge:
+    uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1
+    with:
+      target-repo: ${{ inputs.target-repo }}
+      fedora-versions: ${{ inputs.fedora-versions }}
+      suite-matrix: ${{ inputs.suite-matrix }}
+      reason: ${{ inputs.reason }}
+      dry-run: ${{ inputs.dry-run }}
+    secrets:
+      OPENMIXER_PACKAGES_SIGNING_KEY: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+      RPM_GPG_KEY: ${{ secrets.RPM_GPG_KEY }}
+      RPM_GPG_PASSPHRASE: ${{ secrets.RPM_GPG_PASSPHRASE }}
+      PAGES_TOKEN: ${{ secrets.PAGES_TOKEN }}
+      SITE_GPG_KEY: ${{ secrets.SITE_GPG_KEY }}
