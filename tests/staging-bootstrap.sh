@@ -198,8 +198,9 @@ fi
 ok "$kind: the install check adds the staging channel the first publish made, and the client takes the staged build"
 
 # ---- the tolerance is for a staging channel never published, never for a broken one
-# a machine without the staging channel: its files gone, and dnf's cached staging metadata with them
-unadd() { rm -f "${staging_files[@]}"; rm -rf /var/cache/libdnf5/openmixer-staging*; }
+# a fresh machine without the staging channel: its files gone, and the staging metadata dnf or apt cached with them (apt
+# keeps a cached index when a new one fails to verify, with a warning only; a fresh build container has none)
+unadd() { rm -f "${staging_files[@]}"; rm -rf /var/cache/libdnf5/openmixer-staging* /var/lib/apt/lists/*_staging_deb_*; }
 (cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org commit -qm staged)
 if [ "$kind" = rpm ]; then
     echo '<!-- tampered -->' >> "$ch/staging/rpm/fedora/44/noarch/repodata/repomd.xml"
