@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: langpacks
+description: Hold an owner's language packs to its catalogs and omx-contract's language list, and its catalogs to omx-contract's release gate
+
+# An owner of codes builds one pack per listed language from its own spec and debian/ (langpacks.py, Open-Mixer/.github#37):
+# rpm <name>-langpack-<lang>, deb <name>-l10n-<lang>, each owning /usr/share/<owner>/catalogs/<lang>.json. This step
+# is red when the generated blocks between the markers in the spec and in debian/control, or the packs' .install and
+# .lintian-overrides files, are not what langpacks.py writes for the catalogs and the language list; and when
+# the catalogs' release gate (`omx-contract translate --check`, omx-contract#21, or the owner's `gate`) refuses a catalog: a listed
+# language with no catalog, a missing key, a stale entry. Nothing is written. The caller has checked the repository
+# out and installed omx-contract (its CLI and omx-contract-data, 3.16.0 or later, which carries languages.json).
+# To write the blocks: python3 <this directory>/langpacks.py rpm|deb ... without --check.
+
+inputs:
+  name:
+    description: The pack prefix, the owner's spec Name and debian/control Source
+    required: true
+  base:
+    description: The package each pack supplements and depends on (default the name)
+    required: false
+    default: ''
+  owner:
+    description: The directory under /usr/share holding catalogs/
+    required: true
+  catalogs:
+    description: The catalogs directory of the checkout
+    required: false
+    default: catalogs
+  spec:
+    description: The spec, relative to the checkout ('' for none)
+    required: false
+    default: ''
+  debian:
+    description: The debian directory, relative to the checkout ('' for none)
+    required: false
+    default: debian
+  moved:
+    description: Space-separated <lang>:<version> of languages whose catalog the base carried before <version>
+    required: false
+    default: ''
+  languages:
+    description: omx-contract's language list
+    required: false
+    default: /usr/share/omx-contract/languages.json
+  gate:
+    description: >-
+      The catalogs' release gate, run in the checkout (default the owner form; an owner whose items name another
+      package's reads them from a contract directory, such as a make target that stages its own the way its
+      check-contract-dir does)
+    required: false
+    default: omx-contract translate --check --owner .
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        NAME: ${{ inputs.name }}
+        BASE: ${{ inputs.base }}
+        OWNER: ${{ inputs.owner }}
+        CATALOGS: ${{ inputs.catalogs }}
+        SPEC: ${{ inputs.spec }}
+        DEBIAN: ${{ inputs.debian }}
+        MOVED: ${{ inputs.moved }}
+        LANGUAGES: ${{ inputs.languages }}
+        GATE: ${{ inputs.gate }}
+      run: |
+        set -euo pipefail
+        gen=$GITHUB_ACTION_PATH/langpacks.py
+        args=(--name "$NAME" --owner "$OWNER" --catalogs "$CATALOGS" --languages "$LANGUAGES" --check)
+        [ -z "$BASE" ] || args+=(--base "$BASE")
+        [ -n "$SPEC$DEBIAN" ] || { echo "::error::langpacks: neither a spec nor a debian directory to hold" >&2; exit 1; }
+        [ -z "$SPEC" ] || python3 "$gen" rpm --spec "$SPEC" "${args[@]}"
+        if [ -n "$DEBIAN" ]; then
+          moved=()
+          for m in $MOVED; do moved+=(--moved "$m"); done
+          python3 "$gen" deb --debian "$DEBIAN" "${args[@]}" "${moved[@]}"
+        fi
+        echo "langpacks: $NAME's packs are current for $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["languages"]))' "$LANGUAGES")"
+        bash -c "$GATE"
