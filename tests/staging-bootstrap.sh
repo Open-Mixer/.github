@@ -6,15 +6,17 @@
 # the install check adds the staging channel again. The channel is served over HTTP, so a missing file is a real 404.
 # Proves:
 #   - the control: the fixture has no staging path, and its staging index answers 404 while the real index answers 200;
-#   - the build job's add-openmixer staging step passes on a channel whose staging was never published, adds nothing and
-#     keeps the real channel loading (before this, its makecache / apt-get update failed on the 404 and the first staged
-#     run could never reach its publish);
+#   - strict by default: the build job's add-openmixer staging step, with no switch, refuses a staging channel never
+#     published and names the URL that answered 404; it never builds against the released dependency on a notice;
+#   - the switch: build-rpm.yml and build-deb.yml take staging-bootstrap (boolean, default false) and pass it to the
+#     build job's add-openmixer; with it on, the same step adds nothing, says so with a notice, exits 0 and keeps the
+#     real channel loading (the first layer of a wave, whose build job runs before anything was staged);
 #   - the staged publish, through the action's own steps (the one that names the tree first), creates staging/<kind>
 #     with a signed index for every release of the skeleton, and the real tree is byte-identical;
 #   - the install check's add-openmixer staging step then adds the staging channel and loads it strictly, and the client
 #     takes the staged build;
-#   - the absent-staging tolerance is not a weaker check: a staging index with a broken signature, and a staging tree
-#     that exists but has no index for the client's release, both fail the step;
+#   - the switch is not a weaker check: with it on, a staging index with a broken signature, and a staging tree that
+#     exists but has no index for the client's release, both fail the step;
 #   - purged to nothing: after the purge the step loads the empty index, and the next staged publish lands as the first.
 # Runs as root in a throwaway Fedora (rpm) or Debian (deb) container (curl and python3 in it): the client arm writes /etc.
 #
@@ -127,21 +129,63 @@ else
     staging_files=(/etc/apt/sources.list.d/openmixer-staging.sources /etc/apt/preferences.d/openmixer-staging.pref)
 fi
 
-# add-openmixer's staging step, as the build job and the install check run it
+# add-openmixer's staging step, as the build job and the install check run it: its script, and its env with the action's
+# inputs written in (the ones passed, the declared default for the rest; an input the action does not declare stops here)
 step "$actions/add-openmixer/action.yml" 'inputs\.staging' "$work/add-staging.sh"
-add_staging() { GITHUB_ACTION_PATH=$actions/add-openmixer BASE_URL=$base SUITE=trixie bash -e "$work/add-staging.sh"; }
+add_staging() { # [staging-bootstrap value]: unset passes nothing, as a caller without the switch
+    python3 -I - "$actions/add-openmixer/action.yml" "$work/step.env" "base-url=$base" suite=trixie ${1:+"staging-bootstrap=$1"} <<'PY2'
+import re, sys, yaml
+path, out, kv = sys.argv[1], sys.argv[2], dict(a.split("=", 1) for a in sys.argv[3:])
+d = yaml.safe_load(open(path)); inputs = d.get("inputs") or {}
+for k in kv: assert k in inputs, f"add-openmixer declares no input {k}"
+s = [s for s in d["runs"]["steps"] if "inputs.staging" in (s.get("if") or "")][0]
+def val(m):
+    k = m.group(1); assert k in inputs, f"add-openmixer's staging step reads an undeclared input {k}"
+    return str(kv.get(k, inputs[k].get("default", "")))
+with open(out, "w") as f:
+    for name, v in (s.get("env") or {}).items():
+        f.write(name + "=" + re.sub(r"\$\{\{\s*inputs\.([a-z-]+)\s*\}\}", val, str(v)) + "\n")
+PY2
+    (envfile "$work/step.env"; GITHUB_ACTION_PATH=$actions/add-openmixer bash -e "$work/add-staging.sh")
+}
 
-# ---- the build job of the first staged run: staging was never published
-add_staging > "$work/build-add.log" 2>&1 ||
-    { cat "$work/build-add.log"; fail "the first staged run stops in its build job: add-openmixer staging fails on a staging channel never published"; }
+# ---- the build job of the first staged run, no switch: strict, the 404 named
+if add_staging > "$work/strict-add.log" 2>&1; then
+    fail "with no staging-bootstrap a staging channel never published is not refused: $(cat "$work/strict-add.log")"
+fi
+grep -qF "$base/$index" "$work/strict-add.log" && grep -q 404 "$work/strict-add.log" ||
+    fail "the refusal does not name the URL that answered 404 ($base/$index): $(cat "$work/strict-add.log")"
+rm -f "${staging_files[@]}"
+ok "$kind: with no switch, a staging channel never published fails the step and names $index answering 404"
+
+# ---- the switch is plumbed: both reusable workflows declare it off by default and hand it to the build job's add-openmixer
+python3 -I - "$root/.github/workflows/build-rpm.yml" "$root/.github/workflows/build-deb.yml" "$actions/add-openmixer/action.yml" <<'PY2' ||
+import sys, yaml
+*wfs, act = sys.argv[1:]
+a = yaml.safe_load(open(act))["inputs"].get("staging-bootstrap")
+assert a is not None and str(a.get("default")) == "false", f"add-openmixer: staging-bootstrap is {a}, not an input off by default"
+for wf in wfs:
+    d = yaml.safe_load(open(wf)); i = d[True]["workflow_call"]["inputs"].get("staging-bootstrap")
+    assert i is not None and i.get("type") == "boolean" and i.get("default") is False, f"{wf}: staging-bootstrap is {i}, not a boolean off by default"
+    adds = [s for s in d["jobs"]["build"]["steps"] if "/actions/add-openmixer@" in s.get("uses", "")]
+    assert len(adds) == 1 and adds[0]["with"].get("staging-bootstrap") == "${{ inputs.staging-bootstrap }}", \
+        f"{wf}: the build job does not pass staging-bootstrap to add-openmixer"
+PY2
+    fail "the staging-bootstrap switch is not plumbed from build-rpm.yml / build-deb.yml through add-openmixer"
+ok "$kind: build-rpm.yml and build-deb.yml take staging-bootstrap, off by default, and pass it to the build job's add-openmixer"
+
+# ---- the build job of the first layer's staged run, staging-bootstrap: true: the notice, exit 0
+add_staging true > "$work/build-add.log" 2>&1 ||
+    { cat "$work/build-add.log"; fail "with staging-bootstrap the first staged run stops in its build job on a staging channel never published"; }
 for f in "${staging_files[@]}"; do [ ! -e "$f" ] || fail "add-openmixer added the staging channel ($f) where none was published"; done
-grep -qi 'not been published' "$work/build-add.log" || fail "add-openmixer does not say staging was skipped: $(cat "$work/build-add.log")"
+grep -q '::notice::' "$work/build-add.log" && grep -qi 'not been published' "$work/build-add.log" ||
+    fail "add-openmixer does not give the notice that staging was skipped: $(cat "$work/build-add.log")"
 if [ "$kind" = rpm ]; then
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null || fail "the real channel does not load beside the skipped staging"
 else
     apt-get update -qq -o APT::Update::Error-Mode=any || fail "the real channel does not load beside the skipped staging"
 fi
-ok "$kind: the build job adds no staging channel where none was published, says so, and keeps the real channel"
+ok "$kind: with staging-bootstrap the build job adds no staging channel where none was published, gives the notice, keeps the real channel"
 
 # ---- the publish job: the action's steps, the one that names the tree first
 act=$actions/publish-${kind}s/action.yml
@@ -208,14 +252,14 @@ else
     sed -i 's/^Label: OpenMixer-Staging$/Label: OpenMixer-Tampered/' "$ch/staging/deb/debian/trixie/InRelease"
 fi
 unadd
-if add_staging > "$work/tampered.log" 2>&1; then fail "add-openmixer loaded a staging index with a broken signature: $(cat "$work/tampered.log")"; fi
+if add_staging true > "$work/tampered.log" 2>&1; then fail "add-openmixer loaded a staging index with a broken signature: $(cat "$work/tampered.log")"; fi
 (cd "$ch" && git checkout -q -- .)
 mv "$ch/staging/$kind" "$work/kept-tree"
 mkdir -p "$ch/staging/$kind"; cp "$work/kept-tree/$([ "$kind" = rpm ] && echo RPM-GPG-KEY-openmixer || echo openmixer.asc)" "$ch/staging/$kind/"
 unadd
-if add_staging > "$work/partial.log" 2>&1; then fail "add-openmixer skipped a staging tree that exists but has no index for this release: $(cat "$work/partial.log")"; fi
+if add_staging true > "$work/partial.log" 2>&1; then fail "add-openmixer skipped a staging tree that exists but has no index for this release: $(cat "$work/partial.log")"; fi
 rm -rf "$ch/staging/$kind"; mv "$work/kept-tree" "$ch/staging/$kind"
-ok "$kind: a staging index with a broken signature, and a staging tree without this release's index, still fail the step"
+ok "$kind: with staging-bootstrap, a staging index with a broken signature, and a staging tree without this release's index, still fail"
 
 # ---- purged to nothing: the empty index loads, and the next staged publish lands as the first did
 SKELETON=$sk "$actions/purge-staging/purge-staging.sh" "$kind" "$ch" "$NEW_ID" > "$work/purge.log" 2>&1 || { cat "$work/purge.log"; fail "the purge failed"; }
