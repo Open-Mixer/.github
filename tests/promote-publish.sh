@@ -167,6 +167,17 @@ fi
 ok "$kind: the channel root holds the staged bytes for every release, indexed and signed; staging is as it was"
 
 # ---- a client with the real channel alone
+# the real channel alone: nothing an earlier test of this container left (a staging source, an installed omx-lib)
+if [ "$kind" = rpm ]; then
+    rm -f /etc/yum.repos.d/openmixer*.repo
+    if rpm -q omx-app >/dev/null 2>&1; then rpm -e omx-app; fi
+    if rpm -q omx-lib >/dev/null 2>&1; then rpm -e omx-lib; fi
+else
+    rm -f /etc/apt/sources.list.d/openmixer*.sources /etc/apt/preferences.d/openmixer*.pref
+    for p in omx-app omx-lib; do
+        if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q '^install ok installed'; then dpkg --purge "$p" >/dev/null; fi
+    done
+fi
 base=file://$ch
 if [ "$kind" = rpm ]; then
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
