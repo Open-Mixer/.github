@@ -23,7 +23,8 @@ PATTERNS=(
   'openmixer ?#[0-9]'                                 # one of its issues or pull requests
   '[A-Za-z0-9_.]-dev#[0-9]'                           # an issue of a private *-dev repository
   'integration/[A-Za-z0-9]'                           # a private integration branch
-  'packages/[a-z][a-z0-9-]+'                          # a path into the private repository's packages
+  '(^|[^A-Za-z0-9_-])packages/[a-z][a-z0-9-]+'        # a path into the private repository's packages: the segment
+                                                      # itself, never the tail of dist-packages or site-packages
   '\.''vue([^A-Za-z0-9_]|$)'                            # its web UI components
   "openmixer's"" spec"                                  # its specification files
   'docs/''design/'                                      # its design documents
