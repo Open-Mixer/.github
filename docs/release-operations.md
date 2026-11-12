@@ -176,6 +176,32 @@ For this wave only, the reusable workflows still accept `staged-deps` and ignore
 The staged versions sort above the release of the same version (`<version>-<release>.git<sha>` for RPM,
 `<version>+git<sha>` for DEB), so a consumer's floor on the coming version is met.
 
+### Promoting a staged version
+
+`promote-staged.yml` makes a staged build the release without building it again, so what the layers above were built
+and verified against is what ships. A repository calls it from a `promote.yml` of its own (dispatched by hand, with
+`contents: write`; the header of `promote-staged.yml` has the caller), with the staged `version` and, when staging
+holds builds of more than one commit of that version, the `commit`.
+
+1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
+   architecture of the matrix, with its source package, and must cover every release the channel root serves the
+   package for. The commit must be on the default branch, and `v<version>` must be free or already on that commit.
+2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
+   the signed staging index of its suite. Nothing is signed by a promotion.
+3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
+   the channel; the metadata is regenerated and signed, the packages are placed as they are, and the tree is compared
+   with the staged checksums before the push is trusted.
+4. **Prove.** Every promoted file is fetched from the served channel and its SHA256 compared with the staged one
+   (`same bytes <sha256> <path>` lines in the run log), then the version installs from the channel root alone in a
+   clean container of every release and architecture.
+5. **Tag and release.** Only then: `v<version>` on the commit the staged build recorded, and the GitHub release with
+   the promoted files. The tag is made by the workflow's token, so it starts no tag-triggered release run.
+
+Any refusal in 1 or 2 leaves the channel as it was. `dry-run: true` stops after assembling an unsigned tree: nothing
+is pushed, tagged or released. A promoted package keeps the version string of its staged build
+(`<version>-<release>.git<sha>`, `<version>+git<sha>`), because its bytes are the same. The staged copies stay under
+`staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
+
 ### The purge
 
 After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand through

@@ -44,6 +44,7 @@ jobs:
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
+      - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
@@ -131,6 +132,10 @@ jobs:
       - name: A staged publish lands in staging only, a client prefers it, and the purge leaves the real tree untouched
         shell: bash
         run: tests/staging-publish.sh ${{ matrix.kind }}
+
+      - name: A staged build is promoted to the channel root with the same bytes, and only when the release key vouches for it
+        shell: bash
+        run: tests/promote-publish.sh ${{ matrix.kind }}
 
   staging-bootstrap:
     name: First staged run into a channel with no staging path (${{ matrix.kind }})

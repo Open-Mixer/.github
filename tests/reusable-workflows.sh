@@ -36,7 +36,7 @@ print(f"ok   {f.split('/')[-1]}")
 PY
 check() { python3 -I "$t/check.py" "$1"; }
 
-for w in public-sources-check ci-node ci-c fuzz release-c-lib release-npm build-rpm build-deb purge-staging; do
+for w in public-sources-check ci-node ci-c fuzz release-c-lib release-npm build-rpm build-deb purge-staging promote-staged; do
   check "$here/.github/workflows/$w.yml" || fail=1
 done
 "$here/.github/actions/no-local-copies/check.sh" --self-test >/dev/null || { echo "FAIL no-local-copies self-test"; fail=1; }
@@ -60,7 +60,7 @@ lines[n - 1] = line.replace(fork, "") if how == "strip" else line.replace(fork +
 open(out, "w").write("\n".join(lines))
 sys.exit(0 if lines[n - 1] != line else 3)
 PY
-for w in public-sources-check ci-node ci-c fuzz build-rpm build-deb; do
+for w in public-sources-check ci-node ci-c fuzz build-rpm build-deb promote-staged; do
   src=$here/.github/workflows/$w.yml
   lines=$(grep -n "runs-on: .*github.event.pull_request.head.repo.full_name != github.repository" "$src" | cut -d: -f1 || true)
   [ -n "$lines" ] || { echo "FAIL sabotage: $w.yml has no fork fallback to strip"; fail=1; continue; }
