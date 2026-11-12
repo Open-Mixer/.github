@@ -6,7 +6,7 @@
 # is the first build's file, byte for byte. A build tree whose path changes from one build to the next fails here in
 # all of them (rpm keeps the path in the source package's header, and every binary names its source package by
 # digest), and so does a source archive that carries the clock. The builder is set up the way a rebuild that compares bytes sets
-# itself up (the stage box of openmixer-ops): a fixed build host name and the build time taken from the %changelog
+# itself up: a fixed build host name and the build time taken from the %changelog
 # entry, which changelog.sh dates with the commit; build-rpm.sh leaves those two to the builder, so a release keeps its
 # real build time. Needs a Fedora container with rpm-build, gcc, git and python3.
 #
