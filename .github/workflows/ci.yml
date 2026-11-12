@@ -58,7 +58,7 @@ jobs:
 
   key-transition:
     name: Key transition (${{ matrix.kind }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: ${{ matrix.image }}
@@ -109,7 +109,7 @@ jobs:
 
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: ${{ matrix.image }}
@@ -140,7 +140,7 @@ jobs:
 
   staging-bootstrap:
     name: First staged run into a channel with no staging path (${{ matrix.kind }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: ${{ matrix.image }}
@@ -167,7 +167,7 @@ jobs:
 
   staging-installability:
     name: channel-installability judges the real channel alone
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: fedora:44
@@ -187,7 +187,7 @@ jobs:
 
   langpacks:
     name: language packs (${{ matrix.image }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     container:
       image: ${{ matrix.image }}
@@ -224,7 +224,7 @@ jobs:
 
   updateinfo:
     name: dnf updateinfo from the packages' changelogs
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: fedora:44
@@ -237,7 +237,7 @@ jobs:
 
   build-rpm-same-bytes:
     name: two RPM builds of one commit give the same bytes
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: fedora:44
@@ -248,7 +248,7 @@ jobs:
 
   deb-changelog:
     name: apt changelog from the published tree
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: debian:trixie
@@ -261,7 +261,7 @@ jobs:
 
   deb-rerun-layout:
     name: a rerun of a DEB release keeps its packages
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     container:
       image: debian:trixie
@@ -289,7 +289,7 @@ jobs:
 
   mod-host-fork:
     name: mod-host from the fork, then each fix taken out again
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     container:
       image: fedora:44
@@ -300,7 +300,7 @@ jobs:
 
   surge-xt-package:
     name: the Surge XT package, its pin, its install paths and its load check
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -308,7 +308,7 @@ jobs:
 
   mod-host-rpm:
     name: mod-host RPMs from the fork, and where they sort
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     container:
       image: fedora:44
@@ -335,7 +335,7 @@ jobs:
 
   mod-host-deb:
     name: mod-host DEBs from the fork, and where they sort
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: debian:trixie

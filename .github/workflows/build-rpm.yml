@@ -213,7 +213,7 @@ jobs:
   build:
     name: Build (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: preflight
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_BUILD_RUNNER || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
     container:
       image: fedora:${{ matrix.fedora }}
@@ -450,7 +450,7 @@ jobs:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: [publish, release, live]
     if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_BUILD_RUNNER || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: fedora:${{ matrix.fedora }}
