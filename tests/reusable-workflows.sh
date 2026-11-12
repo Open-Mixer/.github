@@ -75,4 +75,38 @@ for w in public-sources-check ci-node ci-c fuzz build-rpm build-deb promote-stag
     done
   done
 done
+# The heavy jobs (the package builds and their install checks, the C and node suites) run where one org variable says,
+# OMX_BUILD_RUNNER, read after the fork fallback and falling back to a GitHub-hosted runner: setting it moves them to
+# the cluster runner set with no workflow change, and a fork pull request still never reaches it. The quick
+# public-sources checks never read it: they stay on the runner their caller names.
+cat > "$t/heavy.py" <<'PY'
+import sys, yaml
+HEAVY = {"build-rpm": ["build", "verify"], "build-deb": ["build", "verify"], "ci-c": ["test"], "ci-node": ["test"],
+         "release-package": ["rpm", "deb", "deb-install", "verify"]}
+LIGHT = ["public-sources-check"]
+FORK = ("startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != "
+        "github.repository && 'ubuntu-latest'")
+d, problems = sys.argv[1], []
+for w, jobs in HEAVY.items():
+    doc = yaml.safe_load(open(f"{d}/{w}.yml"))["jobs"]
+    for j in jobs:
+        ro = str(doc[j].get("runs-on", ""))
+        if "vars.OMX_BUILD_RUNNER" not in ro or not ro.rstrip(" }").endswith("'ubuntu-latest'"):
+            problems.append(f"{w}.yml: job {j} does not take vars.OMX_BUILD_RUNNER with a hosted fallback: {ro}")
+        elif not (0 <= ro.find(FORK) < ro.find("vars.OMX_BUILD_RUNNER")):
+            problems.append(f"{w}.yml: job {j} reads OMX_BUILD_RUNNER before the fork fallback: {ro}")
+for w in LIGHT:
+    for j, job in yaml.safe_load(open(f"{d}/{w}.yml"))["jobs"].items():
+        if "OMX_BUILD_RUNNER" in str(job.get("runs-on", "")):
+            problems.append(f"{w}.yml: job {j} is a quick check and must not move with OMX_BUILD_RUNNER")
+for p in problems: print(p)
+sys.exit(1 if problems else 0)
+PY
+if python3 -I "$t/heavy.py" "$here/.github/workflows"; then echo "ok   the heavy jobs take OMX_BUILD_RUNNER, the quick checks do not"
+else echo "FAIL the heavy jobs' runner"; fail=1; fi
+# sabotage: one heavy job without the variable is caught
+mkdir -p "$t/heavy" && cp "$here"/.github/workflows/*.yml "$t/heavy/"
+sed -i 's/ || vars.OMX_BUILD_RUNNER//' "$t/heavy/ci-c.yml"
+if python3 -I "$t/heavy.py" "$t/heavy" >/dev/null; then echo "FAIL sabotage: a heavy job without OMX_BUILD_RUNNER passes"; fail=1
+else echo "ok   sabotage: a heavy job without OMX_BUILD_RUNNER is red"; fi
 exit "$fail"
