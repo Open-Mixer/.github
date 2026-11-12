@@ -5,7 +5,8 @@
 # more artifact of the run, laid out flat, and artifacts outlive their attempt: the download of the next attempt
 # must not take them for build output, because publish-tree.sh refuses a package outside <suite>/. Runs the
 # workflow's own patterns and steps twice over one tree, against a stand-in for the artifact store. The second arm
-# widens the pattern to the one that took the copies in, and the refusal must come back.
+# widens the pattern to the one that took the copies in, and the refusal must come back. Both again with staging on:
+# a staged run publishes into staging/deb and uploads the same flat copies, and the same refusal must hold there.
 #
 #   tests/deb-rerun-layout.sh     needs dpkg-dev, apt-utils and python3 with PyYAML
 set -euo pipefail
@@ -33,6 +34,9 @@ write("name-build", uses("build", "actions/upload-artifact")[0]["name"])
 write("name-signed", uses("publish", "actions/upload-artifact")[0]["name"])
 write("attach.sh", next(s["run"] for s in wf["release"]["steps"] if s.get("name") == "Attach the DEBs to the release"))
 write("keep.sh", next(s["run"] for s in action if s.get("name") == "Keep the published copies"))
+# the step that names the tree (DEB_TREE, and the staging label, skeleton and requires tree) for the later steps
+write("tree.sh", next(s["run"] for s in action if s.get("name") == "Prove the packages are there before anything signs them")
+      .replace("/tmp/collected.txt", f"{out}/collected.txt"))
 PY
 expand() { # expand <file> <suite> <arch>: a workflow expression filled in as the runner would
     sed -e "s/\${{ inputs.package-name }}/$pkg/g" -e "s/\${{ matrix.suite }}/$2/g" -e "s/\${{ matrix.arch }}/$3/g" "$1"
@@ -58,26 +62,37 @@ download() { # download <pattern> <dest>: what download-artifact does with merge
     return 0
 }
 
-attempt() { # attempt <n> <publish pattern> <release pattern>: the publish job, then the release job
+attempt() { # attempt <n> <publish pattern> <release pattern>: the publish job, then the release job (not for a staged run)
     local n=$1 run=$dir/attempt$1
     mkdir -p "$run"
     download "$2" "$run/collected"
     mv "$run/collected" "$dir/collected"
-    (cd "$dir" && "$action/publish-tree.sh" build/channel/deb collected) > "$run/publish.log" 2>&1 || { rm -rf "$dir/collected"; return 1; }
-    (cd "$dir" && rm -rf signed && DEB_DIR=collected SIGNED_DIR=signed bash "$work/keep.sh") >> "$run/publish.log" 2>&1
+    # the action's first step writes the tree and its environment to GITHUB_ENV; the steps after it read them there
+    : > "$run/github-env"
+    (cd "$dir" && DEB_DIR=collected STAGING=$staging SUITES="bookworm trixie" GITHUB_ENV=$run/github-env bash "$work/tree.sh") \
+        > "$run/publish.log" 2>&1 || { cat "$run/publish.log" >&2; fail "attempt $n: the tree step failed"; }
+    grep -qx "DEB_TREE=$tree" "$run/github-env" || fail "attempt $n: the action names another tree than $tree"
+    (cd "$dir" && set -a && . "$run/github-env" && set +a && "$action/publish-tree.sh" "build/channel/$DEB_TREE" collected) \
+        >> "$run/publish.log" 2>&1 || { rm -rf "$dir/collected"; return 1; }
+    # a step that fails here is the harness, not the refusal: it must not pass for one (the caller's || turns off -e)
+    (cd "$dir" && set -a && . "$run/github-env" && set +a && rm -rf signed && DEB_DIR=collected SIGNED_DIR=signed bash "$work/keep.sh") \
+        >> "$run/publish.log" 2>&1 ||
+        { cat "$run/publish.log" >&2; fail "attempt $n: the keep step failed"; }
     # the path of the upload is signed/*.deb, so the artifact is flat
     mkdir -p "$dir/store/$(expand "$work/name-signed" - -)"
-    cp "$dir"/signed/*.deb "$dir/store/$(expand "$work/name-signed" - -)/"
+    cp "$dir"/signed/*.deb "$dir/store/$(expand "$work/name-signed" - -)/" || fail "attempt $n: no published copy to upload"
     rm -rf "$dir/collected" "$dir/signed"
+    [ "$staging" = false ] || return 0
     mkdir -p "$run/release"
     download "$3" "$run/release/collected"
     (cd "$run/release" && env PATH="$work/bin:$PATH" GH_LOG="$run/gh.log" GH_TOKEN=x TAG=v1.0 GITHUB_REPOSITORY=Open-Mixer/t \
         RUNNER_TEMP="$run" bash "$work/attach.sh") >> "$run/publish.log" 2>&1
 }
 
-arm() { # arm <name>: a fresh artifact store holding the four builds, and an empty tree
-    dir=$work/$1
-    mkdir -p "$dir/store" "$dir/build/channel/deb"
+arm() { # arm <name> <staging>: a fresh artifact store holding the four builds, and an empty tree
+    dir=$work/$1 staging=$2 tree=deb
+    [ "$staging" = false ] || tree=staging/deb
+    mkdir -p "$dir/store" "$dir/build/channel/$tree"
     local suite arch
     for suite in bookworm trixie; do
         for arch in amd64 arm64; do
@@ -96,7 +111,7 @@ check_attached() { # check_attached <attempt>: the assets the release job handed
 publish=$(expand "$work/pattern-publish" - -)
 release=$(expand "$work/pattern-release" - -)
 
-arm fixed
+arm fixed false
 attempt 1 "$publish" "$release" || { cat "$dir/attempt1/publish.log" >&2; fail "the first attempt did not publish"; }
 check_attached 1
 attempt 2 "$publish" "$release" || { cat "$dir/attempt2/publish.log" >&2; fail "the rerun refused its own packages"; }
@@ -108,8 +123,25 @@ echo "ok   a rerun after a successful publish keeps the packages and attaches th
 
 # the positive control: the wide pattern takes the flat copies in and is refused, which is what the arm above escapes
 wide="$pkg-debs-*"
-arm wide
+arm wide false
 attempt 1 "$wide" "$wide" || fail "control: the first attempt did not publish"
 if attempt 2 "$wide" "$wide"; then fail "control: the flat copies were not refused, this test sees nothing"; fi
 grep -q 'is not laid out <suite>/<package>.deb' "$dir/attempt2/publish.log" || { cat "$dir/attempt2/publish.log" >&2; fail "control: refused for another reason"; }
 echo "ok   control: a pattern that takes the flat copies in is refused"
+
+# the same two with staging on: the packages land in staging/deb, deb/ is never written, and the flat copies a staged
+# run uploads are refused there as in deb/
+arm staged-fixed true
+attempt 1 "$publish" "$release" || { cat "$dir/attempt1/publish.log" >&2; fail "staged: the first attempt did not publish"; }
+attempt 2 "$publish" "$release" || { cat "$dir/attempt2/publish.log" >&2; fail "staged: the rerun refused its own packages"; }
+grep -q '^kept   ' "$dir/attempt2/publish.log" || fail "staged: the rerun did not keep what the first attempt published"
+! grep -q '^placed ' "$dir/attempt2/publish.log" || fail "staged: the rerun placed a package again"
+[ "$(find "$dir/build/channel/staging/deb" -name '*.deb' | wc -l)" = 4 ] || fail "staged: staging/deb does not hold the four packages"
+[ -z "$(find "$dir/build/channel/deb" -name '*.deb' -print -quit 2>/dev/null)" ] || fail "staged: deb/ was written"
+echo "ok   staged: a rerun keeps the packages in staging/deb and leaves deb/ alone"
+
+arm staged-wide true
+attempt 1 "$wide" "$wide" || fail "staged control: the first attempt did not publish"
+if attempt 2 "$wide" "$wide"; then fail "staged control: the flat copies were not refused, this test sees nothing"; fi
+grep -q 'is not laid out <suite>/<package>.deb' "$dir/attempt2/publish.log" || { cat "$dir/attempt2/publish.log" >&2; fail "staged control: refused for another reason"; }
+echo "ok   staged control: a pattern that takes the flat copies in is refused in staging/deb"

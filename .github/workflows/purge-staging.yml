@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Purge the staging channel
+
+# The staging channel holds what a release wave has staged (build-rpm.yml and build-deb.yml with staged: true). Once the
+# wave's release pass has published the whole set to the real channel, this empties staging/rpm and staging/deb of the
+# channel repository, regenerates their empty metadata with the publish's own tree scripts, signs it with the release
+# key, and pushes through channel-push. rpm/ and deb/ are never written; each job refuses a checkout that changed
+# anything outside staging/<kind> (actions/purge-staging). Run it by hand, or call it as the last job of the pass:
+#
+#   purge:
+#     needs: [release]
+#     uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1
+#     with: { reason: wave-2026-11 }
+#     secrets: inherit
+#
+# Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY, and
+# RPM_GPG_KEY with RPM_GPG_PASSPHRASE, which co-sign the apt index as build-deb.yml has it co-signed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target-repo:
+        type: string
+        default: 'Open-Mixer/open-mixer.github.io'
+        description: 'The channel repository whose staging/ is emptied'
+      fedora-versions:
+        type: string
+        default: '["44", "45"]'
+        description: 'JSON array of the Fedora releases whose empty staging index must exist'
+      suite-matrix:
+        type: string
+        default: '["bookworm", "trixie"]'
+        description: 'JSON array of the Debian releases whose empty staging index must exist'
+      reason:
+        type: string
+        default: 'purge'
+        description: 'The wave or pass, for the commit message'
+      dry-run:
+        type: boolean
+        default: false
+        description: 'Purge a pulled copy and push nothing'
+  workflow_call:
+    inputs:
+      target-repo:
+        type: string
+        default: 'Open-Mixer/open-mixer.github.io'
+        description: 'The channel repository whose staging/ is emptied'
+      fedora-versions:
+        type: string
+        default: '["44", "45"]'
+        description: 'JSON array of the Fedora releases whose empty staging index must exist'
+      suite-matrix:
+        type: string
+        default: '["bookworm", "trixie"]'
+        description: 'JSON array of the Debian releases whose empty staging index must exist'
+      reason:
+        type: string
+        default: 'purge'
+        description: 'The wave or pass, for the commit message'
+      dry-run:
+        type: boolean
+        default: false
+        description: 'Purge a pulled copy and push nothing'
+    secrets:
+      OPENMIXER_PACKAGES_SIGNING_KEY:
+        required: false
+      RPM_GPG_KEY:
+        required: false
+      RPM_GPG_PASSPHRASE:
+        required: false
+      PAGES_TOKEN:
+        required: false
+      SITE_GPG_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rpm:
+    name: Purge staging/rpm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: fedora:44
+    # the publishes of this organisation to the channel run in this group; the purge waits for them
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}
+      cancel-in-progress: false
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/purge-staging@openmixer-v1
+        with:
+          kind: rpm
+          sign: ${{ !inputs.dry-run }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+          reason: ${{ inputs.reason }}
+
+  deb:
+    name: Purge staging/deb
+    needs: rpm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: debian:trixie
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}
+      cancel-in-progress: false
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/purge-staging@openmixer-v1
+        with:
+          kind: deb
+          sign: ${{ !inputs.dry-run }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          # the apt index is co-signed by the original key, as publish-debs signs it
+          cosign-key: ${{ secrets.RPM_GPG_KEY }}
+          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          reason: ${{ inputs.reason }}

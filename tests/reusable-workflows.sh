@@ -36,7 +36,7 @@ print(f"ok   {f.split('/')[-1]}")
 PY
 check() { python3 -I "$t/check.py" "$1"; }
 
-for w in public-sources-check ci-node ci-c fuzz release-c-lib release-npm build-rpm build-deb; do
+for w in public-sources-check ci-node ci-c fuzz release-c-lib release-npm build-rpm build-deb purge-staging; do
   check "$here/.github/workflows/$w.yml" || fail=1
 done
 "$here/.github/actions/no-local-copies/check.sh" --self-test >/dev/null || { echo "FAIL no-local-copies self-test"; fail=1; }

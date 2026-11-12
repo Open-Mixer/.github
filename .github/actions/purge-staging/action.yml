@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: purge-staging
+description: Empty the staging channel of a release wave (staging/rpm or staging/deb) and leave the real channel untouched
+
+# The last step of a wave's release pass, run by the purge-staging workflow: every staged package goes, the empty
+# metadata is regenerated and signed by the tree scripts of a publish (purge-staging.sh), and the change is pushed by
+# channel-push like a publish. Only staging/<kind> is committed; rpm/ and deb/ are never read for writing. Runs in a
+# Fedora container for rpm and a Debian one for deb, as the publish actions do.
+
+inputs:
+  kind:
+    description: rpm or deb
+    required: true
+  sign:
+    description: "'true' signs and pushes; anything else purges a pulled copy and pushes nothing"
+    default: 'false'
+  gpg-key:
+    default: ''
+  cosign-key:
+    description: deb only, a second key that also signs the apt index, as publish-debs co-signs it; empty for none
+    default: ''
+  cosign-passphrase:
+    default: ''
+  publish-token:
+    default: ''
+  site-gpg-key:
+    default: ''
+  channel:
+    default: Open-Mixer/open-mixer.github.io
+  branch:
+    default: main
+  releases:
+    description: the Fedora releases (rpm) or Debian releases (deb), space separated, whose empty staging index must exist
+    default: ''
+  reason:
+    description: for the commit message (the wave, or the tag of the pass)
+    default: purge
+
+outputs:
+  commit:
+    description: the commit pushed to the channel; empty when nothing was pushed
+    value: ${{ steps.push.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install the packaging tools
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+      run: |
+        case $KIND in
+          rpm) dnf install -y --setopt=install_weak_deps=False createrepo_c rpm-sign gnupg2 pinentry findutils git curl python3-rpm ;;
+          deb) apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv git curl ca-certificates findutils dpkg-dev ;;
+          *) echo "::error::kind is rpm or deb, not '$KIND'"; exit 1 ;;
+        esac
+
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
+      if: inputs.sign == 'true'
+      with:
+        gpg-key: ${{ inputs.gpg-key }}
+        id-variable: OPENMIXER_GPG_KEY_ID
+
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
+      if: inputs.sign == 'true' && inputs.kind == 'deb' && inputs.cosign-key != ''
+      with:
+        gpg-key: ${{ inputs.cosign-key }}
+        gpg-passphrase: ${{ inputs.cosign-passphrase }}
+        id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
+
+    # read only: a pull request run clones the public channel and pushes nothing
+    - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
+      with:
+        publish-token: ${{ inputs.publish-token || github.token }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        strip: ${{ inputs.kind == 'rpm' && 'staging/rpm' || 'none' }}
+
+    - name: Check the signing key is one the channel serves
+      if: inputs.sign == 'true'
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+      run: |
+        set -o pipefail
+        if [ "$KIND" = rpm ]; then keys=build/channel/rpm/RPM-GPG-KEY-openmixer; else keys=build/channel/deb/openmixer.asc; fi
+        # shellcheck disable=SC2086 # the co-signer is one fingerprint or empty
+        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID" ${OPENMIXER_GPG_COSIGN_KEY_ID:-}
+
+    - name: Purge the staging tree
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        SKELETON: ${{ inputs.releases }}
+      run: |
+        set -o pipefail
+        echo "PURGE_STAGING_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
+        echo "SKELETON=$SKELETON" >> "$GITHUB_ENV"
+        COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/purge-staging.sh" "$KIND" build/channel ${OPENMIXER_GPG_KEY_ID:+"$OPENMIXER_GPG_KEY_ID"}
+        git -C build/channel status --short -- "staging/$KIND" | tail -40
+        # nothing outside staging/<kind> changed in the checkout: the real channel is untouched
+        outside=$(git -C build/channel status --porcelain --untracked-files=all -- . ":(exclude)staging/$KIND")
+        [ -z "$outside" ] || { echo "::error::the purge changed paths outside staging/$KIND:"; echo "$outside"; exit 1; }
+
+    - id: push
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.reason }}
+        what: staging/${{ inputs.kind }}
+        rebuild: 'COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'

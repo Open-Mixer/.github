@@ -80,6 +80,119 @@ verified, builds that commit with the inputs the repository's own release.yml pa
 releases only; the GitHub release of the tag is left as it is. Publish in dependency order (omx-contract first),
 since each build takes its BuildRequires from the channel's tree of its own Fedora release, and one run at a time.
 
+## The staging channel of a release wave
+
+A release wave publishes inner layers before the outer ones build on them. Inside the wave, a layer does not wait
+for the real channel: its staged run publishes to the staging channel, and the next layer builds, verifies and
+install-tests against it. The real channel gets the whole set once, in the wave's release pass, from the `v<version>`
+tags. The staging channel is per wave and is purged after the pass.
+
+### Where it is
+
+The staging channel is a second dnf tree and a second apt tree in the same channel repository
+(`Open-Mixer/open-mixer.github.io`), beside `rpm/` and `deb/`, served by the same host and signed with the same key:
+
+| | RPM | DEB |
+| --- | --- | --- |
+| tree | `staging/rpm/fedora/<release>/<arch>/` | `staging/deb/debian/<suite>/<arch>/` |
+| URL | `https://www.openmixer.org/staging/rpm/fedora/$releasever/$basearch/` and `.../noarch/` | `https://www.openmixer.org/staging/deb/debian/<suite>/` |
+| key | the real channel's: `/etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer` | the real channel's: `/usr/share/keyrings/openmixer-archive-keyring.asc` |
+| priority | `priority=10` (the real repositories keep dnf's default, 99) | `Pin-Priority: 600` on `Label: OpenMixer-Staging` (the real channel stays at 500) |
+
+Every Fedora release and Debian release of the workflow's matrix has an index in the staging tree, empty or not, so a
+machine that adds the staging channel never reads a 404. The release preflight, the channel prune and
+channel-installability read `rpm/` and `deb/` only; the site deploy of openmixer-www replaces only the paths it owns.
+
+### The files a machine adds
+
+The real channel first (openmixer-release, which installs the key), then these. They are `packaging/staging/` of this
+repository, and `add-staging.sh` of the add-openmixer action writes them.
+
+`/etc/yum.repos.d/openmixer-staging.repo`:
+
+```ini
+[openmixer-staging]
+name=OpenMixer staging
+baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=10
+
+[openmixer-staging-noarch]
+name=OpenMixer staging (noarch)
+baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/noarch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=10
+```
+
+`/etc/apt/sources.list.d/openmixer-staging.sources`, with the system's Debian release for `<suite>`:
+
+```
+Types: deb
+URIs: https://www.openmixer.org/staging/deb/debian/<suite>/
+Suites: ./
+Signed-By: /usr/share/keyrings/openmixer-archive-keyring.asc
+```
+
+`/etc/apt/preferences.d/openmixer-staging.pref`:
+
+```
+Package: *
+Pin: release l=OpenMixer-Staging
+Pin-Priority: 600
+```
+
+Where a package of the staging channel meets a dependency, it is taken over the real channel's, even over a higher
+version; everything else comes from the real channel. The repository ids start with `openmixer` on purpose: channel-installability
+disables every system repository whose id does, so the gate keeps judging the real channel alone on a machine that
+has staging added (`tests/staging-installability.sh`). To take the staging channel off a machine, remove the three
+files and refresh (`dnf makecache`, `apt-get update`).
+
+### How a layer uses it
+
+- **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
+  `build-rpm.yml` and `build-deb.yml` build the staged target (fc44 x86_64, trixie amd64) against the staging channel,
+  sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
+  of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
+  a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and
+  `source-repository`.
+- **Build against staging.** `staged: true` already does. A dry run on a branch takes `staging: true`: the build
+  containers add the staging channel, and nothing is published. `staging` refuses a tag, `source-ref` and `publish`, so
+  a release never builds against staged packages.
+- **Anywhere else** (a consumer's own CI, the verify Job, an install test): `add-openmixer` with `staging: 'true'`, or
+  the three files above on a machine that has openmixer-release. A consumer turns it on with one switch and has no
+  per-package code: dnf and apt resolve to the staged builds.
+
+For this wave only, the reusable workflows still accept `staged-deps` and ignore it, and `install-staged` is a no-op that says it is retired; both are removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched to `staging`.
+
+The staged versions sort above the release of the same version (`<version>-<release>.git<sha>` for RPM,
+`<version>+git<sha>` for DEB), so a consumer's floor on the coming version is met.
+
+### The purge
+
+After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand from the
+`openmixer-v1` branch of this repository, or as the last job of the pass with `uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1` and
+`secrets: inherit`). One job per kind empties `staging/rpm` and `staging/deb`, regenerates their empty metadata with
+the tree scripts, signs it with the same keys and pushes through `channel-push`. A machine that still has the staging
+channel added then reads an empty index.
+
+The purge is also how the staging channel comes to exist: before the first wave, run it once (it makes the empty,
+signed index of every release in its inputs). Until then a build or a machine that adds the staging channel fails on
+the missing index, which is a failure rather than a silent build against the real channel alone. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
+and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
+pulled copy and pushes nothing.
+
+### Tests
+
+`tests/staging-channel.sh` (the workflows rendered, the precheck as written, the repository files, the purge guard),
+`tests/staging-publish.sh rpm|deb` (a staged publish, a client and the purge on a stub channel, in a Fedora or Debian
+container) and `tests/staging-installability.sh` (the gate's verdict with and without a staged minor) run in CI.
+
 ## openmixer-release, the package that adds the repository
 
 A machine adds the channel by installing `openmixer-release`, as RPM Fusion's machines do with

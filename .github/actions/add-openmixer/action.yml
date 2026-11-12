@@ -8,6 +8,8 @@ description: Add the OpenMixer repository to a Fedora or Debian container by ins
 # repository it adds (dnf: openmixer and openmixer-noarch; apt: /etc/apt/sources.list.d/openmixer.sources).
 # With suite set on Debian, the key and the source of that release are installed without the package (for an Ubuntu).
 # Installs curl on Debian when the container lacks it; dnf installs the package from its URL. Runs as root.
+# With staging true the staging channel of the release wave is added beside it, at a higher priority (add-staging.sh,
+# docs/release-operations.md), and refreshed: a build or an install check then takes what the wave has staged.
 
 inputs:
   base-url:
@@ -16,6 +18,9 @@ inputs:
   suite:
     description: Debian release whose index a system the channel does not serve (an Ubuntu) takes; empty installs the release package as it is
     default: ''
+  staging:
+    description: "'true' also adds the staging channel at a higher priority than the real one (add-staging.sh)"
+    default: 'false'
 
 runs:
   using: composite
@@ -47,4 +52,19 @@ runs:
             apt-get install -y --no-install-recommends "$deb"
           fi
           apt-get update -qq
+        fi
+
+    - if: inputs.staging == 'true'
+      shell: bash
+      env:
+        BASE_URL: ${{ inputs.base-url }}
+        SUITE: ${{ inputs.suite }}
+      run: |
+        set -euo pipefail
+        "$GITHUB_ACTION_PATH/add-staging.sh"
+        if command -v dnf >/dev/null; then
+          dnf -y --setopt=skip_if_unavailable=False makecache --repo openmixer-staging --repo openmixer-staging-noarch
+        else
+          apt-get update -qq
+          apt-cache policy | grep -A1 'staging/deb' || true
         fi
