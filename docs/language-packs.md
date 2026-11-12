@@ -54,7 +54,10 @@ none for English (the English sentence is the vocabulary's `text.en`).
    ```
 
    It is red when a generated block is stale, when a listed language has no catalog or a catalog names a language the
-   list does not, and when `omx-contract translate --check` refuses a catalog (a missing key, a stale entry).
+   list does not, and when `omx-contract translate --check` refuses a catalog (a missing key, a stale entry). The gate
+   runs `omx-contract translate --check --owner .`; an owner whose items name another package's (plugin-hostd-protocol
+   names omx-clap-core's reply codes) passes `gate:` a command that reads them from a contract directory, such as a
+   make target staging its own the way its `check-contract-dir` does.
 
 ## The meta packs
 

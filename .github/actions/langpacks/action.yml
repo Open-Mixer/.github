@@ -7,7 +7,7 @@ description: Hold an owner's language packs to its catalogs and omx-contract's l
 # rpm <name>-langpack-<lang>, deb <name>-l10n-<lang>, each owning /usr/share/<owner>/catalogs/<lang>.json. This step
 # is red when the generated blocks between the markers in the spec and in debian/control, or the packs' .install and
 # .lintian-overrides files, are not what langpacks.py writes for the catalogs and the language list; and when
-# `omx-contract translate --check` (the release gate of omx-contract, omx-contract#21) refuses a catalog: a listed
+# the catalogs' release gate (`omx-contract translate --check`, omx-contract#21, or the owner's `gate`) refuses a catalog: a listed
 # language with no catalog, a missing key, a stale entry. Nothing is written. The caller has checked the repository
 # out and installed omx-contract (its CLI and omx-contract-data, 3.16.0 or later, which carries languages.json).
 # To write the blocks: python3 <this directory>/langpacks.py rpm|deb ... without --check.
@@ -43,6 +43,13 @@ inputs:
     description: omx-contract's language list
     required: false
     default: /usr/share/omx-contract/languages.json
+  gate:
+    description: >-
+      The catalogs' release gate, run in the checkout (default the owner form; an owner whose items name another
+      package's reads them from a contract directory, such as a make target that stages its own the way its
+      check-contract-dir does)
+    required: false
+    default: omx-contract translate --check --owner .
 
 runs:
   using: composite
@@ -58,6 +65,7 @@ runs:
         DEBIAN: ${{ inputs.debian }}
         MOVED: ${{ inputs.moved }}
         LANGUAGES: ${{ inputs.languages }}
+        GATE: ${{ inputs.gate }}
       run: |
         set -euo pipefail
         gen=$GITHUB_ACTION_PATH/langpacks.py
@@ -71,4 +79,4 @@ runs:
           python3 "$gen" deb --debian "$DEBIAN" "${args[@]}" "${moved[@]}"
         fi
         echo "langpacks: $NAME's packs are current for $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["languages"]))' "$LANGUAGES")"
-        omx-contract translate --check --owner "$GITHUB_WORKSPACE"
+        bash -c "$GATE"
