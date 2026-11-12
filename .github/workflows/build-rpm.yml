@@ -62,6 +62,11 @@ on:
         type: boolean
         default: false
         description: 'Build the staged target only (fc44 x86_64) against the staging channel and publish it to the staging channel (staging/rpm of target-repo), never to the real one. Excludes publish.'
+      # staged-deps is ignored: callers pass staging instead; removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched
+      staged-deps:
+        type: string
+        default: ''
+        description: 'Ignored, kept for this wave only so existing callers still validate; pass staging instead'
       staging:
         type: boolean
         default: false

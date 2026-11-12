@@ -168,6 +168,8 @@ files and refresh (`dnf makecache`, `apt-get update`).
   the three files above on a machine that has openmixer-release. A consumer turns it on with one switch and has no
   per-package code: dnf and apt resolve to the staged builds.
 
+For this wave only, the reusable workflows still accept `staged-deps` and ignore it, and `install-staged` is a no-op that says it is retired; both are removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched to `staging`.
+
 The staged versions sort above the release of the same version (`<version>-<release>.git<sha>` for RPM,
 `<version>+git<sha>` for DEB), so a consumer's floor on the coming version is met.
 

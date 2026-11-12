@@ -56,7 +56,7 @@ out=$(cd "$t/noop" && env -i PATH="$t/noop/bin:/usr/bin:/bin" NOOP_LOG="$t/noop/
 [ ! -s "$t/noop/log" ] || fail "install-staged ran $(cat "$t/noop/log")"
 [ "$(printf '%s\n' "$out" | wc -l)" = 1 ] && echo "$out" | grep -qi 'retired' && echo "$out" | grep -q 'staging' ||
     fail "install-staged does not say in one line that it is retired and staging replaces it: $out"
-ok "install-staged takes packages, tree and token, prints one line and installs nothing\"
+ok "install-staged takes packages, tree and token, prints one line and installs nothing"
 
 # ---- the reusable workflows, rendered
 python3 -I - "$here/.github/workflows/build-rpm.yml" "$here/.github/workflows/build-deb.yml" <<'PY'
