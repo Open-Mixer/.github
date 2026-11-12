@@ -8,7 +8,8 @@ name: ci
 # and never signed (tests/sign-only-placed.sh), and so is a key file whose keys the repository does not pin
 # (tests/pinned-keys.sh). The changelog generator (from git), and
 # what the channel publish adds from them: an updateinfo.xml for dnf and a Changelogs URL for apt
-# (docs/packaging-changelog.md). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
+# (docs/packaging-changelog.md). The language packs of an owner and the openmixer meta packs build and install, and a
+# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
 # taken out again fails its check, and the RPMs and DEBs pass the installed-library checks and upgrade the
 # channel's earlier builds (docs/mod-host.md).
 
@@ -183,6 +184,33 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           tests/staging-installability.sh
+
+  langpacks:
+    name: language packs (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fedora:44
+            kind: rpm
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
+          - image: fedora:45
+            kind: rpm
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
+          - image: debian:bookworm
+            kind: deb
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+          - image: debian:trixie
+            kind: deb
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+    steps:
+      - run: ${{ matrix.tools }}
+      - uses: actions/checkout@v4
+      - run: tests/langpacks.sh ${{ matrix.kind }}
 
   changelog:
     name: changelog generator from git
