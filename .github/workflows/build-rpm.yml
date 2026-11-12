@@ -71,6 +71,10 @@ on:
         type: boolean
         default: false
         description: 'Add the staging channel at a higher priority than the real one to the build containers (staged: true implies it). A dry run only: never on a tag, with source-ref or with publish.'
+      staging-bootstrap:
+        type: boolean
+        default: false
+        description: 'With staged or staging: a staging channel never published (its index and key both 404) is skipped with a notice instead of failing the build. Only for the first layer of a wave, whose build runs before anything was staged.'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -256,6 +260,7 @@ jobs:
         with:
           base-url: ${{ inputs.base-url }}
           staging: ${{ inputs.staged || inputs.staging }}
+          staging-bootstrap: ${{ inputs.staging-bootstrap }}
 
       - name: Show what the channel provides the build
         if: inputs.channel-deps
