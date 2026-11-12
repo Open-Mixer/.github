@@ -175,15 +175,20 @@ The staged versions sort above the release of the same version (`<version>-<rele
 
 ### The purge
 
-After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand from the
-`openmixer-v1` branch of this repository, or as the last job of the pass with `uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1` and
+After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand through
+the `purge-staging.yml` of `main`, a thin caller of this one, since GitHub dispatches only workflows on the default branch; or as
+the last job of the pass with `uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1` and
 `secrets: inherit`). One job per kind empties `staging/rpm` and `staging/deb`, regenerates their empty metadata with
 the tree scripts, signs it with the same keys and pushes through `channel-push`. A machine that still has the staging
 channel added then reads an empty index.
 
-The purge is also how the staging channel comes to exist: before the first wave, run it once (it makes the empty,
-signed index of every release in its inputs). Until then a build or a machine that adds the staging channel fails on
-the missing index, which is a failure rather than a silent build against the real channel alone. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
+The staging channel needs no hand step to come to exist: the first staged publish creates `staging/rpm` or
+`staging/deb` with the signed index of every release of its matrix and the key, and a purge of a channel that never had
+staging makes the same empty tree. Before that first publish the staging URLs answer 404, and the build job of the
+first staged run adds staging before its own publish: `add-openmixer` (add-staging.sh) then adds nothing and says so,
+when this machine's staging index and the staging key file both answer 404. A staging tree that exists without this
+release's index, or an index whose signature does not verify, still fails the step (`tests/staging-bootstrap.sh`).
+After a purge the empty index is served, so the channel is added and loaded as usual. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
 and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
 pulled copy and pushes nothing.
 
@@ -191,7 +196,8 @@ pulled copy and pushes nothing.
 
 `tests/staging-channel.sh` (the workflows rendered, the precheck as written, the repository files, the purge guard),
 `tests/staging-publish.sh rpm|deb` (a staged publish, a client and the purge on a stub channel, in a Fedora or Debian
-container) and `tests/staging-installability.sh` (the gate's verdict with and without a staged minor) run in CI.
+container), `tests/staging-bootstrap.sh rpm|deb` (the first staged run into a channel with no staging path, served
+over HTTP, and the next one after a purge) and `tests/staging-installability.sh` (the gate's verdict with and without a staged minor) run in CI.
 
 ## openmixer-release, the package that adds the repository
 

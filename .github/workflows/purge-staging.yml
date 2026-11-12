@@ -6,7 +6,8 @@ name: Purge the staging channel
 # wave's release pass has published the whole set to the real channel, this empties staging/rpm and staging/deb of the
 # channel repository, regenerates their empty metadata with the publish's own tree scripts, signs it with the release
 # key, and pushes through channel-push. rpm/ and deb/ are never written; each job refuses a checkout that changed
-# anything outside staging/<kind> (actions/purge-staging). Run it by hand, or call it as the last job of the pass:
+# anything outside staging/<kind> (actions/purge-staging). Run it by hand (dispatched through the purge-staging.yml of main,
+# which calls this one: GitHub dispatches only workflows on the default branch), or call it as the last job of the pass:
 #
 #   purge:
 #     needs: [release]
