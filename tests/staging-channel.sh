@@ -240,7 +240,7 @@ for s in stg.sections():
     # channel-installability disables every system repository whose id starts with openmixer
     assert s.startswith("openmixer"), s
     c = stg[s]
-    assert int(c["priority"]) < min(int(real[r].get("priority", "99")) for r in real.sections()), f"{s}: not above the real channel"
+    assert int(c.get("priority", "99")) < min(int(real[r].get("priority", "99")) for r in real.sections()), f"{s}: not above the real channel"
     assert c["baseurl"].startswith("https://www.openmixer.org/staging/rpm/fedora/$releasever/"), c["baseurl"]
     assert c["gpgcheck"] == "1" and c["repo_gpgcheck"] == "1", f"{s}: unsigned"
     assert c["gpgkey"] == real["openmixer"]["gpgkey"], f"{s}: another key file than the real channel's"
