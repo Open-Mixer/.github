@@ -223,6 +223,8 @@ jobs:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils dpkg-dev debhelper build-essential python3 apt ca-certificates
       - uses: actions/checkout@v4
       - run: tests/deb-changelog.sh
+      - run: apt-get install -y --no-install-recommends git
+      - run: tests/build-deb-same-bytes.sh
 
   deb-rerun-layout:
     name: a rerun of a DEB release keeps its packages
