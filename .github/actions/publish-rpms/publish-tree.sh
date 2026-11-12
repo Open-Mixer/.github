@@ -16,6 +16,13 @@
 # signed by the release key. So a package this run did not place must already carry a good signature by a
 # key the channel serves (or this run's key), checked by rpmkeys, and an unsigned or badly signed one makes
 # the run refuse before anything is signed or indexed, naming the file.
+#
+# The environment, for the staging channel (docs/release-operations.md) and its purge:
+#   REPO_FILE   the repository file served at the top of the tree, under its own name; default
+#               packaging/openmixer-release/openmixer.repo (the staging tree serves packaging/staging/openmixer-staging.repo)
+#   SKELETON    Fedora releases, space separated, whose fedora/<release>/ directories get metadata even with nothing in
+#               them: a machine that adds the staging channel must find an index for its release, never a 404
+#   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
 set -euo pipefail
 
 tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <rpm dir> [<gpg key id>]}")
@@ -29,12 +36,21 @@ signed() {
     [ -n "$sigs" ]
 }
 
+here=$(dirname "$(readlink -f "$0")")
+repo_file=${REPO_FILE:-$here/../../../packaging/openmixer-release/openmixer.repo}
+[ -f "$repo_file" ] || { echo "no repository file $repo_file" >&2; exit 1; }
+
 mapfile -t found < <(find "$src" -name '*.rpm' | sort)
-[ "${#found[@]}" -gt 0 ] || { echo "no rpm under $src" >&2; exit 1; }
+[ "${#found[@]}" -gt 0 ] || [ "${EMPTY_OK:-}" = true ] || { echo "no rpm under $src" >&2; exit 1; }
+mkdir -p "$tree"
+for rel in ${SKELETON:-}; do
+    [[ $rel =~ ^[0-9]+$ ]] || { echo "SKELETON names '$rel', not a Fedora release" >&2; exit 1; }
+    mkdir -p "$tree/fedora/$rel"
+done
 
 declare -A dirs=()
 placed=()
-for f in "${found[@]}"; do
+for f in ${found[@]+"${found[@]}"}; do
     IFS='|' read -r is_src arch rel < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}\n' "$f")
     [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
     releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
@@ -67,7 +83,7 @@ trusted_keystore() {
 
 if [ -n "$key" ]; then
     declare -A mine=()
-    for f in "${placed[@]}"; do mine[$f]=1; done
+    for f in ${placed[@]+"${placed[@]}"}; do mine[$f]=1; done
     # the key file is the channel's to write: it is read only if every primary in it, and the key this run signs
     # with, is on the list committed in this repository (channel-keys.sh)
     "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/RPM-GPG-KEY-openmixer" "$key" ||
@@ -84,7 +100,7 @@ if [ -n "$key" ]; then
         esac
     done < <(find "$tree" -name '*.rpm' | sort)
     [ "$refused" = 0 ] || { rm -rf "$keystore"; echo "the channel holds packages this run did not place and cannot vouch for: nothing was signed" >&2; exit 1; }
-    for f in "${placed[@]}"; do
+    for f in ${placed[@]+"${placed[@]}"}; do
         signed "$f" || rpmsign --define "_gpg_name $key" --addsign "$f" >/dev/null
         out=$(rpmkeys --root "$keystore" --checksig "$f" 2>&1) || true
         case $out in *": digests signatures OK") ;; *) echo "not verified after rpmsign: $f ($out)" >&2; exit 1 ;; esac
@@ -127,9 +143,8 @@ for dest in "${!dirs[@]}"; do
 done
 
 # the key file is what the channel served plus the signing key, never the signing key alone (channel-keys.sh);
-# openmixer.repo is the file openmixer-release installs, the same bytes
+# openmixer.repo is the file openmixer-release installs, the same bytes (REPO_FILE: openmixer-staging.repo for staging)
 if [ -n "$key" ]; then
-    here=$(dirname "$(readlink -f "$0")")
     "$here/../import-gpg-key/channel-keys.sh" serve "$tree/RPM-GPG-KEY-openmixer" "$key"
-    install -m 0644 "$here/../../../packaging/openmixer-release/openmixer.repo" "$tree/openmixer.repo"
+    install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
 fi

@@ -10,6 +10,11 @@ description: Sign DEBs and publish them into the deb/ tree of a FreeMixer Pages 
 # change for apt users, whose signed-by file holds the key they saved at install time (publish-tree.sh).
 # sign=false assembles an unsigned tree in build/repo and pushes nothing. The shared-tree race is described
 # in channel-pull.
+#
+# staging: true publishes into staging/deb of the same channel instead (the staging channel of a release wave,
+# docs/release-operations.md): the same tree script, keys and channel-push, the index labelled OpenMixer-Staging (the
+# label the staging pin names), every Debian release of `suites` indexed even with nothing staged for it, and a
+# `requires` package may be one the real deb/ tree serves. deb/ is never written.
 
 inputs:
   deb-dir:
@@ -48,6 +53,12 @@ inputs:
   signed-dir:
     description: directory receiving the published copies, laid out <suite>/*.deb
     default: signed
+  staging:
+    description: "'true' publishes into the staging channel, staging/deb of the channel, and never touches deb/"
+    default: 'false'
+  suites:
+    description: with staging, the Debian releases (space separated) whose staging index exists even when empty
+    default: ''
 
 outputs:
   commit:
@@ -65,8 +76,17 @@ runs:
       shell: bash
       env:
         DEB_DIR: ${{ inputs.deb-dir }}
+        STAGING: ${{ inputs.staging }}
+        SUITES: ${{ inputs.suites }}
       run: |
         set -o pipefail
+        # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/
+        if [ "$STAGING" = true ]; then
+          { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
+            echo "REQUIRES_TREE=build/channel/deb"; } >> "$GITHUB_ENV"
+        else
+          echo "DEB_TREE=deb" >> "$GITHUB_ENV"
+        fi
         find "$DEB_DIR" -name '*.deb' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no DEB under $DEB_DIR"; exit 1; }
 
@@ -111,9 +131,9 @@ runs:
       run: |
         set -o pipefail
         if [ "$SIGN" = true ]; then
-          COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/publish-tree.sh" build/channel/deb "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
+          COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$DEB_TREE" "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
         else
-          "$GITHUB_ACTION_PATH/publish-tree.sh" build/repo/deb "$DEB_DIR"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/repo/$DEB_TREE" "$DEB_DIR"
         fi
 
     - name: Prove the tree holds packages and an index
@@ -122,7 +142,7 @@ runs:
         SIGN: ${{ inputs.sign }}
       run: |
         set -o pipefail
-        if [ "$SIGN" = true ]; then tree=build/channel/deb; else tree=build/repo/deb; fi
+        if [ "$SIGN" = true ]; then tree=build/channel/$DEB_TREE; else tree=build/repo/$DEB_TREE; fi
         find "$tree" -name '*.deb' | sort
         test -n "$(find "$tree" -name '*.deb' -print -quit)" || { echo "::error::the tree holds no package"; exit 1; }
         test -n "$(find "$tree" -name Packages -print -quit)" || { echo "::error::no index in the tree"; exit 1; }
@@ -147,8 +167,9 @@ runs:
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.tag }}
-        what: deb
-        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" build/channel/deb "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+        what: ${{ inputs.staging == 'true' && 'staging/deb' || 'deb' }}
+        # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 
     # After the push: a push that lost a race rebuilds and re-signs the tree, and the copies must be the bytes
     # the channel serves, not those of the first attempt.
@@ -162,7 +183,7 @@ runs:
         set -euo pipefail
         mkdir -p "$SIGNED_DIR"
         while IFS= read -r f; do
-          found=$(find build/channel/deb -name "$(basename "$f")" -print -quit)
+          found=$(find "build/channel/$DEB_TREE" -name "$(basename "$f")" -print -quit)
           test -n "$found" || { echo "::error::$(basename "$f") is not in the tree"; exit 1; }
           cp "$found" "$SIGNED_DIR/"
         done < <(find "$DEB_DIR" -name '*.deb' | sort)
