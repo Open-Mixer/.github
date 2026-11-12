@@ -177,7 +177,11 @@ After the wave's release pass has published every layer to the real channel, run
 `openmixer-v1` branch of this repository, or as the last job of the pass with `uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1` and
 `secrets: inherit`). One job per kind empties `staging/rpm` and `staging/deb`, regenerates their empty metadata with
 the tree scripts, signs it with the same keys and pushes through `channel-push`. A machine that still has the staging
-channel added then reads an empty index. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
+channel added then reads an empty index.
+
+The purge is also how the staging channel comes to exist: before the first wave, run it once (it makes the empty,
+signed index of every release in its inputs). Until then a build or a machine that adds the staging channel fails on
+the missing index, which is a failure rather than a silent build against the real channel alone. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
 and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
 pulled copy and pushes nothing.
 
