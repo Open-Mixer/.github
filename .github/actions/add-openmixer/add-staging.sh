@@ -4,7 +4,7 @@
 # Add the staging channel of the release wave beside the real one, at a higher priority, on a Fedora or Debian machine
 # that already has the real channel (openmixer-release installed: the key is the one it installs). Runs as root.
 #
-#   BASE_URL=https://www.openmixer.org [SUITE=<debian release>] add-staging.sh
+#   BASE_URL=https://www.openmixer.org [SUITE=<debian release>] [STAGING_BOOTSTRAP=true] add-staging.sh
 #
 # dnf: /etc/yum.repos.d/openmixer-staging.repo, ids openmixer-staging and openmixer-staging-noarch, priority=10 (the
 # real repositories keep dnf's default, 99). apt: /etc/apt/sources.list.d/openmixer-staging.sources and the pin
@@ -13,12 +13,15 @@
 # The repository ids start with "openmixer" on purpose: channel-installability disables every system repository whose
 # id does, so the gate keeps judging the real channel alone on a machine that has staging added.
 #
-# A STAGING CHANNEL NEVER PUBLISHED IS SKIPPED, NOTHING ELSE IS. The first staged publish of the channel creates the
-# staging tree (the index of every release of its matrix, the key); before it, the staging URLs answer 404, and the
-# build job of that very first staged run adds staging before its publish. So when this machine's staging index AND
-# the staging key file both answer 404 (or are missing, for a file:// channel), nothing is added, the script says so
-# and exits 0: there is nothing staged to take. Anything else is added as it is and loaded strictly by the caller: a
-# staging tree that exists without this release's index fails here, and a bad signature fails dnf or apt, as before.
+# STRICT BY DEFAULT. A staging index of this machine's release that answers 404 (or is missing, for a file:// channel)
+# fails the script, naming the URL: a staged build that cannot reach staging must never build against the released
+# dependency instead. The first staged publish of the channel creates the staging tree (the index of every release of
+# its matrix, the key), so after it every index a machine reads is served.
+#
+# STAGING_BOOTSTRAP=true is the one exception, for the first layer of a wave, whose build job adds staging before
+# anything was ever published to it: when this machine's staging index AND the staging key file both answer 404,
+# nothing is added, the script says so and exits 0. Anything else still fails: a staging tree that exists without this
+# release's index fails here, any status but 200 or 404 fails here, and a bad signature fails dnf or apt, as before.
 set -euo pipefail
 src=$(dirname "$(readlink -f "$0")")/../../../packaging/staging
 base=${BASE_URL:-https://www.openmixer.org}
@@ -39,17 +42,22 @@ served() {
         *) die "$url answered '${status:-nothing}', neither served nor absent: the staging channel cannot be judged" ;;
     esac
 }
-# <tree> <key file> <index url>...: exits 0 having added nothing when the staging tree was never published
+# <tree> <key file> <index url>...: returns when every index is served; with STAGING_BOOTSTRAP=true, exits 0 having added
+# nothing when the staging tree was never published; fails naming the URLs that answered 404 otherwise
 skip_if_never_published() {
-    local tree=$1 key=$2 url missing=0
+    local tree=$1 key=$2 url
+    local -a absent=()
     shift 2
-    for url in "$@"; do served "$url" || missing=$((missing + 1)); done
-    [ "$missing" -gt 0 ] || return 0
-    if [ "$missing" -eq "$#" ] && ! served "$tree/$key"; then
-        echo "add-staging: the staging channel $tree has not been published yet (no index, no key): nothing added; the first staged publish creates it"
+    for url in "$@"; do served "$url" || absent+=("$url"); done
+    [ "${#absent[@]}" -gt 0 ] || return 0
+    if [ "${STAGING_BOOTSTRAP:-false}" != true ]; then
+        die "${absent[*]} answered 404: the staging channel $tree serves no index for this machine. A staged build never falls back to the real channel; only the first layer of a wave, before anything was staged, passes staging-bootstrap: true"
+    fi
+    if [ "${#absent[@]}" -eq "$#" ] && ! served "$tree/$key"; then
+        echo "add-staging: the staging channel $tree has not been published yet (${absent[*]} and $tree/$key answered 404): nothing added, as staging-bootstrap asks; the first staged publish creates it"
         exit 0
     fi
-    die "the staging channel $tree is published but serves no index at $* for this machine: it is not added half-way"
+    die "${absent[*]} answered 404, but the staging channel $tree is published: it is not added half-way, staging-bootstrap or not"
 }
 if command -v dnf >/dev/null; then
     [ -f /etc/yum.repos.d/openmixer.repo ] || die "the real channel is not added (/etc/yum.repos.d/openmixer.repo): staging goes beside it, never alone"
