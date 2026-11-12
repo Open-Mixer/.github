@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Collect a staged build for promotion
+description: >
+  Finds the packages one staged build left in the staging tree of the channel, copies them out as the publish actions
+  read them, and checks the release key already vouches for them. Builds nothing, signs nothing, writes nothing to the
+  channel (collect.py and vouch.sh beside this file say what is refused).
+
+inputs:
+  kind:
+    description: rpm or deb
+    required: true
+  name:
+    description: the source package
+    required: true
+  version:
+    description: the staged version, without the v
+    required: true
+  binaries:
+    description: the packages every release and architecture must hold, space separated; empty means the name
+    default: ''
+  releases:
+    description: Fedora releases (rpm) or Debian suites (deb), space separated
+    required: true
+  arches:
+    description: the architectures of a release, space separated
+    required: true
+  commit:
+    description: the commit of the staged build, short or full; needed when staging holds more than one of the version
+    default: ''
+  channel:
+    description: the channel repository
+    default: Open-Mixer/open-mixer.github.io
+  branch:
+    description: its branch
+    default: main
+  channel-dir:
+    description: where the channel is cloned to be read; a checkout that is already there is read as it is
+    default: promote/channel
+  out:
+    description: where the packages are copied; the checksums go to <out>.sha256
+    required: true
+  vouch:
+    description: check the signatures too (needs rpm or dpkg and gpgv; the action installs them in a fedora or debian container)
+    default: 'true'
+
+outputs:
+  commit:
+    description: the short commit the staged build recorded
+    value: ${{ steps.collect.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install what reads the packages
+      if: inputs.vouch == 'true'
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+      run: |
+        if [ "$KIND" = rpm ]; then
+          dnf install -y --setopt=install_weak_deps=False python3 git gnupg2 rpm-sign findutils
+        else
+          apt-get update -qq && apt-get install -y --no-install-recommends python3 git gnupg gpgv dpkg-dev ca-certificates findutils
+        fi
+
+    - name: Read the channel
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+        BRANCH: ${{ inputs.branch }}
+        DIR: ${{ inputs.channel-dir }}
+      run: |
+        set -o pipefail
+        [ -d "$DIR/.git" ] || git clone --quiet --depth 1 --branch "$BRANCH" "https://github.com/$CHANNEL" "$DIR"
+        echo "the channel at $(git -C "$DIR" rev-parse HEAD)"
+
+    - id: collect
+      name: Find the staged build
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        NAME: ${{ inputs.name }}
+        VERSION: ${{ inputs.version }}
+        BINARIES: ${{ inputs.binaries }}
+        RELEASES: ${{ inputs.releases }}
+        ARCHES: ${{ inputs.arches }}
+        COMMIT: ${{ inputs.commit }}
+        DIR: ${{ inputs.channel-dir }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -o pipefail
+        python3 -I "$GITHUB_ACTION_PATH/collect.py" "$DIR" "$KIND" --name "$NAME" --version "$VERSION" --binaries "$BINARIES" \
+          --releases "$RELEASES" --arches "$ARCHES" --commit "$COMMIT" --out "$OUT" | tee "$OUT.log"
+        echo "commit=$(sed -n 's/^commit //p' "$OUT.log")" >> "$GITHUB_OUTPUT"
+
+    - name: Check the release key vouches for every file
+      if: inputs.vouch == 'true'
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        DIR: ${{ inputs.channel-dir }}
+        OUT: ${{ inputs.out }}
+      run: |
+        "$GITHUB_ACTION_PATH/vouch.sh" "$DIR" "$KIND" "$OUT"
