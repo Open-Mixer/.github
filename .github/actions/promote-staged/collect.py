@@ -8,7 +8,8 @@ The first step of a promotion (promote-staged.yml): find, in the staging tree of
 staged build of <name> <version> left there, and copy them to DIR laid out as the publish actions read them (rpm: flat;
 deb: <suite>/<file>). Nothing is built and nothing in the checkout is written.
 
-A staged build is named by its commit: <version>-<release>.git<sha>.fcNN for rpm, <version>+git<sha> for deb. Every
+A staged build is named by its commit: <version>-<release>.git<commit time>.<sha>.fcNN for rpm,
+<version>+git<commit time>.<sha> for deb (a build staged before the time was part of the name has the sha alone). Every
 file of that version and commit goes along, the subpackages too. --releases are Fedora releases (rpm) or Debian suites
 (deb), --arches the architectures a release builds; --binaries are the packages every one of those must hold
 (default: the name), as its own architecture or as noarch / all.
@@ -42,9 +43,9 @@ def parse(kind, version, fname):
         m = re.match(rf"^(.+)-{v}-([^-]+)\.([^.]+)\.rpm$", fname)
         if not m:
             return None
-        g = re.search(r"\.git([0-9a-f]{7,40})(?:\.|$)", "." + m.group(2))
+        g = re.search(r"\.git(?:[0-9]+\.)?([0-9a-f]{7,40})(?:\.|$)", "." + m.group(2))
         return (m.group(1), g.group(1), m.group(3)) if g else None
-    m = re.match(rf"^([^_]+)_{v}\+git([0-9a-f]{{7,40}})[^_]*_([^_]+)\.deb$", fname)
+    m = re.match(rf"^([^_]+)_{v}\+git(?:[0-9]+\.)?([0-9a-f]{{7,40}})[^_]*_([^_]+)\.deb$", fname)
     return (m.group(1), m.group(2), m.group(3)) if m else None
 
 

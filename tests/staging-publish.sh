@@ -11,6 +11,9 @@
 #   - a client with the staging channel added takes the staged build even where the real channel has a higher
 #     version (priority 10, pin 600), and the real one without it; after the purge it takes the real one again, and
 #     the empty staging index still loads;
+#   - a later commit of the same version, staged after: its build sorts above the earlier commit's although its sha
+#     sorts below (the commit time comes first in the name), a client takes it even while the index holds both, and the
+#     staged publish drops the earlier build, so the staging channel holds one build of a version;
 #   - add-staging.sh refuses a machine without the real channel.
 # Runs as root in a throwaway Fedora (rpm) or Debian (deb) container: the client arm writes /etc.
 #
@@ -26,6 +29,10 @@ work=$(mktemp -d)
 chmod 755 "$work" # apt reads the repositories and the signed-by file as _apt
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok   $*"; }
+# two staged commits of one version, as build-rpm.sh and build-deb.sh name them, <commit time>.<short sha>: B is an
+# hour later than A and its sha sorts below A's, the case a name made of the sha alone gets wrong
+A=1794480000.99c23a5
+B=1794483600.15b5e63
 
 if [ -z "${NEW_ID:-}" ]; then
     export GNUPGHOME=$work/gnupg; mkdir -m 700 "$GNUPGHOME"
@@ -79,7 +86,7 @@ rpm)
     }
     mkdir -p "$work/real" "$work/staged"
     cp "$(mkpkg omx-lib 3.13.0 1.fc44)" "$(mkpkg omx-lib 3.14.1 1.fc44)" "$(mkpkg omx-app 1.0 1.fc44 'omx-lib >= 3.13')" "$work/real/"
-    cp "$(mkpkg omx-lib 3.14.0 1.git5f455d3.fc44)" "$work/staged/"
+    cp "$(mkpkg omx-lib 3.14.0 1.git$A.fc44)" "$work/staged/"
     "$actions/publish-rpms/publish-tree.sh" "$ch/rpm" "$work/real" "$NEW_ID" >/dev/null
     ;;
 deb)
@@ -93,7 +100,7 @@ deb)
     }
     mkdir -p "$work/real/trixie" "$work/staged/trixie"
     cp "$(mkdeb libmod-host-protocol0 0.10.11)" "$(mkdeb omx-lib 3.13.0)" "$(mkdeb omx-lib 3.14.1)" "$work/real/trixie/"
-    cp "$(mkdeb omx-lib 3.14.0+git5f455d3 libmod-host-protocol0)" "$work/staged/trixie/"
+    cp "$(mkdeb omx-lib 3.14.0+git$A libmod-host-protocol0)" "$work/staged/trixie/"
     REQUIRES=libmod-host-protocol0 "$actions/publish-debs/publish-tree.sh" "$ch/deb" "$work/real" "$NEW_ID" >/dev/null
     ;;
 *) fail "rpm or deb, not $kind" ;;
@@ -114,7 +121,7 @@ if [ "$kind" = rpm ]; then
     (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$work/staged SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID \
         bash -e "$work/assemble.sh") > "$work/publish.log" 2>&1 || { cat "$work/publish.log"; fail "the staged rpm publish failed"; }
     s=$ch/staging/rpm
-    f=$s/fedora/44/noarch/omx-lib-3.14.0-1.git5f455d3.fc44.noarch.rpm
+    f=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$A.fc44.noarch.rpm
     [ -f "$f" ] || fail "the staged package is not at staging/rpm/fedora/44/noarch: $(cd "$ch" && find staging -name '*.rpm')"
     rpm -qpi "$f" 2>/dev/null | grep -E '^Signature *:' | grep -qiv '(none)' || fail "the staged package is not signed"
     for rel in 44 45; do for a in x86_64 aarch64 noarch SRPMS; do
@@ -139,7 +146,7 @@ else
         REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs bash -e "$work/assemble.sh") \
         > "$work/publish.log" 2>&1 || { cat "$work/publish.log"; fail "the staged deb publish failed"; }
     s=$ch/staging/deb
-    [ -f "$s/debian/trixie/amd64/omx-lib_3.14.0+git5f455d3_amd64.deb" ] || fail "the staged package is not at staging/deb/debian/trixie/amd64"
+    [ -f "$s/debian/trixie/amd64/omx-lib_3.14.0+git${A}_amd64.deb" ] || fail "the staged package is not at staging/deb/debian/trixie/amd64"
     for suite in bookworm trixie; do
         [ -s "$s/debian/$suite/InRelease" ] || fail "no signed index for staging/deb/debian/$suite"
         grep -qx 'Label: OpenMixer-Staging' "$s/debian/$suite/InRelease" || fail "staging/deb/debian/$suite is not labelled OpenMixer-Staging"
@@ -173,7 +180,7 @@ if [ "$kind" = rpm ]; then
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null
     q install omx-app >/dev/null
     got=$(rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib); repo=$(dnf -q repoquery --installed --qf '%{from_repo}' omx-lib)
-    [ "$got" = 3.14.0-1.git5f455d3.fc44 ] || fail "with staging the client took omx-lib $got, not the staged 3.14.0-1.git5f455d3"
+    [ "$got" = 3.14.0-1.git$A.fc44 ] || fail "with staging the client took omx-lib $got, not the staged 3.14.0-1.git$A"
     case $repo in openmixer-staging*) ;; *) fail "the staged omx-lib came from $repo" ;; esac
     q remove omx-app omx-lib >/dev/null
     mv /etc/yum.repos.d/openmixer-staging.repo "$work/"
@@ -188,10 +195,10 @@ else
     BASE_URL=$base SUITE=trixie "$actions/add-openmixer/add-staging.sh" >/dev/null
     apt-get update -qq -o APT::Update::Error-Mode=any
     cand=$(apt-cache policy omx-lib | awk '/Candidate:/ {print $2}')
-    [ "$cand" = 3.14.0+git5f455d3 ] || fail "with staging the candidate is omx-lib $cand, not the staged 3.14.0+git5f455d3: $(apt-cache policy omx-lib)"
-    apt-cache policy omx-lib | grep -A1 '3.14.0+git5f455d3' | grep -q '^ *600 .*staging/deb' || fail "the staged build is not pinned 600: $(apt-cache policy omx-lib)"
+    [ "$cand" = 3.14.0+git$A ] || fail "with staging the candidate is omx-lib $cand, not the staged 3.14.0+git$A: $(apt-cache policy omx-lib)"
+    apt-cache policy omx-lib | grep -A1 "3.14.0+git$A" | grep -q '^ *600 .*staging/deb' || fail "the staged build is not pinned 600: $(apt-cache policy omx-lib)"
     apt-get install -y -qq --no-install-recommends omx-lib >/dev/null
-    [ "$(dpkg-query -W -f='${Version}' omx-lib)" = 3.14.0+git5f455d3 ] || fail "with staging apt installed another omx-lib"
+    [ "$(dpkg-query -W -f='${Version}' omx-lib)" = 3.14.0+git$A ] || fail "with staging apt installed another omx-lib"
     apt-get purge -y -qq omx-lib libmod-host-protocol0 >/dev/null
     mv /etc/apt/preferences.d/openmixer-staging.pref /etc/apt/sources.list.d/openmixer-staging.sources "$work/"
     apt-get update -qq
@@ -200,6 +207,47 @@ else
     mv "$work/openmixer-staging.pref" /etc/apt/preferences.d/; mv "$work/openmixer-staging.sources" /etc/apt/sources.list.d/
 fi
 ok "$kind: a client with staging added takes the staged build over a higher real version, and the real one without it"
+
+# ---- a later commit of the same version is staged
+mkdir -p "$work/staged-b"
+if [ "$kind" = rpm ]; then
+    cmpv() { rpm --eval "%{lua:print(rpm.vercmp('$1', '$2'))}"; }
+    [ "$(cmpv "1.git$B.fc44" "1.git$A.fc44")" = 1 ] || fail "the later commit's release 1.git$B does not sort above 1.git$A"
+    [ "$(cmpv "1.git${B#*.}.fc44" "1.git${A#*.}.fc44")" = -1 ] || fail "the two shas alone sort by time: this is not the case under test"
+    cp "$(mkpkg omx-lib 3.14.0 "1.git$B.fc44")" "$work/staged-b/"
+    old=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$A.fc44.noarch.rpm
+    new=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$B.fc44.noarch.rpm
+    taken() { q makecache --refresh >/dev/null; q install omx-lib >/dev/null; rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib; q remove omx-lib >/dev/null; }
+    want=3.14.0-1.git$B.fc44
+    # both builds in the index, as a publish that drops nothing leaves them: the order alone decides
+    (cd "$ws" && NEWEST_ONLY='' "$actions/publish-rpms/publish-tree.sh" "$s" "$work/staged-b" "$NEW_ID") > "$work/both.log" 2>&1 || { cat "$work/both.log"; fail "the publish of the later commit failed"; }
+    [ -f "$old" ] && [ -f "$new" ] || fail "without NEWEST_ONLY a publish removed a package"
+    got=$(taken); [ "$got" = "$want" ] || fail "with both builds served the client took omx-lib $got, not the later commit's $want"
+    (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$work/staged-b SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID \
+        bash -e "$work/assemble.sh") > "$work/publish-b.log" 2>&1 || { cat "$work/publish-b.log"; fail "the staged publish of the later commit failed"; }
+else
+    dpkg --compare-versions "3.14.0+git$B" gt "3.14.0+git$A" || fail "the later commit's 3.14.0+git$B does not sort above 3.14.0+git$A"
+    dpkg --compare-versions "3.14.0+git${B#*.}" lt "3.14.0+git${A#*.}" || fail "the two shas alone sort by time: this is not the case under test"
+    mkdir -p "$work/staged-b/trixie"
+    cp "$(mkdeb omx-lib "3.14.0+git$B" libmod-host-protocol0)" "$work/staged-b/trixie/"
+    old=$s/debian/trixie/amd64/omx-lib_3.14.0+git${A}_amd64.deb
+    new=$s/debian/trixie/amd64/omx-lib_3.14.0+git${B}_amd64.deb
+    taken() { apt-get update -qq -o APT::Update::Error-Mode=any; apt-cache policy omx-lib | awk '/Candidate:/ {print $2}'; }
+    want=3.14.0+git$B
+    (cd "$ws" && NEWEST_ONLY='' REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs \
+        "$actions/publish-debs/publish-tree.sh" "$s" "$work/staged-b" "$NEW_ID") > "$work/both.log" 2>&1 || { cat "$work/both.log"; fail "the publish of the later commit failed"; }
+    [ -f "$old" ] && [ -f "$new" ] || fail "without NEWEST_ONLY a publish removed a package"
+    got=$(taken); [ "$got" = "$want" ] || fail "with both builds served the candidate is omx-lib $got, not the later commit's $want"
+    (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-debs DEB_DIR=$work/staged-b SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID \
+        REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs bash -e "$work/assemble.sh") \
+        > "$work/publish-b.log" 2>&1 || { cat "$work/publish-b.log"; fail "the staged publish of the later commit failed"; }
+fi
+[ -f "$new" ] || fail "the staged publish lost the later commit's build"
+[ ! -e "$old" ] || fail "the staged publish left the earlier commit's build beside the later one: $(ls "$(dirname "$old")")"
+grep -q "^dropped $(basename "$old") " "$work/publish-b.log" || fail "the staged publish does not say what it dropped: $(cat "$work/publish-b.log")"
+got=$(taken); [ "$got" = "$want" ] || fail "after the staged publish of the later commit the client took omx-lib $got, not $want"
+real_sum | cmp -s - "$work/real.before" || fail "the staged publish of the later commit changed the real tree"
+ok "$kind: the build of a later commit sorts above the earlier one's whatever the shas, and staging keeps that build alone"
 
 # ---- the purge
 (cd "$ch" && git checkout -q -- . && git clean -qfdx && [ "$(git rev-parse HEAD)" = "$staged_rev" ])

@@ -83,7 +83,7 @@ runs:
         # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/
         if [ "$STAGING" = true ]; then
           { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
-            echo "REQUIRES_TREE=build/channel/deb"; } >> "$GITHUB_ENV"
+            echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"; } >> "$GITHUB_ENV"
         else
           echo "DEB_TREE=deb" >> "$GITHUB_ENV"
         fi

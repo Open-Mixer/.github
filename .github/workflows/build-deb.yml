@@ -279,7 +279,8 @@ jobs:
           staging: ${{ inputs.staged || inputs.staging }}
           staging-bootstrap: ${{ inputs.staging-bootstrap }}
 
-      # a staged snapshot is <version>+git<sha>, above the release, so it meets a consumer's (>= <version>) floor
+      # a staged snapshot is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
+      # floor, and above the staged build of any earlier commit
       - uses: Open-Mixer/.github/.github/actions/build-deb@openmixer-v1
         with:
           tag: ${{ env.RELEASE_TAG }}
@@ -510,9 +511,9 @@ jobs:
             ok=
             for try in $(seq 1 20); do
               apt-get update -qq || true
-              # the candidate is the staged build of this commit, <version>+git<short sha>, pinned from staging
+              # the candidate is the staged build of this commit, <version>+git<commit time>.<short sha>, pinned from staging
               cand=$(apt-cache policy "$bin" | awk '/Candidate:/ {print $2}')
-              short=$(printf '%s\n' "$cand" | sed -n 's/.*+git\([0-9a-f]\{7,\}\).*/\1/p')
+              short=$(printf '%s\n' "$cand" | sed -n 's/.*+git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\).*/\1/p')
               if [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] && apt-get install -y --no-install-recommends "$bin=$cand"; then
                 dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
                 ok=1; break

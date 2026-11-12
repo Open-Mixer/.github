@@ -78,5 +78,8 @@ for want in src x86_64 noarch; do
 done
 ls one/demo-debuginfo-*.rpm > /dev/null 2>&1 || { echo "FAIL no debug package was built, the build tree path is not under test"; fail=1; }
 [ "$(ls two/*.rpm | wc -l)" = "$n" ] || { echo "FAIL the two builds made different sets: $(ls one two)"; fail=1; }
-[ "$fail" = 0 ] && echo "ok: $n RPMs, the same bytes twice"
+# a snapshot is named by the commit's time, then the commit: the build of a later commit sorts above an earlier one's
+stamp=$(date -u -d 2026-09-30T12:00:00Z +%s).$(git -C tree rev-parse --short HEAD)
+ls one/demo-1.0.0-1.git"$stamp".fc*.src.rpm > /dev/null 2>&1 || { echo "FAIL the snapshot is not demo-1.0.0-1.git$stamp: $(ls one)"; fail=1; }
+[ "$fail" = 0 ] && echo "ok: $n RPMs, the same bytes twice, named 1.git$stamp"
 exit "$fail"

@@ -17,7 +17,7 @@ inputs:
     description: directory the DEBs are copied to
     default: debs
   separator:
-    description: what joins a snapshot's version and commit; ~git sorts below the release, +git above it (a staged build, which must meet a consumer's (>= <version>) floor)
+    description: what joins a snapshot's version and its commit time and commit; ~git sorts below the release, +git above it (a staged build, which must meet a consumer's (>= <version>) floor)
     default: '~git'
 
 runs:

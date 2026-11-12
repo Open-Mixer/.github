@@ -17,24 +17,26 @@ t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 ok() { echo "ok   $*"; }
 
-# a stub channel: omx-lib 3.14.0 staged twice (two commits), the real tree serving 3.13.0
+# a stub channel: omx-lib 3.14.0 staged twice (two commits), the real tree serving 3.13.0. T is the commit time part of
+# the staged names (git<commit time>.<sha>); empty gives the names staged before it was there, still found by their sha
 mk() { mkdir -p "$(dirname "$1")"; echo "$1" > "$1"; }
+T=
 channel() { # <dir>
     local c=$1 rel a suite sha
     for sha in 5f455d3 0badc0d; do
         for rel in 44 45; do
-            mk "$c/staging/rpm/fedora/$rel/SRPMS/omx-lib-3.14.0-1.git$sha.fc$rel.src.rpm"
-            mk "$c/staging/rpm/fedora/$rel/noarch/omx-lib-data-3.14.0-1.git$sha.fc$rel.noarch.rpm"
+            mk "$c/staging/rpm/fedora/$rel/SRPMS/omx-lib-3.14.0-1.git$T$sha.fc$rel.src.rpm"
+            mk "$c/staging/rpm/fedora/$rel/noarch/omx-lib-data-3.14.0-1.git$T$sha.fc$rel.noarch.rpm"
             for a in x86_64 aarch64; do
-                mk "$c/staging/rpm/fedora/$rel/$a/omx-lib-3.14.0-1.git$sha.fc$rel.$a.rpm"
-                mk "$c/staging/rpm/fedora/$rel/$a/omx-lib-devel-3.14.0-1.git$sha.fc$rel.$a.rpm"
+                mk "$c/staging/rpm/fedora/$rel/$a/omx-lib-3.14.0-1.git$T$sha.fc$rel.$a.rpm"
+                mk "$c/staging/rpm/fedora/$rel/$a/omx-lib-devel-3.14.0-1.git$T$sha.fc$rel.$a.rpm"
             done
         done
         for suite in bookworm trixie; do
-            mk "$c/staging/deb/debian/$suite/all/omx-lib-data_3.14.0+git${sha}_all.deb"
+            mk "$c/staging/deb/debian/$suite/all/omx-lib-data_3.14.0+git$T${sha}_all.deb"
             for a in amd64 arm64; do
-                mk "$c/staging/deb/debian/$suite/$a/libomx-lib0_3.14.0+git${sha}_$a.deb"
-                mk "$c/staging/deb/debian/$suite/$a/libomx-lib-dev_3.14.0+git${sha}_$a.deb"
+                mk "$c/staging/deb/debian/$suite/$a/libomx-lib0_3.14.0+git$T${sha}_$a.deb"
+                mk "$c/staging/deb/debian/$suite/$a/libomx-lib-dev_3.14.0+git$T${sha}_$a.deb"
             done
         done
     done
@@ -71,6 +73,14 @@ python3 -I "$collect" "$t/c" "${deb_args[@]}" --commit 5f455d3c0ffee --out "$t/d
     fail "deb: not laid out <suite>/<file>"
 ok "deb: the 10 files of one commit, laid out by suite; a full commit names its short one"
 
+# ---- the same with the commit time before the sha, rpm and deb
+T=1794480000. channel "$t/n"
+python3 -I "$collect" "$t/n" "${rpm_args[@]}" --commit 5f455d3 --out "$t/nrpm" > "$t/log" || fail "the rpm collect of the names with a commit time failed: $(cat "$t/log")"
+[ "$(find "$t/nrpm" -name '*.git1794480000.5f455d3.*' | wc -l)" = 12 ] || fail "rpm: not the 12 files of the commit under the names with a commit time"
+python3 -I "$collect" "$t/n" "${deb_args[@]}" --commit 5f455d3 --out "$t/ndeb" > "$t/log" || fail "the deb collect of the names with a commit time failed: $(cat "$t/log")"
+[ "$(find "$t/ndeb" -name '*+git1794480000.5f455d3_*' | wc -l)" = "$(find "$t/n/staging/deb" -name '*+git1794480000.5f455d3_*' | wc -l)" ] || fail "deb: not every file of the commit under the names with a commit time"
+refuses "two staged commits with a commit time, none named" 'of 2 commits \(0badc0d 5f455d3\)' "$t/n" "${rpm_args[@]}"
+ok "the staged names with a commit time before the sha are found by their sha"
 # ---- the refusals
 refuses "two staged commits, none named" 'of 2 commits \(0badc0d 5f455d3\)' "$t/c" "${rpm_args[@]}"
 refuses "a version staging does not hold" 'holds no omx-lib 3.15.0' "$t/c" rpm --name omx-lib --version 3.15.0 --releases 44 --arches x86_64
