@@ -17,13 +17,15 @@ name: Build RPM (reusable)
 # publishes nothing and only assembles an UNSIGNED tree as an artifact. Unsigned metadata pushed to the
 # channel would have clients trust it, and a published NEVRA cannot be taken back.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the staged target only, the fc44 x86_64 RPMs (noarch with them),
-# publishes nothing to the channel and leaves them on the prerelease staged-v<version> of the calling repository,
-# where the next layer of the release chain installs them (actions/install-staged) instead of waiting for the channel.
-# staged-deps names such layers, [owner/]repo@version[:package,...], installed in the build container before the
-# build dependencies; it needs staged: true, the staged target being the only one they exist for. Neither runs on a
-# tag, and a staged run takes no source-ref. The real release publishes once, from the v<version> tag, at the end of
-# the wave, and then removes the prerelease staged-v<version> and its tag (the unstage job).
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the staged target only, the fc44 x86_64 RPMs
+# (noarch with them), against the staging channel, and publishes them to the staging channel of the release wave:
+# staging/rpm of the same target repository, signed with the same key, by the same tree script and channel-push as a
+# release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
+# priority than the real one (staging: true here, add-openmixer staging: true elsewhere) and resolve to the staged
+# packages with no code of their own. A staged run never writes the real channel; the wave's release pass publishes
+# the whole set there once, from the v<version> tags, and the purge-staging workflow then empties the staging channel.
+# staging: true on a run that is not staged (a dry run on a branch) builds against the staging channel and publishes
+# nothing. Neither runs on a tag or with source-ref, and a staged run builds the calling repository's own commit.
 #
 # The packaging lives in the calling repository: exactly one packaging/*.spec, whose Version: is the
 # version, and a tag that must be v<Version> on the commit being built. A BuildRequires the channel already
@@ -59,11 +61,11 @@ on:
       staged:
         type: boolean
         default: false
-        description: 'Build the staged target only (fc44 x86_64), publish nothing to the channel, and put the packages on the prerelease staged-v<version> of the calling repository (actions/stage-release). Excludes publish.'
-      staged-deps:
-        type: string
-        default: ''
-        description: 'Staged packages of inner layers installed in the build container before the build dependencies: [owner/]repo@version[:package,package], space separated (actions/install-staged). Empty installs none.'
+        description: 'Build the staged target only (fc44 x86_64) against the staging channel and publish it to the staging channel (staging/rpm of target-repo), never to the real one. Excludes publish.'
+      staging:
+        type: boolean
+        default: false
+        description: 'Add the staging channel at a higher priority than the real one to the build containers (staged: true implies it). A dry run only: never on a tag, with source-ref or with publish.'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -150,24 +152,23 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
-      # staged-deps without staged would hand every leg of the matrix packages staged for one target only, and on a
-      # tag it would build the release against unsigned snapshots; a staged run stages the commit it runs on
-      - name: A staged run publishes nothing, and staged packages never build a release
-        if: inputs.staged || inputs.staged-deps != ''
+      # what is staged is never a release: a tag, source-ref or publish builds the release, against the real channel only;
+      # a staged run publishes to the staging channel alone, the commit it runs on, of the calling repository
+      - name: A staged run publishes to staging only, and staging never builds a release
+        if: inputs.staged || inputs.staging
         env:
           STAGED: ${{ inputs.staged }}
-          STAGED_DEPS: ${{ inputs.staged-deps }}
+          STAGING: ${{ inputs.staging }}
           PUBLISH: ${{ inputs.publish }}
           SOURCE_REPOSITORY: ${{ inputs.source-repository }}
           SOURCE_REF: ${{ inputs.source-ref }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
           no() { echo "::error::$*"; exit 1; }
-          [ "$REF_TYPE" != tag ] || no "staged and staged-deps are for a manual run from a branch, never a tag: a tag builds the release, against the channel's packages"
-          [ "$STAGED" = true ] || no "staged-deps needs staged: true: packages are staged for fc44 x86_64 only, and every other leg of the matrix would refuse them"
-          [ "$PUBLISH" != true ] || no "staged and publish exclude each other: a staged run leaves its packages on the staged-v prerelease and never publishes to the channel"
-          [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
-          [ -z "$SOURCE_REF" ] || no "a staged run builds the commit it runs on: source-ref would build one commit and stage it as another"
+          [ "$REF_TYPE" != tag ] || no "staged and staging are for a manual run from a branch, never a tag: a tag builds the release, against the real channel alone"
+          [ -z "$SOURCE_REF" ] || no "staged and staging take no source-ref: source-ref builds a release of a tag, against the real channel alone"
+          [ "$PUBLISH" != true ] || no "staged and staging exclude publish: a staged run publishes to the staging channel only, and a release never builds against it"
+          [ "$STAGED" != true ] || [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
 
       # git history is the changelog: nothing here reads a CHANGELOG.md
       - uses: actions/checkout@v4
@@ -186,9 +187,11 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
+      # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
       - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
-          publish: ${{ inputs.publish }}
+          publish: ${{ inputs.publish || inputs.staged }}
+          require-tag: ${{ !inputs.staged }}
           tag: ${{ inputs.source-ref }}
           target: ${{ inputs.target-repo }}
           packages: ${{ inputs.binary-names || inputs.package-name }}
@@ -242,15 +245,12 @@ jobs:
         if: inputs.needs-mod-host
 
       # for the build only: the repository exists in this container and is never a dependency of a release
+      # staged or staging: the staging channel beside it, at a higher priority, so the build takes what the wave staged
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
-        if: inputs.channel-deps
+        if: inputs.channel-deps || inputs.staged || inputs.staging
         with:
           base-url: ${{ inputs.base-url }}
-
-      - uses: Open-Mixer/.github/.github/actions/install-staged@openmixer-v1
-        if: inputs.staged-deps != ''
-        with:
-          packages: ${{ inputs.staged-deps }}
+          staging: ${{ inputs.staged || inputs.staging }}
 
       - name: Show what the channel provides the build
         if: inputs.channel-deps
@@ -318,7 +318,6 @@ jobs:
   publish:
     name: Sign and publish
     needs: build
-    if: ${{ !inputs.staged }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
@@ -330,10 +329,11 @@ jobs:
     # A dry run (publish false) pushes nothing, so it gets a group of its own: sharing the live group made
     # concurrent pull-request dry runs cancel each other's pending job.
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ inputs.publish && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-${{ (inputs.publish || inputs.staged) && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') }}
+      # a release (publish on a tag) to the real channel, or a staged run to the staging channel
+      DO_PUBLISH: ${{ (inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -345,12 +345,14 @@ jobs:
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
           rpm-dir: collected
-          tag: ${{ inputs.source-ref || github.ref_name }}
+          tag: ${{ inputs.staged && format('staged {0}', github.sha) || inputs.source-ref || github.ref_name }}
           sign: ${{ env.DO_PUBLISH }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
+          staging: ${{ inputs.staged }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
 
       - uses: actions/upload-artifact@v4
         if: env.DO_PUBLISH == 'true'
@@ -372,54 +374,6 @@ jobs:
         if: env.DO_PUBLISH != 'true'
         run: |
           echo "::warning::dry run: nothing was signed or published. The unsigned tree is attached to this run."
-
-  # A staged run publishes nothing to the channel: the fc44 x86_64 RPMs (noarch with them) go on the prerelease staged-v<version> of the
-  # calling repository, for the next layer's install-staged. No v* tag is made; the real release still publishes from it.
-  staged:
-    name: Stage the RPMs (staged-v<version>)
-    needs: build
-    if: ${{ !cancelled() && inputs.staged && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Read the version
-        id: version
-        run: |
-          v=$(sed -n 's/^Version:[[:space:]]*//p' packaging/*.spec)
-          echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*$' || { echo "::error::no release version in the packaging: '$v'"; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ${{ inputs.package-name }}-rpms-fc*
-          merge-multiple: true
-          path: collected
-
-      - uses: Open-Mixer/.github/.github/actions/stage-release@openmixer-v1
-        with:
-          kind: rpm
-          version: ${{ steps.version.outputs.version }}
-          dir: collected
-
-  # The release is published: the staged packages of this version go, prerelease and tag. They sort above the
-  # release's files, so a consumer that still named them in staged-deps would keep building against the snapshot.
-  unstage:
-    name: Remove the staged packages (staged-v<version>)
-    needs: publish
-    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.publish && github.ref_type == 'tag' && inputs.source-repository == '' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: Open-Mixer/.github/.github/actions/stage-release@openmixer-v1
-        with:
-          kind: remove
-          version: ${{ inputs.source-ref || github.ref_name }}
 
   release:
     name: GitHub release
@@ -480,11 +434,12 @@ jobs:
           token: ${{ secrets.PAGES_TOKEN }}
 
   # The last proof: the version the tag names installs from the channel, in a fedora that holds nothing else.
-  # Pages serves the push a little late, so the check retries before it calls the release broken.
+  # Pages serves the push a little late, so the check retries before it calls the release broken. A staged run checks
+  # its staged target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: [publish, release, live]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.publish && inputs.verify-install && (inputs.source-ref != '' || github.ref_type == 'tag') }}
+    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -492,14 +447,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ${{ fromJSON(inputs.fedora-versions) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        fedora: ${{ fromJSON(inputs.staged && '["44"]' || inputs.fedora-versions) }}
+        arch: ${{ fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix) }}
     steps:
+      # the real channel alone for a release; with the staging channel for a staged run
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
           base-url: ${{ inputs.base-url }}
+          staging: ${{ inputs.staged }}
 
       - name: Install the new version from the channel
+        if: ${{ !inputs.staged }}
         env:
           TAG: ${{ inputs.source-ref || github.ref_name }}
           NAME: ${{ inputs.package-name }}
@@ -517,6 +475,30 @@ jobs:
             done
             [ -n "$ok" ] || { echo "::error::$bin-$ver does not install from $BASE_URL in a clean fedora"; exit 1; }
             rpm -q --qf '%{NAME} %{VERSION}-%{RELEASE}.%{ARCH}\n' "$bin"
+          done
+
+      - name: Install the staged build of this commit from the staging channel
+        if: inputs.staged
+        env:
+          NAME: ${{ inputs.package-name }}
+          BINARIES: ${{ inputs.binary-names }}
+          BASE_URL: ${{ inputs.base-url }}
+        run: |
+          set -o pipefail
+          for bin in ${BINARIES:-$NAME}; do
+            ok=
+            for try in $(seq 1 20); do
+              dnf clean expire-cache -q || true
+              if dnf install -y --setopt=install_weak_deps=False --setopt=retries=10 "$bin"; then ok=1; break; fi
+              echo "attempt $try: $bin is not installable from the staging channel yet"; sleep 30
+            done
+            [ -n "$ok" ] || { echo "::error::$bin does not install from $BASE_URL/staging/rpm in a clean fedora"; exit 1; }
+            rel=$(rpm -q --qf '%{RELEASE}' "$bin")
+            repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
+            echo "$bin $(rpm -q --qf '%{VERSION}' "$bin")-$rel from $repo"
+            short=$(printf '%s\n' "$rel" | sed -n 's/.*\.git\([0-9a-f]\{7,\}\)\..*/\1/p')
+            [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] || { echo "::error::$bin $rel is not the build of $GITHUB_SHA"; exit 1; }
+            case $repo in openmixer-staging*) ;; *) echo "::error::$bin came from $repo, not the staging channel"; exit 1 ;; esac
           done
 
   # A tag that ends without packages must not be silent: the repository gets an issue naming the tag and the
