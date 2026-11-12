@@ -102,6 +102,8 @@ The staging channel is a second dnf tree and a second apt tree in the same chann
 Every Fedora release and Debian release of the workflow's matrix has an index in the staging tree, empty or not, so a
 machine that adds the staging channel never reads a 404. The release preflight, the channel prune and
 channel-installability read `rpm/` and `deb/` only; the site deploy of openmixer-www replaces only the paths it owns.
+On a machine that already holds a cached staging index, `apt-get update` only warns when a new index fails its signature
+and keeps the old one; a fresh CI container has no cached index and fails correctly, so nothing is changed for it.
 
 ### The files a machine adds
 
@@ -184,10 +186,15 @@ channel added then reads an empty index.
 
 The staging channel needs no hand step to come to exist: the first staged publish creates `staging/rpm` or
 `staging/deb` with the signed index of every release of its matrix and the key, and a purge of a channel that never had
-staging makes the same empty tree. Before that first publish the staging URLs answer 404, and the build job of the
-first staged run adds staging before its own publish: `add-openmixer` (add-staging.sh) then adds nothing and says so,
-when this machine's staging index and the staging key file both answer 404. A staging tree that exists without this
-release's index, or an index whose signature does not verify, still fails the step (`tests/staging-bootstrap.sh`).
+staging makes the same empty tree. Before that first publish the staging URLs answer 404, and a build that adds staging
+then fails, naming the URL that answered 404: a staged build never falls back to the released dependency.
+
+The one exception is the first layer of a wave (omx-contract's own staged run), whose build job adds staging before
+anything was ever published to it. Its release workflow, and only it, passes `staging-bootstrap: true` to `build-rpm.yml`
+and `build-deb.yml` (the input of the same name on `add-openmixer`), so that `add-openmixer` (add-staging.sh) adds
+nothing and gives a notice when this machine's staging index and the staging key file both answer 404. The coordinator
+of the wave sets it in that one caller. Even with the switch, a staging tree that exists without this release's index,
+any other status, or an index whose signature does not verify still fails the step (`tests/staging-bootstrap.sh`).
 After a purge the empty index is served, so the channel is added and loaded as usual. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
 and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
 pulled copy and pushes nothing.
