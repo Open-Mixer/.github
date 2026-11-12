@@ -9,7 +9,9 @@ description: Add the OpenMixer repository to a Fedora or Debian container by ins
 # With suite set on Debian, the key and the source of that release are installed without the package (for an Ubuntu).
 # Installs curl on Debian when the container lacks it; dnf installs the package from its URL. Runs as root.
 # With staging true the staging channel of the release wave is added beside it, at a higher priority (add-staging.sh,
-# docs/release-operations.md), and refreshed: a build or an install check then takes what the wave has staged.
+# docs/release-operations.md), and refreshed: a build or an install check then takes what the wave has staged. A staging
+# channel never published (its index and its key both 404) is not added, with a notice: the build job of the first
+# staged run comes before the publish that creates it, and there is nothing staged to take yet.
 
 inputs:
   base-url:
@@ -62,7 +64,9 @@ runs:
       run: |
         set -euo pipefail
         "$GITHUB_ACTION_PATH/add-staging.sh"
-        if command -v dnf >/dev/null; then
+        if [ ! -f /etc/yum.repos.d/openmixer-staging.repo ] && [ ! -f /etc/apt/sources.list.d/openmixer-staging.sources ]; then
+          echo "::notice::the staging channel of $BASE_URL has not been published yet: this job uses the real channel alone"
+        elif command -v dnf >/dev/null; then
           dnf -y --setopt=skip_if_unavailable=False makecache --repo openmixer-staging --repo openmixer-staging-noarch
         else
           apt-get update -qq
