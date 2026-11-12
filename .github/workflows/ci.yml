@@ -43,7 +43,7 @@ jobs:
       - run: tests/reusable-workflows.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
-      - run: tests/staged-packages.sh
+      - run: tests/staging-channel.sh
       - run: tests/release-preflight-served.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
@@ -104,6 +104,53 @@ jobs:
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
+
+  staging-publish:
+    name: Staging channel, publish and purge (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: rpm
+            image: fedora:44
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git
+          - kind: deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev python3 python3-yaml git ca-certificates
+    steps:
+      - name: Install the packaging tools
+        run: ${{ matrix.tools }}
+
+      - uses: actions/checkout@v4
+
+      # a throwaway key of its own; the client arm writes the container's /etc
+      - name: A staged publish lands in staging only, a client prefers it, and the purge leaves the real tree untouched
+        shell: bash
+        run: tests/staging-publish.sh ${{ matrix.kind }}
+
+  staging-installability:
+    name: channel-installability judges the real channel alone
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:44
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c dnf5-plugins python3 git findutils
+
+      # the gate lives on main: the test reads it from origin/main when this tree does not carry it
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: A staged minor does not change the verdict
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tests/staging-installability.sh
 
   changelog:
     name: changelog generator from git
