@@ -23,6 +23,9 @@
 #   SKELETON    Fedora releases, space separated, whose fedora/<release>/ directories get metadata even with nothing in
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
+#   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
+#               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
+#               commit beside this one. The real tree never sets it: nothing published there is ever removed.
 set -euo pipefail
 
 tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <rpm dir> [<gpg key id>]}")
@@ -51,7 +54,7 @@ done
 declare -A dirs=()
 placed=()
 for f in ${found[@]+"${found[@]}"}; do
-    IFS='|' read -r is_src arch rel < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}\n' "$f")
+    IFS='|' read -r is_src arch rel pkg ver < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}\n' "$f")
     [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
     releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
     [ -n "$releasever" ] || { echo "$f has no .fcNN dist tag" >&2; exit 1; }
@@ -65,6 +68,15 @@ for f in ${found[@]+"${found[@]}"}; do
         placed+=("$dest/$(basename "$f")")
         echo "placed $(basename "$f") in fedora/$releasever/$archdir"
     fi
+    [ "${NEWEST_ONLY:-}" = true ] || continue
+    case $rel in *.git*) ;; *) continue ;; esac
+    for old in "$dest/$pkg-$ver-"*.git*.rpm; do
+        [ -f "$old" ] && [ "$(basename "$old")" != "$(basename "$f")" ] || continue
+        # omx-lib-3.14.0-* is also how a package named omx-lib-3.14.0 would start: ask the file
+        [ "$(rpm -qp --qf '%{NAME}|%{VERSION}' "$old")" = "$pkg|$ver" ] || continue
+        rm -f "$old"
+        echo "dropped $(basename "$old") from fedora/$releasever/$archdir (an earlier staged build of $ver)"
+    done
 done
 
 # A private rpm keystore holding the keys the channel serves, the keys committed here and this run's key: what a package already in the

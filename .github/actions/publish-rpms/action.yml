@@ -81,7 +81,7 @@ runs:
         # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton
         if [ "$STAGING" = true ]; then
           { echo "RPM_TREE=staging/rpm"; echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../packaging/staging/openmixer-staging.repo"
-            echo "SKELETON=$RELEASES"; } >> "$GITHUB_ENV"
+            echo "SKELETON=$RELEASES"; echo "NEWEST_ONLY=true"; } >> "$GITHUB_ENV"
         else
           echo "RPM_TREE=rpm" >> "$GITHUB_ENV"
         fi

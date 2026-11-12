@@ -34,6 +34,9 @@
 #                   SKELETON_ARCHES, default "amd64 arm64"): a machine that adds the staging channel must find an
 #                   index for its release, never a 404
 #   EMPTY_OK        'true' lets <deb dir> hold no package (the purge, which only regenerates the indexes)
+#   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
+#                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
+#                   beside this one. The real tree never sets it: nothing published there is ever removed.
 set -euo pipefail
 
 tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}")
@@ -99,6 +102,15 @@ for f in ${found[@]+"${found[@]}"}; do
         mine[$dest/$(basename "$f")]=1
         echo "placed $(basename "$f") in debian/$suite/$arch"
     fi
+    [ "${NEWEST_ONLY:-}" = true ] || continue
+    pkg=$(dpkg-deb -f "$f" Package)
+    ver=$(dpkg-deb -f "$f" Version)
+    case $ver in *+git*) ;; *) continue ;; esac
+    for old in "$dest/${pkg}_${ver%%+git*}+git"*.deb; do
+        [ -f "$old" ] && [ "$(basename "$old")" != "$(basename "$f")" ] || continue
+        rm -f "$old"
+        echo "dropped $(basename "$old") from debian/$suite/$arch (an earlier staged build of ${ver%%+git*})"
+    done
 done
 
 # The previous index of <suite dir>, as "<sha256> ./<arch>/<file>" lines, when its InRelease carries a good

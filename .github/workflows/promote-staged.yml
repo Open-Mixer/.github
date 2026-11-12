@@ -19,7 +19,7 @@ name: Promote a staged version
 # After the publish it fails, and tags nothing, when the channel root does not hold or serve the bytes staging held
 # (the checksums are in the run log), or when an install check fails.
 #
-# The promoted packages keep the version string of the staged build (<release>.git<sha> and +git<sha>): the bytes
+# The promoted packages keep the version string of the staged build (<release>.git<commit time>.<sha> and +git<commit time>.<sha>): the bytes
 # are the same, so the name is. The tag is created by the workflow's token, so it starts no tag-triggered release
 # workflow of the caller. The staged files stay under staging/ until the wave's purge (purge-staging.yml).
 #
@@ -416,7 +416,7 @@ jobs:
             rel=$(rpm -q --qf '%{RELEASE}' "$bin")
             repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
             echo "$bin $VERSION-$rel from $repo"
-            case $rel in *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
+            case $rel in *.git*".$SHORT"* | *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
             case $repo in openmixer-staging*) echo "::error::$bin came from the staging channel, not the channel root"; exit 1 ;; esac
           done
 
@@ -452,8 +452,8 @@ jobs:
             ok=
             for try in $(seq 1 20); do
               apt-get update -qq || true
-              # the staged build of the commit, <version>+git<short>, never the newest
-              pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git$SHORT" 'index($3, v) == 1 {print $3; exit}')
+              # the staged build of the commit, <version>+git<commit time>.<short>, never the newest
+              pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git" -v s="$SHORT" 'index($3, v) == 1 {r = substr($3, length(v) + 1); sub(/^[0-9]+\./, "", r); if (index(r, s) == 1) {print $3; exit}}')
               if [ -n "$pinned" ] && apt-get install -y --no-install-recommends "$bin=$pinned"; then
                 dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
                 ok=1; break
