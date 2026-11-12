@@ -34,6 +34,9 @@ write("name-build", uses("build", "actions/upload-artifact")[0]["name"])
 write("name-signed", uses("publish", "actions/upload-artifact")[0]["name"])
 write("attach.sh", next(s["run"] for s in wf["release"]["steps"] if s.get("name") == "Attach the DEBs to the release"))
 write("keep.sh", next(s["run"] for s in action if s.get("name") == "Keep the published copies"))
+# the step that names the tree (DEB_TREE, and the staging label, skeleton and requires tree) for the later steps
+write("tree.sh", next(s["run"] for s in action if s.get("name") == "Prove the packages are there before anything signs them")
+      .replace("/tmp/collected.txt", f"{out}/collected.txt"))
 PY
 expand() { # expand <file> <suite> <arch>: a workflow expression filled in as the runner would
     sed -e "s/\${{ inputs.package-name }}/$pkg/g" -e "s/\${{ matrix.suite }}/$2/g" -e "s/\${{ matrix.arch }}/$3/g" "$1"
@@ -64,9 +67,16 @@ attempt() { # attempt <n> <publish pattern> <release pattern>: the publish job, 
     mkdir -p "$run"
     download "$2" "$run/collected"
     mv "$run/collected" "$dir/collected"
-    (cd "$dir" && "$action/publish-tree.sh" "build/channel/$tree" collected) > "$run/publish.log" 2>&1 || { rm -rf "$dir/collected"; return 1; }
+    # the action's first step writes the tree and its environment to GITHUB_ENV; the steps after it read them there
+    : > "$run/github-env"
+    (cd "$dir" && DEB_DIR=collected STAGING=$staging SUITES="bookworm trixie" GITHUB_ENV=$run/github-env bash "$work/tree.sh") \
+        > "$run/publish.log" 2>&1 || { cat "$run/publish.log" >&2; fail "attempt $n: the tree step failed"; }
+    grep -qx "DEB_TREE=$tree" "$run/github-env" || fail "attempt $n: the action names another tree than $tree"
+    (cd "$dir" && set -a && . "$run/github-env" && set +a && "$action/publish-tree.sh" "build/channel/$DEB_TREE" collected) \
+        >> "$run/publish.log" 2>&1 || { rm -rf "$dir/collected"; return 1; }
     # a step that fails here is the harness, not the refusal: it must not pass for one (the caller's || turns off -e)
-    (cd "$dir" && rm -rf signed && DEB_DIR=collected SIGNED_DIR=signed bash "$work/keep.sh") >> "$run/publish.log" 2>&1 ||
+    (cd "$dir" && set -a && . "$run/github-env" && set +a && rm -rf signed && DEB_DIR=collected SIGNED_DIR=signed bash "$work/keep.sh") \
+        >> "$run/publish.log" 2>&1 ||
         { cat "$run/publish.log" >&2; fail "attempt $n: the keep step failed"; }
     # the path of the upload is signed/*.deb, so the artifact is flat
     mkdir -p "$dir/store/$(expand "$work/name-signed" - -)"
