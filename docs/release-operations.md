@@ -173,8 +173,12 @@ files and refresh (`dnf makecache`, `apt-get update`).
 
 For this wave only, the reusable workflows still accept `staged-deps` and ignore it, and `install-staged` is a no-op that says it is retired; both are removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched to `staging`.
 
-The staged versions sort above the release of the same version (`<version>-<release>.git<sha>` for RPM,
-`<version>+git<sha>` for DEB), so a consumer's floor on the coming version is met.
+The staged versions sort above the release of the same version (`<version>-<release>.git<commit time>.<sha>` for RPM,
+`<version>+git<commit time>.<sha>` for DEB), so a consumer's floor on the coming version is met. The commit time, in
+seconds, comes before the sha because a short sha sorts by chance: with it the staged build of a later commit sorts
+above the build of an earlier one. A staging publish also drops the other staged builds of the same package and
+version from the directories it publishes into, so the staging channel offers one build of a version, the last one
+staged.
 
 ### Promoting a staged version
 
@@ -199,7 +203,7 @@ holds builds of more than one commit of that version, the `commit`.
 
 Any refusal in 1 or 2 leaves the channel as it was. `dry-run: true` stops after assembling an unsigned tree: nothing
 is pushed, tagged or released. A promoted package keeps the version string of its staged build
-(`<version>-<release>.git<sha>`, `<version>+git<sha>`), because its bytes are the same. The staged copies stay under
+(`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
 
 ### The purge

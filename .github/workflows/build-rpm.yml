@@ -506,7 +506,7 @@ jobs:
             rel=$(rpm -q --qf '%{RELEASE}' "$bin")
             repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
             echo "$bin $(rpm -q --qf '%{VERSION}' "$bin")-$rel from $repo"
-            short=$(printf '%s\n' "$rel" | sed -n 's/.*\.git\([0-9a-f]\{7,\}\)\..*/\1/p')
+            short=$(printf '%s\n' "$rel" | sed -n 's/.*\.git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\)\..*/\1/p')
             [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] || { echo "::error::$bin $rel is not the build of $GITHUB_SHA"; exit 1; }
             case $repo in openmixer-staging*) ;; *) echo "::error::$bin came from $repo, not the staging channel"; exit 1 ;; esac
           done

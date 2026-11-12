@@ -71,5 +71,8 @@ for want in amd64 all; do
     ls out1/demo*_"$want".deb > /dev/null 2>&1 || { echo "FAIL no $want package was built: $(ls out1)"; fail=1; }
 done
 [ "$(ls out2/*.deb | wc -l)" = "$n" ] || { echo "FAIL the two builds made different sets: $(ls out1 out2)"; fail=1; }
-[ "$fail" = 0 ] && echo "ok: $n DEBs, the same bytes twice"
+# a snapshot is named by the commit's time, then the commit: the build of a later commit sorts above an earlier one's
+stamp=$(date -u -d 2026-09-30T12:00:00Z +%s).$(git -C tree rev-parse --short HEAD)
+[ -f "out1/demo-data_1.0.0~git${stamp}_all.deb" ] || { echo "FAIL the snapshot is not 1.0.0~git$stamp: $(ls out1)"; fail=1; }
+[ "$fail" = 0 ] && echo "ok: $n DEBs, the same bytes twice, named 1.0.0~git$stamp"
 exit "$fail"
