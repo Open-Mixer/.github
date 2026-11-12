@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # The staging channel of a release wave, offline (docs/release-operations.md, "The staging channel"). Proves:
-#   - the prerelease staging is gone: no install-staged, stage-release, staged-deps or unstage job anywhere;
+#   - the prerelease staging is gone: no stage-release or unstage job, and nothing reads staged-deps or installs from a
+#     staged-v prerelease. For this wave only, staged-deps stays an accepted, ignored input (a caller that passes it
+#     renders the same jobs as one that does not) and install-staged a no-op action that takes the old inputs, says
+#     it is retired and installs nothing; both go in the wave's release pass;
 #   - build-rpm.yml and build-deb.yml, rendered: staged narrows the matrix, builds with the staging channel added and
 #     publishes through publish-rpms / publish-debs with staging on, into the live publish group; a tag release and a
 #     dry run publish into rpm/ and deb/ with the staging channel never added; staging alone adds the channel to the
@@ -23,12 +26,37 @@ fail() { echo "FAIL: $*"; exit 1; }
 ok() { echo "ok   $*"; }
 
 # ---- the prerelease staging is gone, with every caller
-for p in .github/actions/install-staged .github/actions/stage-release; do
-    [ ! -e "$here/$p" ] || fail "$p is still here"
-done
-hits=$(grep -rnE 'install-staged|stage-release|staged-deps|unstage:' "$here/.github" "$here/docs" "$here/README.md" || true)
-[ -z "$hits" ] || fail "the prerelease staging is still named: $hits"
-ok "no install-staged, stage-release, staged-deps or unstage job is left"
+[ ! -e "$here/.github/actions/stage-release" ] || fail ".github/actions/stage-release is still here"
+# staged-deps only where it is declared, install-staged only in its own no-op directory and the removal note
+hits=$(grep -rnE 'install-staged|stage-release|staged-deps|unstage:' "$here/.github" "$here/docs" "$here/README.md" |
+    grep -vE '^[^:]*/\.github/workflows/build-(rpm|deb)\.yml:[0-9]+:      (staged-deps:|# staged-deps .*removed in the wave)' |
+    grep -vE '^[^:]*/\.github/actions/install-staged/' |
+    grep -vE '^[^:]*/docs/release-operations\.md:[0-9]+:.*removed in the wave' || true)
+[ -z "$hits" ] || fail "the prerelease staging is still named or read: $hits"
+ok "no stage-release or unstage job is left, and nothing reads staged-deps or calls install-staged"
+
+# ---- install-staged, retired: the old inputs, one line, nothing installed
+python3 -I - "$here/.github/actions/install-staged/action.yml" "$t/noop.sh" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+i = d.get("inputs") or {}
+# the inputs of the action at eee6ec8, so a caller's with: block still validates
+assert set(i) == {"packages", "tree", "token"}, f"install-staged takes {sorted(i)}, not packages, tree, token"
+assert i["packages"].get("required") is True and i["tree"].get("default") == "." and i["token"].get("default") == "${{ github.token }}", \
+    "install-staged's inputs changed shape"
+steps = d["runs"]["steps"]
+assert d["runs"]["using"] == "composite" and len(steps) == 1 and "uses" not in steps[0], "install-staged is more than one step"
+open(sys.argv[2], "w").write(steps[0]["run"])
+PY
+mkdir -p "$t/noop/bin"
+for c in dnf apt-get apt dpkg rpm curl gh python3 sudo; do printf '#!/bin/sh\necho "%s $*" >> "$NOOP_LOG"\n' "$c" > "$t/noop/bin/$c"; done
+chmod +x "$t/noop/bin"/*
+out=$(cd "$t/noop" && env -i PATH="$t/noop/bin:/usr/bin:/bin" NOOP_LOG="$t/noop/log" PACKAGES='plugin-hostd@0.20.3:plugin-hostd-devel' \
+    STAGED_TREE=. GH_TOKEN=x GITHUB_ACTION_PATH="$here/.github/actions/install-staged" bash -e "$t/noop.sh" 2>&1) || fail "install-staged failed: $out"
+[ ! -s "$t/noop/log" ] || fail "install-staged ran $(cat "$t/noop/log")"
+[ "$(printf '%s\n' "$out" | wc -l)" = 1 ] && echo "$out" | grep -qi 'retired' && echo "$out" | grep -q 'staging' ||
+    fail "install-staged does not say in one line that it is retired and staging replaces it: $out"
+ok "install-staged takes packages, tree and token, prints one line and installs nothing\"
 
 # ---- the reusable workflows, rendered
 python3 -I - "$here/.github/workflows/build-rpm.yml" "$here/.github/workflows/build-deb.yml" <<'PY'
@@ -66,7 +94,19 @@ def check(path, kind):
     on = d.get(True) or d.get("on")
     decl = on["workflow_call"]["inputs"]
     base = {k: v.get("default") for k, v in decl.items()}
-    assert "staged-deps" not in decl, f"{path}: staged-deps is still an input"
+    # staged-deps, for this wave: an accepted string that nothing reads
+    assert decl.get("staged-deps", {}).get("type") == "string" and base["staged-deps"] == "", f"{path}: staged-deps is not an accepted string input"
+    assert "inputs.staged-deps" not in open(path).read(), f"{path}: something reads staged-deps"
+    def render(x, inp, rt):
+        if isinstance(x, dict): return {k: render(v, inp, rt) for k, v in x.items()}
+        if isinstance(x, list): return [render(v, inp, rt) for v in x]
+        if isinstance(x, str) and "${{" in x:
+            try: return ("=", ev(x, inp, needs=O(build=O(result="success"), publish=O(result="success")), ref_type=rt))
+            except Exception as e: return ("!", type(e).__name__)
+        return x
+    for rt, extra in (("branch", {}), ("branch", {"staged": True}), ("branch", {"staging": True}), ("tag", {"publish": True})):
+        a = dict(base, **extra); b = dict(a, **{"staged-deps": "x"})
+        assert render(d["jobs"], a, rt) == render(d["jobs"], b, rt), f"{path}: staged-deps 'x' changes the jobs ({extra or 'dry run'})"
     for name in ("staged", "staging"):
         assert decl.get(name, {}).get("type") == "boolean" and base[name] is False, f"{path}: {name} is not a boolean defaulting off"
     jobs = d["jobs"]
