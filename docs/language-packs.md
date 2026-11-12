@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
 # Language packs
 
 An owner of codes ships the sentences of its codes per language as packs, built from its own spec and `debian/`,

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # The owner fixture of tests/langpacks.sh: an architecture-specific package with catalogs, as an owner of codes is,
 # whose language packs langpacks.py writes between the markers.
 Name:           omx-fixture-owner

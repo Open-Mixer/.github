@@ -179,15 +179,27 @@ OVERRIDES = ("# published by the OpenMixer channel, not uploaded to Debian (writ
              "%s: initial-upload-closes-no-bugs\n")
 
 
+def license_lines(control):
+    """the SPDX and Copyright lines debian/control starts with: the generated files carry the tree's own"""
+    out = []
+    for line in open(control).read().split("\n"):
+        if not line.startswith("#"):
+            break
+        if line.startswith(("# SPDX-License-Identifier:", "# Copyright")):
+            out.append(line + "\n")
+    return "".join(out)
+
+
 def deb_files(files, debian, prefix, langs, installs):
-    """each pack's .install (when it installs a file) and .lintian-overrides beside debian/control; one of a language
-    the list does not ship is stale"""
+    """each pack's .install (when it installs a file) and .lintian-overrides beside debian/control, under the license
+    lines of debian/control; one of a language the list does not ship is stale"""
+    head = license_lines(os.path.join(debian, "control"))
     want = {}
     for lang in langs:
         pkg = "%s-l10n-%s" % (prefix, lang)
         if lang in installs:
-            want[pkg + ".install"] = installs[lang]
-        want[pkg + ".lintian-overrides"] = OVERRIDES % pkg
+            want[pkg + ".install"] = head + installs[lang]
+        want[pkg + ".lintian-overrides"] = head + OVERRIDES % pkg
     for name, text in want.items():
         files.put(os.path.join(debian, name), text)
     for f in sorted(os.listdir(debian)):

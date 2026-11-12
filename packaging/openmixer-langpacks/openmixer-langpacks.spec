@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # The OpenMixer meta language packs: openmixer-langpack-<lang> requires the <lang> pack of every owner of codes
 # (owners.txt), for each language omx-contract ships (languages.json). build.sh writes the subpackages between the
 # markers with .github/actions/langpacks/langpacks.py before it builds; this file keeps the markers alone.

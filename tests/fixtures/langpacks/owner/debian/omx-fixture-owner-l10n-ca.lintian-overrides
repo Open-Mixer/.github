@@ -1,2 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # published by the OpenMixer channel, not uploaded to Debian (written by langpacks.py)
 omx-fixture-owner-l10n-ca: initial-upload-closes-no-bugs
