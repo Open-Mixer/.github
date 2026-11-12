@@ -158,7 +158,8 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the staged target (fc44 x86_64, trixie amd64) against the staging channel,
+  `build-rpm.yml` and `build-deb.yml` build the matrix of a release (every Fedora release and Debian suite, on both
+  architectures) against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
   a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and

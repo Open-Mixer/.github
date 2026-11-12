@@ -16,8 +16,8 @@ name: Build DEB (reusable)
 # target Pages repository. Anything that is not a tag is a dry run: it builds, lints and assembles an UNSIGNED
 # tree as an artifact.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the staged target only, the trixie amd64 DEBs
-# (all with them), against the staging channel, and publishes them to the staging channel of the release wave:
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the matrix of a release (every suite of
+# suite-matrix on every architecture of arch-matrix), against the staging channel, and publishes it to the staging channel of the release wave:
 # staging/deb of the same target repository, signed with the same key, by the same tree script and channel-push as a
 # release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
 # priority than the real one (staging: true here, add-openmixer staging: true elsewhere) and resolve to the staged
@@ -59,7 +59,7 @@ on:
       staged:
         type: boolean
         default: false
-        description: 'Build the staged target only (trixie amd64) against the staging channel and publish it to the staging channel (staging/deb of target-repo), never to the real one. Excludes publish.'
+        description: 'Build the matrix of a release against the staging channel and publish it to the staging channel (staging/deb of target-repo), never to the real one. Excludes publish.'
       # staged-deps is ignored: callers pass staging instead; removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched
       staged-deps:
         type: string
@@ -231,8 +231,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.staged && '["trixie"]' || inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.staged && '["amd64"]' || inputs.arch-matrix) }}
+        suite: ${{ fromJSON(inputs.suite-matrix) }}
+        arch: ${{ fromJSON(inputs.arch-matrix) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
@@ -450,7 +450,7 @@ jobs:
 
   # The last proof: the version the tag names installs from the channel, in a Debian that holds nothing else.
   # Pages serves the push a little late, so the check retries before it calls the release broken. A staged run checks
-  # its staged target the same way, with the staging channel added: the build of this commit installs, from staging.
+  # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: [publish, release, live]
@@ -462,8 +462,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.staged && '["trixie"]' || inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.staged && '["amd64"]' || inputs.arch-matrix) }}
+        suite: ${{ fromJSON(inputs.suite-matrix) }}
+        arch: ${{ fromJSON(inputs.arch-matrix) }}
     steps:
       # the real channel alone for a release; with the staging channel for a staged run
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1

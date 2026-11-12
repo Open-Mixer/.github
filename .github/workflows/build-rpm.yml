@@ -17,8 +17,8 @@ name: Build RPM (reusable)
 # publishes nothing and only assembles an UNSIGNED tree as an artifact. Unsigned metadata pushed to the
 # channel would have clients trust it, and a published NEVRA cannot be taken back.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the staged target only, the fc44 x86_64 RPMs
-# (noarch with them), against the staging channel, and publishes them to the staging channel of the release wave:
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the matrix of a release (every Fedora
+# release of fedora-versions on every architecture of arch-matrix), against the staging channel, and publishes it to the staging channel of the release wave:
 # staging/rpm of the same target repository, signed with the same key, by the same tree script and channel-push as a
 # release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
 # priority than the real one (staging: true here, add-openmixer staging: true elsewhere) and resolve to the staged
@@ -61,7 +61,7 @@ on:
       staged:
         type: boolean
         default: false
-        description: 'Build the staged target only (fc44 x86_64) against the staging channel and publish it to the staging channel (staging/rpm of target-repo), never to the real one. Excludes publish.'
+        description: 'Build the matrix of a release against the staging channel and publish it to the staging channel (staging/rpm of target-repo), never to the real one. Excludes publish.'
       # staged-deps is ignored: callers pass staging instead; removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched
       staged-deps:
         type: string
@@ -220,8 +220,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ${{ fromJSON(inputs.staged && '["44"]' || inputs.fedora-versions) }}
-        arch: ${{ fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix) }}
+        fedora: ${{ fromJSON(inputs.fedora-versions) }}
+        arch: ${{ fromJSON(inputs.arch-matrix) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
@@ -273,7 +273,7 @@ jobs:
       - name: Refuse an empty build, and one of another architecture
         env:
           ARCH: ${{ matrix.arch }}
-          FIRST_ARCH: ${{ fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix)[0] }}
+          FIRST_ARCH: ${{ fromJSON(inputs.arch-matrix)[0] }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
         run: |
@@ -322,7 +322,7 @@ jobs:
         with:
           name: ${{ inputs.package-name }}-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
-          if-no-files-found: ${{ matrix.arch == fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix)[0] && 'error' || 'ignore' }}
+          if-no-files-found: ${{ matrix.arch == fromJSON(inputs.arch-matrix)[0] && 'error' || 'ignore' }}
           retention-days: 30
 
   publish:
@@ -445,7 +445,7 @@ jobs:
 
   # The last proof: the version the tag names installs from the channel, in a fedora that holds nothing else.
   # Pages serves the push a little late, so the check retries before it calls the release broken. A staged run checks
-  # its staged target the same way, with the staging channel added: the build of this commit installs, from staging.
+  # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: [publish, release, live]
@@ -457,8 +457,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ${{ fromJSON(inputs.staged && '["44"]' || inputs.fedora-versions) }}
-        arch: ${{ fromJSON(inputs.staged && '["x86_64"]' || inputs.arch-matrix) }}
+        fedora: ${{ fromJSON(inputs.fedora-versions) }}
+        arch: ${{ fromJSON(inputs.arch-matrix) }}
     steps:
       # the real channel alone for a release; with the staging channel for a staged run
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
