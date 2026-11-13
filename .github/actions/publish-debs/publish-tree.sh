@@ -129,7 +129,8 @@ fi
 # Otherwise the package left behind there no longer installs (plugin-hostd 0.20.4 on amd64 against
 # plugin-hostd-contract 0.20.6, all, published by a quick release built for arm64 alone). Judged only for an all package
 # this run places that becomes the suite's newest, so a catch-up (which drops a served all package) and an older all
-# package are never refused. Nothing is placed or signed when it refuses.
+# package are never refused. Nothing is placed or signed when it refuses. The pinners are those of the run and, below, those
+# the suite already serves.
 src_of() { local s; s=$(dpkg-deb -f "$1" Source 2>/dev/null || true); s=${s%% *}; printf '%s' "${s:-$(dpkg-deb -f "$1" Package)}"; }
 pins_exactly() { # <deb> <name> <version>: true when its Depends or Pre-Depends holds "<name> (= <version>)"
     local item n
@@ -179,6 +180,47 @@ for q in ${found[@]+"${found[@]}"}; do
         echo "refused $(basename "$q") in debian/$suite: $pname pins it exactly (= $qver); this run built $pname $qver for${pinners[$pname]} and not built for ${left[*]}, where debian/$suite serves $pname, so apt would offer $qname $qver there and no $pname it serves installs with it. Build every architecture of the suite that serves $pname (the full matrix, or a quick set that covers them)" >&2
         pin_refused=1
     done
+    # served pinners (Open-Mixer/.github#61): the arch packages the tree already serves for this suite, of the same source,
+    # whose newest build pins the all package's CURRENT version (the newest the suite serves now) exactly. The run may not
+    # carry them at all (an all package published alone), so they are read from the pulled tree's .deb files: the channel
+    # pull of a catch-up keeps metadata, an ordinary one drops it. Where the run builds no such package, apt takes this
+    # all package as candidate and the served pinner no longer installs.
+    # BEGIN served-pinners
+    cur=
+    for other in "$tree/debian/$suite/all/${qname}"_*_all.deb; do
+        [ -f "$other" ] || continue
+        ov=$(dpkg-deb -f "$other" Version)
+        if [ -z "$cur" ] || dpkg --compare-versions "$ov" gt "$cur"; then cur=$ov; fi
+    done
+    if [ -n "$cur" ]; then
+        declare -A sleft=()
+        for archdir in "$tree/debian/$suite"/*/; do
+            a=$(basename "$archdir")
+            [ "$a" != all ] || continue
+            declare -A newest_of=()
+            for s in "$archdir"*_"$a".deb; do
+                [ -f "$s" ] && [ "$(src_of "$s")" = "$qsrc" ] || continue
+                sn=$(dpkg-deb -f "$s" Package)
+                if [ -z "${newest_of[$sn]:-}" ] || dpkg --compare-versions "$(dpkg-deb -f "$s" Version)" gt "$(dpkg-deb -f "${newest_of[$sn]}" Version)"; then
+                    newest_of[$sn]=$s
+                fi
+            done
+            for sn in "${!newest_of[@]}"; do
+                # the run's own pinners were judged above
+                [ -z "${pinners[$sn]:-}" ] || continue
+                pins_exactly "${newest_of[$sn]}" "$qname" "$cur" || continue
+                sleft[$sn]="${sleft[$sn]:-} $a"
+            done
+            unset newest_of
+        done
+        for sn in $(printf '%s\n' "${!sleft[@]}" | LC_ALL=C sort); do
+            [ -n "$sn" ] || continue
+            echo "refused $(basename "$q") in debian/$suite: the suite serves $sn pinning $qname exactly (= $cur) for${sleft[$sn]} and this run builds no $sn for them, so apt would offer $qname $qver there and the served $sn no longer installs. Build every architecture of the suite that serves $sn (the full matrix, or a quick set that covers them)" >&2
+            pin_refused=1
+        done
+        unset sleft
+    fi
+    # END served-pinners
     unset pinners
 done
 [ "$pin_refused" = 0 ] || { echo "an all package would be published ahead of an architecture this run did not build: nothing was placed or signed" >&2; exit 1; }

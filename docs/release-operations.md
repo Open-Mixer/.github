@@ -458,7 +458,10 @@ So the deb publish (`publish-tree.sh`) **refuses**, before anything is placed or
 its suite's newest while a package of the same source in the run pins it exactly (`= ${source:Version}`,
 `= ${binary:Version}`) and the run does not build that package, at that version, for every architecture of the suite
 that already serves it. The refusal names the `all` package, the suite, the pinning package and the architectures
-left behind. Build them too (the full matrix, or a quick set that covers them). A catch-up is never refused by it: it
+left behind. The pinners are those of the run and also those the suite already serves: the newest served arch package of
+the same source whose `Depends` holds the all package's current version exactly (read from the pulled tree's `.deb`
+files) is left behind on every architecture the run builds no such package for, so an all package published alone is
+refused too (Open-Mixer/.github#61, `tests/arch-all-served-pin.sh`). Build them too (the full matrix, or a quick set that covers them). A catch-up is never refused by it: it
 drops the served `all` package, so the missing architecture of such a release is filled as above. Rpm needs no such
 rule: dnf takes an older `noarch` build to meet an exact dependency. `tests/arch-all-pin.sh` reproduces the case on a
 fixture channel, with the passing arms (every architecture built, an older `all`, the catch-up) and a sabotage.

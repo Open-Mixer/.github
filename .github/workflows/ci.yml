@@ -124,6 +124,11 @@ jobs:
         shell: bash
         run: tests/arch-all-pin.sh
 
+      - name: An all package pinned by a package the suite already serves is never published over it
+        if: matrix.kind == 'deb'
+        shell: bash
+        run: tests/arch-all-served-pin.sh
+
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
     runs-on: ubuntu-latest
