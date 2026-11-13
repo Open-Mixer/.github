@@ -374,6 +374,23 @@ gh workflow run release.yml -R Open-Mixer/<repository> --ref main \
 catch-up onto a fixture channel, served files byte-identical, an overwrite refused) run in CI, each with a sabotage
 that goes red.
 
+### An `all` package pinned by its source
+
+A Debian suite of the channel is one flat index for every architecture: an `Architecture: all` deb is served to all of
+them, and apt takes the newest version of each package as its candidate and never an older one to meet an exact
+dependency. plugin-hostd 0.20.5 and 0.20.6 went out while the quick set's Debian cells were trixie arm64 alone; their
+`plugin-hostd-contract` (all) became the candidate on amd64 too, where `plugin-hostd` 0.20.4 asks for
+`plugin-hostd-contract (= 0.20.4)`, and `apt-get install plugin-hostd` failed there (Open-Mixer/.github#59).
+
+So the deb publish (`publish-tree.sh`) **refuses**, before anything is placed or signed, an `all` package that becomes
+its suite's newest while a package of the same source in the run pins it exactly (`= ${source:Version}`,
+`= ${binary:Version}`) and the run does not build that package, at that version, for every architecture of the suite
+that already serves it. The refusal names the `all` package, the suite, the pinning package and the architectures
+left behind. Build them too (the full matrix, or a quick set that covers them). A catch-up is never refused by it: it
+drops the served `all` package, so the missing architecture of such a release is filled as above. Rpm needs no such
+rule: dnf takes an older `noarch` build to meet an exact dependency. `tests/arch-all-pin.sh` reproduces the case on a
+fixture channel, with the passing arms (every architecture built, an older `all`, the catch-up) and a sabotage.
+
 ### Tests
 
 `tests/staging-channel.sh` (the workflows rendered, the precheck as written, the repository files, the purge guard),
