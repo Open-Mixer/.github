@@ -2,12 +2,12 @@
 # line no source produced and a file whose lines do not match the sum.
 # columns (tab separated): package, version (N-R | N | >=floor | newest), distro/arch, the pin that keeps it
 # source worker-image@c923085a81a7 baked-versions.yml (main)
-# source Open-Mixer/.github@9e0c203aa9e1 .github/pins.txt (main)
-# source Open-Mixer/zynthian-sys@e00cf5834ebb scripts/recipes/install_openmixer.sh (omx-track/2026103101)
-# source Open-Mixer/zynthian-sys@c34723a60e25 scripts/recipes/install_openmixer.sh (omx-track/2026110101)
-# source Open-Mixer/zynthian-sys@0bc0cff4f17c scripts/recipes/install_openmixer.sh (omx-track/2026110102)
-# source Open-Mixer/zynthian-sys@09a56e7550bb scripts/recipes/install_openmixer.sh (omx-track/2026110601)
-# source Open-Mixer/plugin-qualify@9c3b87aee448 .github/actions/install-plugin-hostd/action.yml (main)
+# source FreeMixer/.github@9e0c203aa9e1 .github/pins.txt (main)
+# source FreeMixer/zynthian-sys@e00cf5834ebb scripts/recipes/install_openmixer.sh (omx-track/2026103101)
+# source FreeMixer/zynthian-sys@c34723a60e25 scripts/recipes/install_openmixer.sh (omx-track/2026110101)
+# source FreeMixer/zynthian-sys@0bc0cff4f17c scripts/recipes/install_openmixer.sh (omx-track/2026110102)
+# source FreeMixer/zynthian-sys@09a56e7550bb scripts/recipes/install_openmixer.sh (omx-track/2026110601)
+# source FreeMixer/plugin-qualify@9c3b87aee448 .github/actions/install-plugin-hostd/action.yml (main)
 diginet-tools	>=0.1.8	fedora/44/*	worker-image@main:baked-versions.yml
 libdiginet-devel	>=0.1.8	fedora/44/*	worker-image@main:baked-versions.yml
 libmackie-devel	>=0.1.1	fedora/44/*	worker-image@main:baked-versions.yml
@@ -20,60 +20,60 @@ mod-host-protocol-devel	0.10.11-1	fedora/44/*	worker-image@main:baked-versions.y
 omx-clap-core	>=0.30.0	fedora/44/*	worker-image@main:baked-versions.yml
 omx-clap-core-devel	>=0.30.0	fedora/44/*	worker-image@main:baked-versions.yml
 omx-clap-host	>=0.30.0	fedora/44/*	worker-image@main:baked-versions.yml
-omx-clap-host	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-omx-clap-host	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+omx-clap-host	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
 omx-clap-host-tests	>=0.30.0	fedora/44/*	worker-image@main:baked-versions.yml
 omx-clap-lv2-devel	>=0.30.0	fedora/44/*	worker-image@main:baked-versions.yml
 omx-contract	>=3.9.1	fedora/44/*	worker-image@main:baked-versions.yml
 omx-contract-devel	>=3.9.1	fedora/44/*	worker-image@main:baked-versions.yml
 omx-dsp-devel	>=0.30.1	fedora/44/*	worker-image@main:baked-versions.yml
 omx-panel	>=0.10.2	fedora/44/*	worker-image@main:baked-versions.yml
-omx-panel	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-omx-panel	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+omx-panel	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
 omx-plugins	>=0.19.0	fedora/44/*	worker-image@main:baked-versions.yml
-omx-plugins	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-omx-plugins	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+omx-plugins	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
 omx-plugins-clap	>=0.19.0	fedora/44/*	worker-image@main:baked-versions.yml
 omx-plugins-devel	>=0.19.0	fedora/44/*	worker-image@main:baked-versions.yml
 omx-plugins-lv2	>=0.19.0	fedora/44/*	worker-image@main:baked-versions.yml
-plugin-hostd	>=0.15.3	debian/bookworm/amd64	Open-Mixer/plugin-qualify@main:.github/actions/install-plugin-hostd/action.yml
+plugin-hostd	>=0.15.3	debian/bookworm/amd64	FreeMixer/plugin-qualify@main:.github/actions/install-plugin-hostd/action.yml
 plugin-hostd	>=0.19.0	fedora/44/*	worker-image@main:baked-versions.yml
-plugin-hostd	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-plugin-hostd	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+plugin-hostd	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
 plugin-hostd-devel	>=0.19.0	fedora/44/*	worker-image@main:baked-versions.yml
 plugin-hostd-protocol-devel	>=0.4.0	fedora/44/*	worker-image@main:baked-versions.yml
-plugin-hostd-tests	newest	debian/bookworm/amd64	Open-Mixer/plugin-qualify@main:.github/actions/install-plugin-hostd/action.yml
+plugin-hostd-tests	newest	debian/bookworm/amd64	FreeMixer/plugin-qualify@main:.github/actions/install-plugin-hostd/action.yml
 plugin-qualify	>=0.19.1	fedora/44/*	worker-image@main:baked-versions.yml
-plugin-qualify	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/bookworm/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
-plugin-qualify	newest	debian/trixie/*	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/bookworm/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
+plugin-qualify	newest	debian/trixie/*	FreeMixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
 # sum 209988ca11e123f29fbbfb680bea41c158fe3057c90cb3e8ed66776445d0043d
