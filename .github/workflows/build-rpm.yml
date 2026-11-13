@@ -86,7 +86,7 @@ on:
       matrix:
         type: string
         default: ''
-        description: "'quick' builds the quick set alone (fc44 and fc45 x86_64 rpm, trixie arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
+        description: "'quick' builds the quick set alone (fc44 and fc45 x86_64 rpm, trixie amd64 and arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
