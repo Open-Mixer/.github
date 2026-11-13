@@ -256,10 +256,9 @@ jobs:
       - name: The tools
         run: dnf install -y --setopt=install_weak_deps=False git nodejs python3 gnupg2 diffutils findutils
       - uses: actions/checkout@v4
-      - name: omx-contract from the channel (3.16.0, translate and the language list)
+      # an ordinary run reads the channel: the staging channel is for a run that is itself staged
+      - name: omx-contract from the channel (3.16.0 or later, translate and the language list)
         uses: ./.github/actions/add-openmixer
-        with:
-          staging: 'true'
       - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract < 4'
       - run: tests/langpacks-fill.sh
 
