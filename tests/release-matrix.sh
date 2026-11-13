@@ -49,7 +49,8 @@ def ev(expr, inputs, event="push", ref_type="branch", var=None, steps=None, need
     env = {"inputs": inputs, "fromJSON": json.loads, "true": True, "false": False,
            "join": lambda a, s=",": s.join(a),
            "github": O(ref_type=ref_type, event_name=event, ref_name="v1.2.0" if ref_type == "tag" else "main"),
-           "vars": O(OMX_RELEASE_MATRIX=var or ""), "steps": steps or O(), "needs": needs or O(), "matrix": matrix or O()}
+           "vars": O(OMX_RELEASE_MATRIX=var or ""), "steps": steps or O(), "needs": needs or O(), "matrix": matrix or O(),
+           "secrets": O()}
     return eval(e, {"__builtins__": {}}, env)
 
 def text(v):
@@ -82,7 +83,10 @@ for kind, (path, rel_in, key) in WF.items():
     assert ms[0]["uses"] == "Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1", ms[0]["uses"]
     w = {k: str(v).replace(" ", "") for k, v in ms[0]["with"].items()}
     assert w == {"kind": kind, "matrix": "${{inputs.matrix}}", "wave": "${{vars.OMX_RELEASE_MATRIX}}", "staged": "${{inputs.staged}}",
-                 "source-ref": "${{inputs.source-ref}}", "releases": "${{inputs.%s}}" % rel_in, "arches": "${{inputs.arch-matrix}}"}, f"{path}: release-matrix is given {w}"
+                 "source-ref": "${{inputs.source-ref}}", "releases": "${{inputs.%s}}" % rel_in, "arches": "${{inputs.arch-matrix}}",
+                 # a catch-up (tests/catch-up-plan.sh): the packages, and the channel whose cells.tsv it subtracts
+                 "catch-up": "${{inputs.catch-up}}", "names": "${{inputs.binary-names||inputs.package-name}}",
+                 "channel": "${{inputs.target-repo}}", "token": "${{secrets.PAGES_TOKEN}}"}, f"{path}: release-matrix is given {w}"
     for o in ("set", "cells", "first-arch"):
         assert pre["outputs"][o].replace(" ", "") == "${{steps.matrix.outputs.%s}}" % o, f"{path}: the first job does not hand on {o}"
     for job in ("build", "verify"):
@@ -179,6 +183,11 @@ got, _ = run("rpm", dict(X86["rpm"], staged=True), "workflow_dispatch", "branch"
 assert (got.set, got.jobs, got.first) == ("quick", QUICK["rpm"], "x86_64"), got
 got, log = run("deb", dict(X86["deb"], staged=True), "workflow_dispatch", "branch", None)
 assert (got.set, got.jobs) == ("quick", ["trixie, amd64"]), f"{got} {log}"
+# a lane's dry-run dispatch with arm off while the wave is open (omx-plugins ci.yml -> release.yml, arm: false): trixie amd64,
+# never the full deb matrix. Before trixie amd64 joined the quick set this fell back to full and built bookworm amd64
+# (omx-plugins run 43412676885, 2026-11-13)
+got, log = run("deb", dict(X86["deb"]), "workflow_dispatch", "branch", "quick")
+assert (got.set, got.jobs) == ("quick", ["trixie, amd64"]), f"a lane's amd64-only dispatch builds {got.set} {got.jobs}: {log}"
 # one Fedora release asked for (publish-fedora): the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
@@ -216,7 +225,11 @@ for kind, (path, rel_in, key) in WF.items():
     pub = d["jobs"]["publish"]
     assert "preflight" in pub["needs"], f"{path}: publish reads the set of a job it does not need"
     st = [s for s in pub["steps"] if f"/actions/publish-{kind}s@" in s.get("uses", "")][0]
-    assert st["with"]["matrix-set"].replace(" ", "") == "${{needs.preflight.outputs.set}}", f"{path}: the publish is not told the set"
+    # the set of the run, except on a catch-up, which keeps the set the version was published for (tests/catch-up-plan.sh)
+    assert st["with"]["matrix-set"].replace(" ", "") == "${{!inputs.catch-up&&needs.preflight.outputs.set||''}}", f"{path}: the publish is not told the set"
+    for cu, want in ((False, "quick"), (True, "")):
+        got = ev(st["with"]["matrix-set"], dict(base, **{"catch-up": cu}), needs=O(preflight=O(outputs=O(set="quick"))))
+        assert got == want, f"{path}: with catch-up {cu} the publish records the set {got!r}, not {want!r}"
     a = yaml.safe_load(open(f"{here}/.github/actions/publish-{kind}s/action.yml"))
     assert a["inputs"]["matrix-set"]["default"] == "", f"publish-{kind}s: matrix-set must default to nothing recorded"
     first = a["runs"]["steps"][1]

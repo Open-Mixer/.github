@@ -36,6 +36,13 @@
 #   EMPTY_OK        'true' lets <deb dir> hold no package (the purge, which only regenerates the indexes)
 #   MATRIX_SET      quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty
 #                   records none
+#   CATCH_UP        'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel
+#                   holds (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every
+#                   package of <deb dir> whose path the tree already holds is judged: an Architecture: all package is
+#                   dropped from what is published, by path, and the run says so (every architecture's build makes it,
+#                   and the channel serves it already); any other is refused, naming the file, and nothing is placed or
+#                   signed, byte-identical or not. Only the indexes of the Debian releases that received a package are
+#                   regenerated and signed again; the others keep their bytes.
 #   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
 #                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
 #                   beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -90,8 +97,31 @@ done
 
 declare -A cells=()
 declare -A mine=()
+declare -A dropped=()
+declare -A touched=()
 for f in ${found[@]+"${found[@]}"}; do
     [ "$(dirname "$(dirname "$f")")" = "${src%/}" ] || { echo "$f is not laid out <suite>/<package>.deb under $src" >&2; exit 1; }
+done
+# a catch-up writes no file the channel holds: arch-independent ones are dropped, any other refuses the run
+if [ "${CATCH_UP:-}" = true ]; then
+    clash=0
+    for f in ${found[@]+"${found[@]}"}; do
+        suite=$(basename "$(dirname "$f")")
+        arch=$(dpkg-deb -f "$f" Architecture)
+        rel=debian/$suite/$arch/$(basename "$f")
+        [ -e "$tree/$rel" ] || continue
+        if [ "$arch" = all ]; then
+            dropped[$f]=1
+            echo "dropped $(basename "$f") (catch-up: the channel serves $rel already, and a served file is never rewritten)"
+        else
+            echo "refused $rel: the channel serves it, and a catch-up never rewrites a served file" >&2
+            clash=1
+        fi
+    done
+    [ "$clash" = 0 ] || { echo "catch-up: the channel already serves the files above: nothing was placed or signed" >&2; exit 1; }
+fi
+for f in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$f]:-}" ] || continue
     suite=$(basename "$(dirname "$f")")
     arch=$(dpkg-deb -f "$f" Architecture)
     dest=$tree/debian/$suite/$arch
@@ -102,6 +132,7 @@ for f in ${found[@]+"${found[@]}"}; do
     else
         install -m 0644 "$f" "$dest/"
         mine[$dest/$(basename "$f")]=1
+        touched[$suite]=1
         echo "placed $(basename "$f") in debian/$suite/$arch"
     fi
     [ "${NEWEST_ONLY:-}" = true ] || continue
@@ -114,6 +145,11 @@ for f in ${found[@]+"${found[@]}"}; do
         echo "dropped $(basename "$old") from debian/$suite/$arch (an earlier staged build of ${ver%%+git*})"
     done
 done
+
+if [ "${CATCH_UP:-}" = true ] && [ "${#mine[@]}" = 0 ]; then
+    echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2
+    exit 1
+fi
 
 # The previous index of <suite dir>, as "<sha256> ./<arch>/<file>" lines, when its InRelease carries a good
 # signature by a key of <keyring> and the Packages beside it is the one that InRelease names. Nothing otherwise.
@@ -176,6 +212,10 @@ done
 
 for suitedir in "$tree"/debian/*/; do
     suite=$(basename "$suitedir")
+    if [ "${CATCH_UP:-}" = true ] && [ -z "${touched[$suite]:-}" ]; then
+        echo "kept index debian/$suite (catch-up: nothing placed there)"
+        continue
+    fi
     (
         cd "$suitedir"
         rm -f Packages Packages.gz Release InRelease Release.gpg
@@ -204,8 +244,19 @@ done
 
 # the key file is what the channel served plus every key that signed the index (channel-keys.sh)
 if [ -n "$key" ]; then
+    keyfile="$tree/openmixer.asc"
+    # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
+    [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
     # shellcheck disable=SC2086 # cosign is one key id or empty
-    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$tree/openmixer.asc" "$key" $cosign
+    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key" $cosign
+    if [ -f "$keyfile.keep" ]; then
+        if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
+            "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" ]; then
+            mv "$keyfile.keep" "$keyfile"
+        else
+            rm -f "$keyfile.keep"
+        fi
+    fi
 fi
 
 # which cells every package and version of the tree has, and the set (quick or full) this run published: the channel

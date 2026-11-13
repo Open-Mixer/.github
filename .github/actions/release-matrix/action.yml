@@ -28,6 +28,18 @@ inputs:
   arches:
     description: the caller's architectures, a JSON array
     required: true
+  catch-up:
+    description: "'true': build only the cells of the set that the version of the tag lacks in the channel's cells.tsv (matrix.sh)"
+    default: 'false'
+  names:
+    description: with catch-up, the binary package names the release builds, space separated (globs allowed)
+    default: ''
+  channel:
+    description: with catch-up, the channel repository whose <kind>/cells.tsv is read
+    default: Open-Mixer/open-mixer.github.io
+  token:
+    description: with catch-up, a token that reads the channel repository (PAGES_TOKEN)
+    default: ''
 
 outputs:
   set:
@@ -42,6 +54,9 @@ outputs:
   first-arch:
     description: the architecture that carries what ships once per release (source and noarch packages)
     value: ${{ steps.matrix.outputs.first-arch }}
+  count:
+    description: how many cells the run builds; 0 only for a catch-up of a version served in every cell of the set
+    value: ${{ steps.matrix.outputs.count }}
 
 runs:
   using: composite
@@ -58,5 +73,10 @@ runs:
         ARCHES: ${{ inputs.arches }}
         EVENT: ${{ github.event_name }}
         REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        CATCH_UP: ${{ inputs.catch-up }}
+        NAMES: ${{ inputs.names }}
+        CHANNEL: ${{ inputs.channel }}
+        TOKEN: ${{ inputs.token }}
       run: |
         "$GITHUB_ACTION_PATH/matrix.sh"

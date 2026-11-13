@@ -102,7 +102,7 @@ def check(path, kind):
         if isinstance(x, dict): return {k: render(v, inp, rt) for k, v in x.items()}
         if isinstance(x, list): return [render(v, inp, rt) for v in x]
         if isinstance(x, str) and "${{" in x:
-            try: return ("=", ev(x, inp, needs=O(preflight=O(result="success"), build=O(result="success"), publish=O(result="success")), ref_type=rt))
+            try: return ("=", ev(x, inp, needs=O(preflight=O(result="success", outputs=O(count="1")), build=O(result="success"), publish=O(result="success")), ref_type=rt))
             except Exception as e: return ("!", type(e).__name__)
         return x
     for rt, extra in (("branch", {}), ("branch", {"staged": True}), ("branch", {"staging": True}), ("tag", {"publish": True})):
@@ -118,7 +118,7 @@ def check(path, kind):
     staging = dict(caller, staging=True)
     tag = dict(caller, publish=True)
     dry = dict(caller)
-    ok_build = O(preflight=O(result="success"), build=O(result="success"))
+    ok_build = O(preflight=O(result="success", outputs=O(count="1")), build=O(result="success"))
 
     # the build: the cells the first job names (the quick set or the full matrix: tests/release-matrix.sh renders
     # both), with the staging channel added before the build when staged or staging
@@ -265,7 +265,8 @@ for kind in ("rpm", "deb"):
     assert f'"build/channel/${var}"' in w["rebuild"], f"{p}: the lost-race rebuild does not assemble the same tree"
     pull = [s for s in steps if "/actions/channel-pull@" in s.get("uses", "")][0]
     if kind == "rpm":
-        assert pull["with"]["strip"] == "${{ inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}", f"{p}: channel-pull strips another tree"
+        # a catch-up strips nothing: it keeps the served metadata of the directories it places nothing into (tests/catch-up-publish.sh)
+        assert pull["with"]["strip"] == "${{ inputs.catch-up == 'true' && 'none' || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}", f"{p}: channel-pull strips another tree"
     # the key check reads the real channel's served keys whatever the tree: staging is signed with the same key
     chk = [s for s in steps if s.get("name", "").startswith("Check the signing key")][0]
     assert f"build/channel/{kind}/" in chk["run"], f"{p}: the key check does not read the real channel's keys"

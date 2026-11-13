@@ -24,6 +24,15 @@
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
 #   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none
+#   CATCH_UP    'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel holds
+#               (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every package of
+#               <rpm dir> whose path the tree already holds is judged: a noarch or source package is dropped from what is
+#               published, by path, and the run says so (the first architecture of every run builds them, and the channel
+#               serves them already); any other is refused, naming the file, and nothing is placed or signed,
+#               byte-identical or not. The tree is pulled with its metadata (channel-pull strip: none), and only the
+#               directories that received a package get their metadata made again, from the packages they hold; every
+#               other directory keeps its metadata and its signature byte for byte, and the repository file is not
+#               rewritten.
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -53,8 +62,30 @@ for rel in ${SKELETON:-}; do
 done
 
 declare -A dirs=()
+declare -A dropped=()
 placed=()
+# a catch-up writes no file the channel holds: noarch and source packages are dropped, any other refuses the run
+if [ "${CATCH_UP:-}" = true ]; then
+    clash=0
+    for f in ${found[@]+"${found[@]}"}; do
+        IFS='|' read -r is_src arch rel < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}\n' "$f")
+        [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
+        releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
+        [ -n "$releasever" ] || { echo "$f has no .fcNN dist tag" >&2; exit 1; }
+        path=fedora/$releasever/$archdir/$(basename "$f")
+        [ -e "$tree/$path" ] || continue
+        if [ "$archdir" = noarch ] || [ "$archdir" = SRPMS ]; then
+            dropped[$f]=1
+            echo "dropped $(basename "$f") (catch-up: the channel serves $path already, and a served file is never rewritten)"
+        else
+            echo "refused $path: the channel serves it, and a catch-up never rewrites a served file" >&2
+            clash=1
+        fi
+    done
+    [ "$clash" = 0 ] || { echo "catch-up: the channel already serves the files above: nothing was placed or signed" >&2; exit 1; }
+fi
 for f in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$f]:-}" ] || continue
     IFS='|' read -r is_src arch rel pkg ver < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}\n' "$f")
     [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
     releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
@@ -79,6 +110,11 @@ for f in ${found[@]+"${found[@]}"}; do
         echo "dropped $(basename "$old") from fedora/$releasever/$archdir (an earlier staged build of $ver)"
     done
 done
+
+if [ "${CATCH_UP:-}" = true ] && [ "${#placed[@]}" = 0 ]; then
+    echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2
+    exit 1
+fi
 
 # A private rpm keystore holding the keys the channel serves, the keys committed here and this run's key: what a package already in the
 # tree must verify against. rpmkeys takes one key per file, so the union is split by fingerprint first.
@@ -126,13 +162,25 @@ fi
 for rel in "$tree"/fedora/*/; do
     [ -d "$rel" ] || continue
     for arch in noarch x86_64 aarch64 SRPMS; do
+        # a catch-up keeps a directory that exists, with its metadata; one the release lacks is made, with metadata
+        [ "${CATCH_UP:-}" = true ] && [ -d "$rel$arch" ] && continue
         mkdir -p "$rel$arch"
         dirs[${rel}$arch]=1
     done
 done
-# every directory that holds packages, not only the ones this run placed into: the metadata of the
-# pulled tree was discarded, and a directory another project filled would be left bare
-while IFS= read -r d; do dirs[$d]=1; done < <(find "$tree" -name '*.rpm' -printf '%h\n' | sort -u)
+if [ "${CATCH_UP:-}" = true ]; then # only what received a package
+    # the directories this run placed into, their metadata made again from the packages they hold (never updated from
+    # the pulled metadata, which this run did not write); every other directory keeps its metadata and signature
+    for f in "${placed[@]}"; do
+        d=$(dirname "$f")
+        dirs[$d]=1
+        rm -rf "$d/repodata"
+    done
+else
+    # every directory that holds packages, not only the ones this run placed into: the metadata of the
+    # pulled tree was discarded, and a directory another project filled would be left bare
+    while IFS= read -r d; do dirs[$d]=1; done < <(find "$tree" -name '*.rpm' -printf '%h\n' | sort -u)
+fi
 for dest in "${!dirs[@]}"; do
     if [ -d "$dest/repodata" ]; then createrepo_c --update --quiet "$dest"; else createrepo_c --quiet "$dest"; fi
     # the advisories of the releases this directory holds, from the packages' own changelogs, so that
@@ -158,8 +206,20 @@ done
 # the key file is what the channel served plus the signing key, never the signing key alone (channel-keys.sh);
 # openmixer.repo is the file openmixer-release installs, the same bytes (REPO_FILE: openmixer-staging.repo for staging)
 if [ -n "$key" ]; then
-    "$here/../import-gpg-key/channel-keys.sh" serve "$tree/RPM-GPG-KEY-openmixer" "$key"
-    install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
+    keyfile="$tree/RPM-GPG-KEY-openmixer"
+    # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
+    [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
+    "$here/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"
+    if [ -f "$keyfile.keep" ]; then
+        if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
+            "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" ]; then
+            mv "$keyfile.keep" "$keyfile"
+        else
+            rm -f "$keyfile.keep"
+        fi
+    fi
+    # a catch-up does not rewrite the repository file the channel serves
+    [ "${CATCH_UP:-}" = true ] && [ -e "$tree/$(basename "$repo_file")" ] || install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
 fi
 
 # which cells every package and version of the tree has, and the set (quick or full) this run published: the channel

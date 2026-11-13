@@ -14,7 +14,7 @@
 # channel holds, byte-identical or not, is refused naming it, and the tree is unchanged by it. Sabotage: the tree script
 # with its refusal taken out lets that run through, and this test goes red.
 #
-#   catch-up-publish.sh rpm|deb     rpm: rpm-build rpm-sign createrepo_c python3-rpm gnupg2; deb: apt-utils gnupg gpgv dpkg-dev
+#   catch-up-publish.sh rpm|deb     rpm: rpm-build rpm-sign createrepo_c python3-rpm gnupg2 zstd diffutils; deb: apt-utils gnupg gpgv dpkg-dev
 set -euo pipefail
 kind=${1:?usage: catch-up-publish.sh rpm|deb}
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -34,7 +34,7 @@ tree=$work/tree
 
 snapshot() { (cd "$tree" && find . -type f ! -path './.git/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$1"; }
 # changed <before> <after>: the paths whose bytes changed, appeared or went
-changed() { diff <(cat "$1") <(cat "$2") | sed -n 's/^[<>] [0-9a-f]*  \.\///p' | LC_ALL=C sort -u; }
+changed() { { diff "$1" "$2" || true; } | sed -n 's/^[<>] [0-9a-f]*  \.\///p' | LC_ALL=C sort -u; }
 row() { awk -F'\t' -v n="$1" -v v="$2" '$1 == n && $2 == v {print $3 "|" $4}' "$tree/cells.tsv"; }
 
 case $kind in
@@ -88,7 +88,13 @@ rpm)
     served_cells='fc44/aarch64 fc44/x86_64'
     clash=$work/catchup/plugin-qualify-0.20.4-1.fc44.aarch64.rpm
     same() { mkdir -p "$work/same"; cp "$tree/fedora/44/x86_64/plugin-qualify-0.20.4-1.fc44.x86_64.rpm" "$work/same/"; echo fedora/44/x86_64/plugin-qualify-0.20.4-1.fc44.x86_64.rpm; }
-    indexed() { find "$tree/fedora/44/aarch64/repodata" -name '*primary.xml*' -exec zcat -f {} + 2>/dev/null | grep -q 'plugin-qualify-0.20.4-1.fc44.aarch64.rpm'; }
+    indexed() { # the primary metadata, whatever createrepo_c compressed it with
+        local f x=
+        for f in "$tree"/fedora/44/aarch64/repodata/*primary.xml*; do
+            case $f in *.zst) x+=$(zstd -dcq "$f") ;; *.xz) x+=$(xz -dc "$f") ;; *.gz) x+=$(gzip -dc "$f") ;; *) x+=$(cat "$f") ;; esac
+        done
+        grep -qF 'plugin-qualify-0.20.4-1.fc44.aarch64.rpm' <<< "$x"
+    }
     ;;
 *) fail "usage: catch-up-publish.sh rpm|deb" ;;
 esac
@@ -98,6 +104,9 @@ cmp -s "$work/catchup/"*"/$(basename "$indep")" "$tree/$indep" 2>/dev/null || cm
 cp "$tree/cells.tsv" "$work/cells.before"
 
 # ---- the catch-up: the missing cell placed, the arch-independent rebuild dropped, everything else as it was
+# a second later than the first publish, as a real catch-up is: an index made again would carry another date and
+# another signature, so a rewrite of one shows in the bytes
+sleep 1
 snapshot "$work/before"
 CU=true publish "$work/catchup" > "$work/log" 2>&1 || { cat "$work/log"; fail "the catch-up publish failed"; }
 snapshot "$work/after"
@@ -107,9 +116,10 @@ grep -q "^dropped $(basename "$indep") (catch-up: the channel serves $indep alre
 if [ "$kind" = rpm ]; then
     grep -q "^dropped $(basename "$srpm") " "$work/log" || { cat "$work/log"; fail "the rebuilt source rpm was not dropped"; }
 fi
-unexpected=$(changed "$work/before" "$work/after" | grep -vxE "$new|cells\.tsv|$index" || true)
+ch=$(changed "$work/before" "$work/after")
+unexpected=$(grep -vxE "$new|cells\.tsv|$index" <<< "$ch" || true)
 [ -z "$unexpected" ] || { cat "$work/log"; fail "the catch-up changed served files: $unexpected"; }
-changed "$work/before" "$work/after" | grep -qxF "$new" || fail "the snapshot does not see the new file"
+grep -qxF "$new" <<< "$ch" || fail "the snapshot does not see the new file: $ch"
 ok "$kind: the missing cell placed and indexed; the rebuilt arch-independent package dropped; every other file byte-identical"
 [ "$(row plugin-qualify 0.20.4)" = "quick|$served_cells" ] || fail "cells.tsv records $(row plugin-qualify 0.20.4) for 0.20.4, not quick|$served_cells"
 diff <(grep -v '^plugin-qualify	0.20.4	' "$work/cells.before") <(grep -v '^plugin-qualify	0.20.4	' "$tree/cells.tsv") > /dev/null ||
@@ -140,18 +150,33 @@ snapshot "$work/after"
 cmp -s "$work/before" "$work/after" || fail "the empty catch-up changed the tree"
 ok "$kind: a catch-up left with nothing to place is refused"
 
-# ---- sabotage: the refusal taken out of the tree script
+# ---- sabotage, each must turn this test red:
+#   refusal  the overwrite refusal taken out: the run no longer refuses a served file by name
+#   index    every index made again, not only the touched ones: served index files change (deb: bookworm's Release;
+#            rpm: the repodata of fc44 x86_64 and fc45)
 if [ -z "${CATCH_UP_ACTIONS:-}" ]; then
-    sab=$work/sab
-    mkdir -p "$sab"
-    cp -a "$here/.github" "$here/packaging" "$sab/"
-    script=$sab/.github/actions/publish-${kind}s/publish-tree.sh
-    sed -i 's/^            clash=1$/            :/' "$script"
-    ! cmp -s "$script" "$here/.github/actions/publish-${kind}s/publish-tree.sh" || fail "the sabotage did not change publish-tree.sh"
-    if CATCH_UP_ACTIONS=$sab/.github/actions bash "$0" "$kind" > "$work/sab.log" 2>&1; then
-        cat "$work/sab.log"; fail "with the refusal taken out, a catch-up wrote over a served file and this test stayed green"
-    fi
-    grep -q 'FAIL: a catch-up wrote over' "$work/sab.log" || { cat "$work/sab.log"; fail "the sabotage went red for another reason"; }
-    ok "$kind: sabotage: without the refusal a catch-up writes over a served file, and this test goes red"
+    for what in refusal index; do
+        sab=$work/sab-$what
+        mkdir -p "$sab"
+        cp -a "$here/.github" "$here/packaging" "$sab/"
+        script=$sab/.github/actions/publish-${kind}s/publish-tree.sh
+        case $what in
+        refusal) sed -i 's/^            clash=1$/            :/' "$script"; want='FAIL: (a catch-up wrote over|the refusal of)' ;;
+        index)
+            if [ "$kind" = deb ]; then
+                sed -i 's/^    if \[ "\${CATCH_UP:-}" = true \] && \[ -z "\${touched\[\$suite\]:-}" \]; then$/    if false; then/' "$script"
+            else
+                sed -i 's/^        \[ "\${CATCH_UP:-}" = true \] && \[ -d "\$rel\$arch" \] && continue$/        :/' "$script"
+                sed -i 's/^if \[ "\${CATCH_UP:-}" = true \]; then # only what received a package$/if false; then/' "$script"
+            fi
+            want='FAIL: the catch-up changed served files' ;;
+        esac
+        ! cmp -s "$script" "$here/.github/actions/publish-${kind}s/publish-tree.sh" || fail "the $what sabotage did not change publish-tree.sh"
+        if CATCH_UP_ACTIONS=$sab/.github/actions bash "$0" "$kind" > "$work/sab.log" 2>&1; then
+            cat "$work/sab.log"; fail "with the $what sabotage this test stayed green"
+        fi
+        grep -qE "$want" "$work/sab.log" || { cat "$work/sab.log"; fail "the $what sabotage went red for another reason"; }
+        ok "$kind: sabotage ($what) goes red: $(grep -m1 -oE "$want" "$work/sab.log")"
+    done
 fi
 echo "catch-up-publish $kind: the missing cell only, served files byte-identical, overwrites refused"

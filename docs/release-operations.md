@@ -340,6 +340,37 @@ what meets it.
 `tests/release-matrix.sh` renders every row of the table above from the workflows as written, and runs `cells.sh`
 and `quick-deps.sh` on trees of its own.
 
+### Catching a served version up
+
+A cell that joins the quick set (trixie amd64, 2026-11-13) has no build of the versions already tagged and served.
+`republish` cannot fill it alone: it rebuilds every cell of the run, and its rebuilt arch-independent packages
+(`all`, `noarch`) and source rpms carry other bytes under the names the channel serves. A **catch-up** fills only
+what is missing:
+
+```
+gh workflow run release.yml -R Open-Mixer/<repository> --ref main \
+  -f source-ref=v<version> -f publish=true -f catch-up=true
+```
+
+- **The plan.** The first job (`release-matrix`, `matrix.sh`) takes the set's cells as above, reads `<kind>/cells.tsv`
+  from the channel repository (the API, not the Pages site, which lags a push), and leaves out every cell the tag's
+  version already records for the release's packages (`binary-names`, or `package-name`). A package whose line records
+  only `all` or `noarch` cells in a release serves that whole release and is not judged there. Nothing missing is
+  green: the run says so and builds and publishes nothing. **Refused by name:** a version the channel does not serve
+  (that is a release), a package of the release with no line at that version, a cell some packages serve and others
+  lack, a staged run, and `republish` beside it.
+- **The preflight** does not run the already-served check for a catch-up: the version is served by definition.
+- **The publish** pulls the channel with its metadata. Before anything is placed, every file whose path the tree
+  already holds is judged: an `all` deb, a `noarch` rpm or a source rpm is **dropped** from the publish, by path, and the
+  log says `dropped ...`; any other file is **refused**, named, byte-identical or not, and nothing is placed or signed.
+  Only the Debian releases (deb) or directories (rpm) that received a package get their index made and signed again;
+  every other file of the channel keeps its bytes, the key file and repository file too unless a new key must be
+  served. `cells.tsv` gains the new cell and keeps the version's set. The install check runs for the new cells only.
+
+`tests/catch-up-plan.sh` (the plan, the refusals, the workflow wiring) and `tests/catch-up-publish.sh rpm|deb` (a
+catch-up onto a fixture channel, served files byte-identical, an overwrite refused) run in CI, each with a sabotage
+that goes red.
+
 ### Tests
 
 `tests/staging-channel.sh` (the workflows rendered, the precheck as written, the repository files, the purge guard),
