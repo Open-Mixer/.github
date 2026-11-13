@@ -74,4 +74,11 @@ version name. A version name does not say which bytes you have; a commit does. S
   `omx-clap-scan` and `lilv`, and the workflows `surge-xt-rpm.yml` and `surge-xt-deb.yml` run it for fedora 44 and
   bookworm and trixie, on x86_64/amd64 and aarch64/arm64, before they publish.
 
+- The CLAP headers, at 1.2.10, the floor every package of the channel builds against, one number for every
+  distribution: Fedora 44 and 45 ship clap-devel 1.2.7 and Debian none, so the channel serves the pin of `pins.txt`
+  (tag 1.2.10) to all of them. `packaging/clap-headers` builds clap-devel, a newer EVR of Fedora's own package that
+  `dnf upgrade` takes over it, by `clap-rpm.yml` for fedora 44 and 45 on x86_64 and aarch64; `actions/deb-deps/
+  clap-headers` builds clap-headers by `clap-headers-deb.yml` for bookworm and trixie (Architecture: all). Each run
+  installs the package in a clean container and compiles against it before it publishes.
+
 A published version is never rebuilt with new bytes. To change what goes in, move the pin and bump the version.
