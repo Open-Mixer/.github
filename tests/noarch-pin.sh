@@ -37,35 +37,32 @@ export SERVED_KEYS_DIR=$work/no-committed
 tree=$work/tree
 
 snapshot() { (cd "$tree" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$1"; }
-mkrpm() { # <out dir> <name> <version> <arch> [<Requires>]   release 1.fc44, every package of the source omx-clap-core
+# one spec, the way omx-clap-core is built: the binary package and a noarch subpackage of the same source rpm, one build per
+# architecture (each build writes the noarch subpackage again, under the same file name)
+build() { # <out dir> <version> <arch> <subpackage> <op>   the binary package Requires "<subpackage> <op> <version>-1.fc44"
     local id=$2-$3-$4 spec
     spec=$work/$id.spec
     {
-        printf '%s\n' "Name: $2" "Version: $3" 'Release: 1.fc44' 'Summary: t' 'License: MIT'
-        [ "$4" != noarch ] || echo 'BuildArch: noarch'
-        [ -z "${5:-}" ] || echo "Requires: $5"
-        printf '%s\n' '%description' "$id" '%files'
+        printf '%s\n' 'Name: omx-clap-core' "Version: $2" 'Release: 1.fc44' 'Summary: t' 'License: MIT' "Requires: omx-clap-core-$4 $5 $2-1.fc44" \
+            '%description' 'core' '%package '"$4" 'Summary: t' 'BuildArch: noarch' '%description '"$4" "$4" '%files' '%files '"$4"
     } > "$spec"
     rpmbuild -bb --quiet --define "_topdir $work/rb-$id" --define 'dist %{nil}' --define 'debug_package %{nil}' \
-        $([ "$4" = noarch ] || echo "--target $4") "$spec" >/dev/null 2>&1 || fail "rpmbuild $id"
+        --target "$3" "$spec" >/dev/null 2>&1 || fail "rpmbuild $id"
     mkdir -p "$1"
     find "$work/rb-$id" -name '*.rpm' -exec cp {} "$1/" \;
 }
-core() { mkrpm "$1" omx-clap-core "$2" "$3" "omx-clap-core-contract = $2-1.fc44"; }
-contract() { mkrpm "$1" omx-clap-core-contract "$2" noarch; }
+core() { build "$1" "$2" "$3" contract =; }
 publish() { CATCH_UP=${CU:-} MATRIX_SET=${SET:-quick} "$actions/publish-rpms/publish-tree.sh" "$tree" "$1" "$key"; }
 served() { [ -f "$tree/fedora/44/$1" ]; }
 
 # ---- the channel before the quick release
 core "$work/r0" 0.32.3 x86_64
 core "$work/r0" 0.32.3 aarch64
-contract "$work/r0" 0.32.3
 SET=full publish "$work/r0" > "$work/log" 2>&1 || { cat "$work/log"; fail "the fixture channel could not be published"; }
 cp -a "$tree" "$work/tree0"
 
 # ---- 1. a quick release of x86_64 alone: refused, nothing placed or signed
 core "$work/r1" 0.32.4 x86_64
-contract "$work/r1" 0.32.4
 snapshot "$work/before"
 if publish "$work/r1" > "$work/log" 2>&1; then cat "$work/log"; fail "a release built for x86_64 alone published omx-clap-core-contract 0.32.4 over aarch64's omx-clap-core 0.32.3"; fi
 grep -q '^refused omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm in fedora/44: ' "$work/log" ||
@@ -87,7 +84,6 @@ ok "the same release built for x86_64 and aarch64 publishes"
 # ---- 3. an older noarch than the release's newest is not dnf's candidate: published
 rm -rf "$tree"; cp -a "$work/tree0" "$tree"
 core "$work/r3" 0.32.2 x86_64
-contract "$work/r3" 0.32.2
 publish "$work/r3" > "$work/log" 2>&1 || { cat "$work/log"; fail "a noarch below the release's newest (not dnf's candidate) was refused"; }
 served noarch/omx-clap-core-contract-0.32.2-1.fc44.noarch.rpm || fail "omx-clap-core-contract 0.32.2 is not placed"
 ok "a noarch below the release's newest is not dnf's candidate and is published"
@@ -95,13 +91,10 @@ ok "a noarch below the release's newest is not dnf's candidate and is published"
 # ---- 4. the catch-up of aarch64 0.32.4 on the issue's channel: x86_64 0.32.4 + contract 0.32.4 served, aarch64 0.32.3 served
 rm -rf "$tree"
 core "$work/r4a" 0.32.4 x86_64
-contract "$work/r4a" 0.32.4
 SET=quick publish "$work/r4a" > "$work/log" 2>&1 || { cat "$work/log"; fail "x86_64 alone, into a release with no other omx-clap-core, was refused"; }
 core "$work/r4b" 0.32.3 aarch64
-contract "$work/r4b" 0.32.3
 SET=full publish "$work/r4b" > "$work/log" 2>&1 || { cat "$work/log"; fail "a noarch below the release's newest was refused on the issue's channel"; }
 core "$work/r4c" 0.32.4 aarch64
-contract "$work/r4c" 0.32.4
 CU=true publish "$work/r4c" > "$work/log" 2>&1 || { cat "$work/log"; fail "the catch-up of aarch64 was refused"; }
 grep -q '^dropped omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm ' "$work/log" || { cat "$work/log"; fail "the catch-up did not drop the served contract"; }
 served aarch64/omx-clap-core-0.32.4-1.fc44.aarch64.rpm || fail "the catch-up's aarch64 package is not placed"
@@ -109,8 +102,7 @@ ok "the catch-up of the missing architecture publishes on the issue's channel"
 
 # ---- 5. a noarch nothing of its source pins exactly: a run of one architecture publishes it
 rm -rf "$tree"; cp -a "$work/tree0" "$tree"
-mkrpm "$work/r5" omx-clap-core 0.32.4 x86_64 'omx-clap-core-langpack-ca >= 0.32.4'
-mkrpm "$work/r5" omx-clap-core-langpack-ca 0.32.4 noarch
+build "$work/r5" 0.32.4 x86_64 langpack-ca '>='
 publish "$work/r5" > "$work/log" 2>&1 || { cat "$work/log"; fail "a noarch nothing pins exactly was refused"; }
 served noarch/omx-clap-core-langpack-ca-0.32.4-1.fc44.noarch.rpm || fail "omx-clap-core-langpack-ca 0.32.4 is not placed"
 ok "a noarch no package of its source pins exactly is published by a run of one architecture"
