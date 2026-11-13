@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: check-matrix
+description: Say which cells a check runs, the quick set's alone while a release wave is open or the whole matrix
+
+# Ruling D25 (Open-Mixer/.github#59): a full-stack or install check, and an ordinary CI matrix, covers the cells the
+# release set builds. While the organisation variable OMX_RELEASE_MATRIX is quick that is the quick set alone
+# (.github/actions/release-matrix/quick.txt, read through its matrix.sh, the one place it is written); full, or unset,
+# adds the rest. The caller writes its whole matrix once, here, and a skipped cell comes back with full. check-matrix.sh
+# says how; docs/release-operations.md shows a caller.
+#
+#   checks:
+#     runs-on: ubuntu-latest
+#     outputs: { deb: '${{ steps.m.outputs.deb }}', deb-count: '${{ steps.m.outputs.deb-count }}' }
+#     steps:
+#       - id: m
+#         uses: Open-Mixer/.github/.github/actions/check-matrix@openmixer-v1
+#         with:
+#           wave: ${{ vars.OMX_RELEASE_MATRIX }}
+#           deb-releases: '["bookworm", "trixie"]'
+#           deb-arches: '["amd64", "arm64"]'
+#   full-deb:
+#     needs: checks
+#     if: needs.checks.outputs.deb-count != '0'
+#     container: { image: '${{ matrix.cell.image }}' }
+#     strategy: { matrix: { cell: '${{ fromJSON(needs.checks.outputs.deb) }}', mode: [default, headless] } }
+
+inputs:
+  wave:
+    description: the organisation variable OMX_RELEASE_MATRIX
+    default: ''
+  matrix:
+    description: "'quick' or 'full' to override the variable; empty: the variable decides, full when it is unset"
+    default: ''
+  rpm-releases:
+    description: the whole check matrix's Fedora releases, a JSON array; empty for no rpm check
+    default: ''
+  rpm-arches:
+    description: its architectures, a JSON array
+    default: '["x86_64", "aarch64"]'
+  deb-releases:
+    description: the whole check matrix's Debian releases, a JSON array; empty for no deb check
+    default: ''
+  deb-arches:
+    description: its architectures, a JSON array
+    default: '["amd64", "arm64"]'
+
+outputs:
+  set:
+    description: "'quick' or 'full'"
+    value: ${{ steps.matrix.outputs.set }}
+  rpm:
+    description: 'the rpm cells, a JSON array: {"fedora": "44", "arch": "x86_64", "image": "fedora:44"}'
+    value: ${{ steps.matrix.outputs.rpm }}
+  rpm-count:
+    description: how many rpm cells; 0 skips the job
+    value: ${{ steps.matrix.outputs.rpm-count }}
+  deb:
+    description: 'the deb cells, a JSON array: {"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}'
+    value: ${{ steps.matrix.outputs.deb }}
+  deb-count:
+    description: how many deb cells; 0 skips the job
+    value: ${{ steps.matrix.outputs.deb-count }}
+  cells:
+    description: the rpm and the deb cells, one JSON array
+    value: ${{ steps.matrix.outputs.cells }}
+  count:
+    description: how many cells in all
+    value: ${{ steps.matrix.outputs.count }}
+  images:
+    description: 'the container images of the cells, each once, a JSON array: ["fedora:44", "debian:trixie"]'
+    value: ${{ steps.matrix.outputs.images }}
+
+runs:
+  using: composite
+  steps:
+    - id: matrix
+      shell: bash
+      env:
+        WAVE: ${{ inputs.wave }}
+        MATRIX: ${{ inputs.matrix }}
+        RPM_RELEASES: ${{ inputs.rpm-releases }}
+        RPM_ARCHES: ${{ inputs.rpm-arches }}
+        DEB_RELEASES: ${{ inputs.deb-releases }}
+        DEB_ARCHES: ${{ inputs.deb-arches }}
+      run: |
+        "$GITHUB_ACTION_PATH/check-matrix.sh"

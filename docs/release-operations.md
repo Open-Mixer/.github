@@ -308,6 +308,53 @@ names, no others. The run says which set it builds, and why, in a notice.
 - The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
   cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
 
+### Checks follow the set
+
+A check outside the release workflows (a full-stack install check after the publish, like plugin-hostd's
+`plugin-hostd-full`, or a repository's ordinary CI matrix of containers) covers the cells the set builds and no others
+(ruling D25): while `OMX_RELEASE_MATRIX` is `quick` only the quick cells, and `full` (or the variable unset) adds the
+rest. A cell the channel does not serve for the wave (bookworm) is skipped by reading the variable, never deleted from
+the workflow, and comes back with `full`. Without this a check can only fail on a cell the set never built, every quick
+release ends red, and a real failure no longer stands out (Open-Mixer/.github#59).
+
+The `check-matrix` action renders such a matrix. The caller writes its whole matrix once; the action reads
+`quick.txt` through `release-matrix`'s `matrix.sh`, so the quick set is still written in one place:
+
+```yaml
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      deb: ${{ steps.m.outputs.deb }}
+      deb-count: ${{ steps.m.outputs.deb-count }}
+    steps:
+      - id: m
+        uses: Open-Mixer/.github/.github/actions/check-matrix@openmixer-v1
+        with:
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          deb-releases: '["bookworm", "trixie"]'
+          deb-arches: '["amd64", "arm64"]'
+
+  full-deb:
+    needs: [deb, checks]
+    if: needs.checks.outputs.deb-count != '0'
+    runs-on: ${{ matrix.cell.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container:
+      image: ${{ matrix.cell.image }}
+    strategy:
+      matrix:
+        cell: ${{ fromJSON(needs.checks.outputs.deb) }}
+        mode: [default, headless]
+```
+
+Each cell carries its container image (`{"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}`); `images` is
+the list of images alone, for a CI job that runs on the runner's own architecture. Unlike a release, a kind whose
+matrix holds no quick cell renders no cell while `quick` (count 0, the job is skipped), never its full matrix. The
+notice names the cells skipped. The cell is a matrix dimension of its own (`matrix.cell`), not an `include`: `include`
+rows beside another dimension (`mode`) overwrite each other's added keys. `tests/check-matrix.sh` renders quick and
+full for plugin-hostd's checks and for a CI image list, with two sabotages.
+
+The install checks of `build-rpm.yml` and `build-deb.yml` already take their cells from the release's own first job.
+
 ### What the channel records
 
 The tree scripts write `cells.tsv` at the top of each tree (`rpm/cells.tsv`, `deb/cells.tsv`, and the same under
