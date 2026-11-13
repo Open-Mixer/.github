@@ -1,0 +1,8 @@
+# The quick set: the cells a staged publish and an interim tag build, so the next layer of a release wave can go on
+# while the rest of the matrix waits for the wave's final release. One cell per line: the package kind, the Fedora
+# release or Debian release, the architecture as that kind names it. This list is the only place the set is written;
+# matrix.sh reads it, and docs/release-operations.md describes it.
+rpm 44 x86_64
+rpm 45 x86_64
+deb trixie amd64
+deb trixie arm64

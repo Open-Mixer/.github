@@ -22,6 +22,9 @@ inputs:
     required: true
   branch:
     default: main
+  strip:
+    description: the dnf tree whose repodata is discarded, rpm or staging/rpm (the staging channel), or none
+    default: rpm
 
 runs:
   using: composite
@@ -31,6 +34,7 @@ runs:
         PUBLISH_TOKEN: ${{ inputs.publish-token }}
         CHANNEL: ${{ inputs.channel }}
         BRANCH: ${{ inputs.branch }}
+        STRIP: ${{ inputs.strip }}
       run: |
         set -o pipefail
         test -n "$PUBLISH_TOKEN" || {
@@ -42,6 +46,10 @@ runs:
         git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
           clone --depth 1 "https://github.com/$CHANNEL.git" build/channel
         git -C build/channel checkout -q -B "$BRANCH"
+        case $STRIP in rpm | staging/rpm | none) ;; *) echo "::error::strip is rpm, staging/rpm or none, not '$STRIP'"; exit 1 ;; esac
         mkdir -p build/channel/rpm build/channel/deb
-        find build/channel/rpm -type d -name repodata -prune -exec rm -rf {} +
+        if [ "$STRIP" != none ]; then
+          mkdir -p "build/channel/$STRIP"
+          find "build/channel/$STRIP" -type d -name repodata -prune -exec rm -rf {} +
+        fi
         echo "pulled $(find build/channel/rpm -name '*.rpm' | wc -l) rpm and $(find build/channel/deb -name '*.deb' | wc -l) deb package(s) from $CHANNEL"

@@ -63,7 +63,7 @@ It runs before anything is signed: inside `publish-debs` and `publish-rpms` (on 
 channel in a dry run), and in `release-c-lib.yml` between the build of both kinds (`stage: build`) and the publish
 of either (`stage: publish`). A package released by another repository in the same pass is named in `same-pass`; a
 breakage it causes or suffers is then reported, not red, and its own release is checked when it publishes. A package
-already uninstallable before the release is reported as a warning. Exit 2 means the measurement could not be taken,
+already uninstallable before the release is reported as a warning. A staged publish (`staging: true`) lands in the staging channel, which no client installs from by default, and is not checked. Exit 2 means the measurement could not be taken,
 and is not a pass.
 
 `tests/channel-installability.sh ceiling|deb|rpm` proves each arm on a throwaway channel, offline. To check a
@@ -112,6 +112,240 @@ main with the repository, its existing tag and `fedora-versions` (`["45"]`). It 
 verified, builds that commit with the inputs the repository's own release.yml passes, and publishes the named
 releases only; the GitHub release of the tag is left as it is. Publish in dependency order (omx-contract first),
 since each build takes its BuildRequires from the channel's tree of its own Fedora release, and one run at a time.
+
+## The staging channel of a release wave
+
+A release wave publishes inner layers before the outer ones build on them. Inside the wave, a layer does not wait
+for the real channel: its staged run publishes to the staging channel, and the next layer builds, verifies and
+install-tests against it. The real channel gets the whole set once, in the wave's release pass, from the `v<version>`
+tags. The staging channel is per wave and is purged after the pass.
+
+### Where it is
+
+The staging channel is a second dnf tree and a second apt tree in the same channel repository
+(`Open-Mixer/open-mixer.github.io`), beside `rpm/` and `deb/`, served by the same host and signed with the same key:
+
+| | RPM | DEB |
+| --- | --- | --- |
+| tree | `staging/rpm/fedora/<release>/<arch>/` | `staging/deb/debian/<suite>/<arch>/` |
+| URL | `https://www.openmixer.org/staging/rpm/fedora/$releasever/$basearch/` and `.../noarch/` | `https://www.openmixer.org/staging/deb/debian/<suite>/` |
+| key | the real channel's: `/etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer` | the real channel's: `/usr/share/keyrings/openmixer-archive-keyring.asc` |
+| priority | `priority=10` (the real repositories keep dnf's default, 99) | `Pin-Priority: 600` on `Label: OpenMixer-Staging` (the real channel stays at 500) |
+
+Every Fedora release and Debian release of the workflow's matrix has an index in the staging tree, empty or not, so a
+machine that adds the staging channel never reads a 404. The release preflight, the channel prune and
+channel-installability read `rpm/` and `deb/` only; the site deploy of openmixer-www replaces only the paths it owns.
+On a machine that already holds a cached staging index, `apt-get update` only warns when a new index fails its signature
+and keeps the old one; a fresh CI container has no cached index and fails correctly, so nothing is changed for it.
+
+### The files a machine adds
+
+The real channel first (openmixer-release, which installs the key), then these. They are `packaging/staging/` of this
+repository, and `add-staging.sh` of the add-openmixer action writes them.
+
+`/etc/yum.repos.d/openmixer-staging.repo`:
+
+```ini
+[openmixer-staging]
+name=OpenMixer staging
+baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=10
+
+[openmixer-staging-noarch]
+name=OpenMixer staging (noarch)
+baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/noarch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=10
+```
+
+`/etc/apt/sources.list.d/openmixer-staging.sources`, with the system's Debian release for `<suite>`:
+
+```
+Types: deb
+URIs: https://www.openmixer.org/staging/deb/debian/<suite>/
+Suites: ./
+Signed-By: /usr/share/keyrings/openmixer-archive-keyring.asc
+```
+
+`/etc/apt/preferences.d/openmixer-staging.pref`:
+
+```
+Package: *
+Pin: release l=OpenMixer-Staging
+Pin-Priority: 600
+```
+
+Where a package of the staging channel meets a dependency, it is taken over the real channel's, even over a higher
+version; everything else comes from the real channel. The repository ids start with `openmixer` on purpose: channel-installability
+disables every system repository whose id does, so the gate keeps judging the real channel alone on a machine that
+has staging added (`tests/staging-installability.sh`). To take the staging channel off a machine, remove the three
+files and refresh (`dnf makecache`, `apt-get update`).
+
+### How a layer uses it
+
+- **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc44 and fc45 on x86_64, trixie on amd64 and arm64), or the whole
+  matrix when told full ("The quick set and the full matrix" below), against the staging channel,
+  sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
+  of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
+  a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and
+  `source-repository`.
+- **Build against staging.** `staged: true` already does. A dry run on a branch takes `staging: true`: the build
+  containers add the staging channel, and nothing is published. `staging` refuses a tag, `source-ref` and `publish`, so
+  a release never builds against staged packages.
+- **Anywhere else** (a consumer's own CI, the verify Job, an install test): `add-openmixer` with `staging: 'true'`, or
+  the three files above on a machine that has openmixer-release. A consumer turns it on with one switch and has no
+  per-package code: dnf and apt resolve to the staged builds.
+
+For this wave only, the reusable workflows still accept `staged-deps` and ignore it, and `install-staged` is a no-op that says it is retired; both are removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched to `staging`.
+
+The staged versions sort above the release of the same version (`<version>-<release>.git<commit time>.<sha>` for RPM,
+`<version>+git<commit time>.<sha>` for DEB), so a consumer's floor on the coming version is met. The commit time, in
+seconds, comes before the sha because a short sha sorts by chance: with it the staged build of a later commit sorts
+above the build of an earlier one. A staging publish also drops the other staged builds of the same package and
+version from the directories it publishes into, so the staging channel offers one build of a version, the last one
+staged.
+
+### Promoting a staged version
+
+`promote-staged.yml` makes a staged build the release without building it again, so what the layers above were built
+and verified against is what ships. A repository calls it from a `promote.yml` of its own (dispatched by hand, with
+`contents: write`; the header of `promote-staged.yml` has the caller), with the staged `version` and, when staging
+holds builds of more than one commit of that version, the `commit`.
+
+1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
+   architecture of the matrix, with its source package, and must cover every release the channel root serves the
+   package for. The commit must be on the default branch, and `v<version>` must be free or already on that commit.
+   A staged build of the quick set does not hold every cell, so it is refused here by name: a version is promoted
+   from a staged run of the full matrix, or released from its tag.
+2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
+   the signed staging index of its suite. Nothing is signed by a promotion.
+3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
+   the channel; the metadata is regenerated and signed, the packages are placed as they are, and the tree is compared
+   with the staged checksums before the push is trusted.
+4. **Prove.** Every promoted file is fetched from the served channel and its SHA256 compared with the staged one
+   (`same bytes <sha256> <path>` lines in the run log), then the version installs from the channel root alone in a
+   clean container of every release and architecture.
+5. **Tag and release.** Only then: `v<version>` on the commit the staged build recorded, and the GitHub release with
+   the promoted files. The tag is made by the workflow's token, so it starts no tag-triggered release run.
+
+Any refusal in 1 or 2 leaves the channel as it was. `dry-run: true` stops after assembling an unsigned tree: nothing
+is pushed, tagged or released. A promoted package keeps the version string of its staged build
+(`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
+`staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
+
+### The purge
+
+After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand, it being on the default
+branch, the only place GitHub dispatches from; or as
+the last job of the pass with `uses: Open-Mixer/.github/.github/workflows/purge-staging.yml@openmixer-v1` and
+`secrets: inherit`). One job per kind empties `staging/rpm` and `staging/deb`, regenerates their empty metadata with
+the tree scripts, signs it with the same keys and pushes through `channel-push`. A machine that still has the staging
+channel added then reads an empty index.
+
+The staging channel needs no hand step to come to exist: the first staged publish creates `staging/rpm` or
+`staging/deb` with the signed index of every release of its matrix and the key, and a purge of a channel that never had
+staging makes the same empty tree. Before that first publish the staging URLs answer 404, and a build that adds staging
+then fails, naming the URL that answered 404: a staged build never falls back to the released dependency.
+
+The one exception is the first layer of a wave (omx-contract's own staged run), whose build job adds staging before
+anything was ever published to it. Its release workflow, and only it, passes `staging-bootstrap: true` to `build-rpm.yml`
+and `build-deb.yml` (the input of the same name on `add-openmixer`), so that `add-openmixer` (add-staging.sh) adds
+nothing and gives a notice when this machine's staging index and the staging key file both answer 404. The coordinator
+of the wave sets it in that one caller. Even with the switch, a staging tree that exists without this release's index,
+any other status, or an index whose signature does not verify still fails the step (`tests/staging-bootstrap.sh`).
+After a purge the empty index is served, so the channel is added and loaded as usual. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
+and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
+pulled copy and pushes nothing.
+
+## The quick set and the full matrix
+
+A release builds eight cells: Fedora 44 and 45 on x86_64 and aarch64, Debian bookworm and trixie on amd64 and arm64.
+While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
+set** instead:
+
+| kind | cells |
+|------|-------|
+| rpm  | fc44 x86_64, fc45 x86_64 |
+| deb  | trixie amd64, trixie arm64 |
+
+trixie amd64 joined the set on 2026-11-13: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
+from the deb channel, and with no quick amd64 cell every one of their runs failed on a version the wave had not
+built there. bookworm stays out.
+
+The set is written once, in `.github/actions/release-matrix/quick.txt`. `build-rpm.yml` and `build-deb.yml` ask the
+`release-matrix` action in their first job, and the build jobs and the install checks both run for the cells it
+names, no others. The run says which set it builds, and why, in a notice.
+
+### Which set a run builds
+
+| run | `matrix` input | `OMX_RELEASE_MATRIX` unset | `quick` | `full` |
+|-----|----------------|----------------------------|---------|--------|
+| any | `quick` or `full` | the input | the input | the input |
+| a tag, or `source-ref` | empty | **full** | quick | full |
+| `staged: true` | empty | **quick** | quick | full |
+| `workflow_dispatch`, not a tag | empty | **quick** | quick | full |
+| a pull request, a push to a branch | empty | full | full | full |
+
+- **A caller that changes nothing** passes no `matrix`. Its tag push builds the full matrix, as it always did,
+  unless the organisation variable `OMX_RELEASE_MATRIX` is `quick`. The default is full on purpose: a tag pushed by
+  hand with no wave open must never publish four cells of eight because nobody said otherwise.
+- **`OMX_RELEASE_MATRIX`** is the one thing the release chain sets: `quick` when it opens a wave, `full` (or
+  removed) before the final release of each repository. It is an organisation variable because a tag push carries no
+  inputs, and the callers' workflow files stay as they are.
+- **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
+  `publish-fedora.yml` always passes `full`: a new Fedora release is filled whole.
+- The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
+  cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
+
+### What the channel records
+
+The tree scripts write `cells.tsv` at the top of each tree (`rpm/cells.tsv`, `deb/cells.tsv`, and the same under
+`staging/`), one line per package and version, tab separated:
+
+```
+# package	version	set	cells
+omx-contract-devel	3.13.0	full	fc44/aarch64 fc44/x86_64 fc45/aarch64 fc45/x86_64
+omx-contract-devel	3.14.0	quick	fc44/x86_64 fc45/x86_64
+```
+
+The cells are read from the files in the tree at every publish. The set is that of the run that published the
+version; `-` marks a version published before sets were recorded. The file is page data, not signed, and nothing
+installs from it: the channel page reads it to show which cells a version has.
+
+### The final release
+
+A version the channel has for the quick set alone is not a release: five cells cannot install it. Two things hold
+the line.
+
+- A release of the full matrix reads `cells.tsv` after its build has installed its dependencies, in every build job,
+  and **refuses** when one of them is a version marked `quick`, naming it and its cells. The dependency is released
+  for the full matrix first. A channel that serves no `cells.tsv` yet records no quick version and the check says so;
+  a channel that cannot be read fails the run.
+- A quick version becomes a full one by going out again for the full matrix: a new tag, or the same tag run again
+  with `republish: true`, which keeps the files already published and adds the missing cells. Its line in `cells.tsv`
+  then reads `full`.
+
+The check sees what the build installed, so it covers build dependencies and whatever they pull in. A package that
+is only a run-time dependency, never installed by the build, is not seen by it; the install check of the release is
+what meets it.
+
+`tests/release-matrix.sh` renders every row of the table above from the workflows as written, and runs `cells.sh`
+and `quick-deps.sh` on trees of its own.
+
+### Tests
+
+`tests/staging-channel.sh` (the workflows rendered, the precheck as written, the repository files, the purge guard),
+`tests/staging-publish.sh rpm|deb` (a staged publish, a client and the purge on a stub channel, in a Fedora or Debian
+container), `tests/staging-bootstrap.sh rpm|deb` (the first staged run into a channel with no staging path, served
+over HTTP, and the next one after a purge) and `tests/staging-installability.sh` (the gate's verdict with and without a staged minor) run in CI.
 
 ## openmixer-release, the package that adds the repository
 

@@ -23,7 +23,8 @@ PATTERNS=(
   'openmixer ?#[0-9]'                                 # one of its issues or pull requests
   '[A-Za-z0-9_.]-dev#[0-9]'                           # an issue of a private *-dev repository
   'integration/[A-Za-z0-9]'                           # a private integration branch
-  'packages/[a-z][a-z0-9-]+'                          # a path into the private repository's packages
+  '(^|[^A-Za-z0-9_-])packages/[a-z][a-z0-9-]+'        # a path into the private repository's packages: the segment
+                                                      # itself, never the tail of dist-packages or site-packages
   '\.''vue([^A-Za-z0-9_]|$)'                            # its web UI components
   "openmixer's"" spec"                                  # its specification files
   'docs/''design/'                                      # its design documents
@@ -115,6 +116,8 @@ if [ "${1:-}" = --self-test ]; then
   sab dated-citation tools/gen.mjs                   '// as laid out in spec ''2026-10-09'
   sab ttl            src/x.ttl       'rdfs:comment "see FreeMixer/''openmixer''#12" ;'
   sab header         src/x.h         '/* packages''/core/src/x.ts */'
+  sab path-quoted    docs/a.md                       'the server in `packages''/server/src/x`'
+  sab path-in-path   tools/x.sh                      'ls ../packages''/server/src/x'
   sab design-dir     docs/a.md                       'the notes in docs/''design/specs'
   sab harness-dir    tools/gen.mjs                   '// harness''/dsp-check.sh'
   sab other-project  docs/a.md                       'see zero''signage/platform'
@@ -133,7 +136,8 @@ if [ "${1:-}" = --self-test ]; then
   # what the patterns leave alone, each a line a public repository really carries
   mk; { printf '%s\n' 'R1 and R14 are open questions' 'double r1 = 0.5, h2 = x;' '<h2 class="omx-section-title">Comp</h2>' \
         'at $r1, the rate' 'const f = { r1: rot(3, 1024) };' '"id": "ms''i-20261017"' '/home/u/.clap' '/home/user/.lv2/a.ttl' \
-        '/home/u/.local/share/omx/qualified' >> "$scratch/t/docs/a.md"; }; git -C "$scratch/t" add -A
+        '/home/u/.local/share/omx/qualified' 'usr/lib/python3/dist-packages/plugin_hostd' 'lib/python3.14/site-packages/plugin_hostd/client.py' \
+        >> "$scratch/t/docs/a.md"; }; git -C "$scratch/t" add -A
   if check "$scratch/t" >/dev/null 2>&1; then echo "LEGAL lines: green"; else echo "LEGAL lines: RED"; check "$scratch/t" 2>&1 | sed 's/^/  /'; fail=1; fi
   # the same patterns over commit messages
   mk; git -C "$scratch/t" add -A; g() { git -C "$scratch/t" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }

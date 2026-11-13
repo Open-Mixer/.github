@@ -1,0 +1,536 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Promote a staged version
+
+# A release wave builds each library once, staged (build-rpm.yml and build-deb.yml with staged: true), and the next
+# layer builds against that. This workflow makes the staged build the release: it copies the packages one staged commit
+# left under staging/ of the channel repository to the channel root, for every Fedora and Debian release, regenerates
+# and signs the repository metadata with the publish's own actions, and, once the channel serves the same bytes and
+# they install from the channel root alone, tags v<version> on the commit the staged build recorded and creates the
+# GitHub release from the promoted files. Nothing is rebuilt and no package is signed: what the layers above were
+# built against is what ships.
+#
+# It refuses, before anything is written:
+#   - a staged tree that lacks the build for any release or architecture of the matrix, or a source package, or that
+#     does not cover a release the channel root serves the package for (actions/promote-staged/collect.py);
+#   - a package the release key does not already vouch for: an RPM without a good signature by a key the channel
+#     serves, a DEB that is not in the signed staging index (actions/promote-staged/vouch.sh);
+#   - a commit that is not on the default branch of the calling repository, or a v<version> tag on another commit.
+# After the publish it fails, and tags nothing, when the channel root does not hold or serve the bytes staging held
+# (the checksums are in the run log), or when an install check fails.
+#
+# The promoted packages keep the version string of the staged build (<release>.git<commit time>.<sha> and +git<commit time>.<sha>): the bytes
+# are the same, so the name is. The tag is created by the workflow's token, so it starts no tag-triggered release
+# workflow of the caller. The staged files stay under staging/ until the wave's purge (purge-staging.yml).
+#
+# The caller, in the repository that owns the version (GitHub dispatches only workflows of the default branch):
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         version: { type: string, required: true }
+#         commit: { type: string, default: '' }
+#         dry-run: { type: boolean, default: false }
+#   permissions:
+#     contents: write        # the tag and the GitHub release; a called workflow cannot raise the caller's token
+#   jobs:
+#     promote:
+#       uses: Open-Mixer/.github/.github/workflows/promote-staged.yml@openmixer-v1
+#       with:
+#         package-name: omx-contract
+#         binary-names: omx-contract-devel
+#         version: ${{ inputs.version }}
+#         commit: ${{ inputs.commit }}
+#         dry-run: ${{ inputs.dry-run }}
+#       secrets: inherit
+#
+# Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY,
+# and RPM_GPG_KEY with RPM_GPG_PASSPHRASE, which co-sign the apt index.
+
+on:
+  workflow_call:
+    inputs:
+      package-name:
+        type: string
+        required: true
+        description: 'The source package, as the staged build named it'
+      binary-names:
+        type: string
+        default: ''
+        description: 'The packages every release and architecture must hold and the install check installs, space separated; empty means package-name'
+      version:
+        type: string
+        required: true
+        description: 'The staged version to promote, without the v'
+      commit:
+        type: string
+        default: ''
+        description: 'The commit of the staged build, short or full; needed when staging holds builds of more than one commit of the version'
+      target-repo:
+        type: string
+        default: 'Open-Mixer/open-mixer.github.io'
+        description: 'The channel repository'
+      base-url:
+        type: string
+        default: 'https://www.openmixer.org'
+        description: 'Where the channel is served: the promoted files are read back from there and the install check adds it'
+      rpm:
+        type: boolean
+        default: true
+        description: 'Promote the RPMs'
+      deb:
+        type: boolean
+        default: true
+        description: 'Promote the DEBs'
+      fedora-versions:
+        type: string
+        default: '["44", "45"]'
+        description: 'JSON array of the Fedora releases a release of this package covers'
+      rpm-arch-matrix:
+        type: string
+        default: '["x86_64", "aarch64"]'
+        description: 'JSON array of the RPM architectures'
+      suite-matrix:
+        type: string
+        default: '["bookworm", "trixie"]'
+        description: 'JSON array of the Debian releases a release of this package covers'
+      deb-arch-matrix:
+        type: string
+        default: '["amd64", "arm64"]'
+        description: 'JSON array of the DEB architectures'
+      requires:
+        type: string
+        default: ''
+        description: 'Packages the apt tree must already serve before the DEBs are published'
+      create-github-release:
+        type: boolean
+        default: true
+        description: 'Create the GitHub release of v<version> with the promoted files'
+      runner:
+        type: string
+        default: 'ubuntu-latest'
+        description: 'Runner label for the x86 jobs (a pull request from a fork always runs on GitHub-hosted runners)'
+      dry-run:
+        type: boolean
+        default: false
+        description: 'Find, check and assemble only: nothing is signed, pushed, tagged or released'
+    secrets:
+      OPENMIXER_PACKAGES_SIGNING_KEY:
+        required: false
+      RPM_GPG_KEY:
+        required: false
+      RPM_GPG_PASSPHRASE:
+        required: false
+      PAGES_TOKEN:
+        required: false
+      SITE_GPG_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Reads the staging tree without a secret: which commit the staged build is, that every release and architecture
+  # holds it, and that the commit may carry the tag. A refusal here leaves everything as it was.
+  find:
+    name: Find the staged build
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 15
+    outputs:
+      short: ${{ steps.commit.outputs.short }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - id: rpm
+        if: inputs.rpm
+        uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
+        with:
+          kind: rpm
+          name: ${{ inputs.package-name }}
+          version: ${{ inputs.version }}
+          binaries: ${{ inputs.binary-names }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+          arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
+          commit: ${{ inputs.commit }}
+          channel: ${{ inputs.target-repo }}
+          channel-dir: ${{ runner.temp }}/channel
+          out: ${{ runner.temp }}/found-rpm
+          vouch: 'false'
+
+      - id: deb
+        if: inputs.deb
+        uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
+        with:
+          kind: deb
+          name: ${{ inputs.package-name }}
+          version: ${{ inputs.version }}
+          binaries: ${{ inputs.binary-names }}
+          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
+          commit: ${{ inputs.commit }}
+          channel: ${{ inputs.target-repo }}
+          channel-dir: ${{ runner.temp }}/channel
+          out: ${{ runner.temp }}/found-deb
+          vouch: 'false'
+
+      - id: commit
+        name: The commit is on the default branch and the tag is free
+        env:
+          RPM_COMMIT: ${{ steps.rpm.outputs.commit }}
+          DEB_COMMIT: ${{ steps.deb.outputs.commit }}
+          VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -o pipefail
+          short=${RPM_COMMIT:-$DEB_COMMIT}
+          [ -n "$short" ] || { echo "::error::nothing to promote: both rpm and deb are off"; exit 1; }
+          if [ -n "$RPM_COMMIT" ] && [ -n "$DEB_COMMIT" ] && [ "${RPM_COMMIT#"$DEB_COMMIT"}" = "$RPM_COMMIT" ] && [ "${DEB_COMMIT#"$RPM_COMMIT"}" = "$DEB_COMMIT" ]; then
+            echo "::error::the staged RPMs are of $RPM_COMMIT and the staged DEBs of $DEB_COMMIT: name one commit both were built from"; exit 1
+          fi
+          full=$(git rev-parse --verify --quiet "$short^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $short"; exit 1; }
+          git merge-base --is-ancestor "$full" "origin/$DEFAULT_BRANCH" ||
+            { echo "::error::$full is not on $DEFAULT_BRANCH of $GITHUB_REPOSITORY: a staged build of a commit that never landed is not promoted"; exit 1; }
+          if at=$(git rev-parse --verify --quiet "refs/tags/v$VERSION^{commit}"); then
+            [ "$at" = "$full" ] || { echo "::error::v$VERSION is already a tag, on $at, and the staged build is of $full"; exit 1; }
+            echo "v$VERSION is already on $full"
+          fi
+          echo "promoting $VERSION of $full"
+          { echo "short=$short"; echo "commit=$full"; } >> "$GITHUB_OUTPUT"
+
+  # The staged RPMs go to rpm/ of the channel through publish-rpms, as a release's do. They are already signed, so the
+  # publish places them as they are and signs only the metadata; the tree is compared with the staged checksums before
+  # the job ends.
+  rpm:
+    name: Promote the RPMs
+    needs: find
+    if: inputs.rpm
+    outputs:
+      pushed: ${{ steps.publish.outputs.commit }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: fedora:${{ fromJSON(inputs.fedora-versions)[0] }}
+    # the group of every publish to this channel; a dry run pushes nothing and gets a group of its own
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ !inputs.dry-run && 'live' || github.run_id }}
+      cancel-in-progress: false
+    steps:
+      # read inside the publish group: nothing else writes the channel between this read and the push
+      - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
+        with:
+          kind: rpm
+          name: ${{ inputs.package-name }}
+          version: ${{ inputs.version }}
+          binaries: ${{ inputs.binary-names }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+          arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
+          commit: ${{ needs.find.outputs.short }}
+          channel: ${{ inputs.target-repo }}
+          out: promote/rpm
+
+      - id: publish
+        uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
+        with:
+          rpm-dir: promote/rpm
+          tag: promote v${{ inputs.version }} ${{ needs.find.outputs.short }}
+          sign: ${{ !inputs.dry-run }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          staging: false
+          # a promotion holds every release and architecture of the matrix (collect.py refuses less)
+          matrix-set: full
+
+      - name: The channel root holds the bytes staging held
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -o pipefail
+          if [ "$DRY_RUN" = true ]; then tree=build/repo; else tree=build/channel; fi
+          sums=$PWD/promote/rpm.sha256
+          (cd "$tree" && sha256sum -c "$sums") ||
+            { echo "::error::a promoted RPM is not the file staging held"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.package-name }}-promoted-rpms
+          path: |
+            promote/rpm/*.rpm
+            promote/rpm.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Report a dry run honestly
+        if: inputs.dry-run
+        run: |
+          echo "::warning::dry run: the staged RPMs were found, checked and assembled; nothing was signed, pushed, tagged or released."
+
+  # The DEBs the same way, through publish-debs: the packages unchanged, the index regenerated and signed.
+  deb:
+    name: Promote the DEBs
+    needs: [find, rpm]
+    if: ${{ !cancelled() && inputs.deb && needs.find.result == 'success' && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') }}
+    outputs:
+      pushed: ${{ steps.publish.outputs.commit }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ !inputs.dry-run && 'live' || github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
+        with:
+          kind: deb
+          name: ${{ inputs.package-name }}
+          version: ${{ inputs.version }}
+          binaries: ${{ inputs.binary-names }}
+          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
+          commit: ${{ needs.find.outputs.short }}
+          channel: ${{ inputs.target-repo }}
+          out: promote/deb
+
+      - id: publish
+        uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
+        with:
+          deb-dir: promote/deb
+          tag: promote v${{ inputs.version }} ${{ needs.find.outputs.short }}
+          sign: ${{ !inputs.dry-run }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          cosign-key: ${{ secrets.RPM_GPG_KEY }}
+          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          requires: ${{ inputs.requires }}
+          changelogs-url: ${{ inputs.base-url }}/deb/changelogs
+          staging: false
+          # a promotion holds every release and architecture of the matrix (collect.py refuses less)
+          matrix-set: full
+
+      - name: The channel root holds the bytes staging held
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -o pipefail
+          if [ "$DRY_RUN" = true ]; then tree=build/repo; else tree=build/channel; fi
+          sums=$PWD/promote/deb.sha256
+          (cd "$tree" && sha256sum -c "$sums") ||
+            { echo "::error::a promoted DEB is not the file staging held"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.package-name }}-promoted-debs
+          path: |
+            promote/deb/*/*.deb
+            promote/deb.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Report a dry run honestly
+        if: inputs.dry-run
+        run: |
+          echo "::warning::dry run: the staged DEBs were found, checked and assembled; nothing was signed, pushed, tagged or released."
+
+  # The proof a reader of the run log can repeat: every promoted file, fetched from where the channel is served, has
+  # the checksum the staged file had.
+  served:
+    name: The channel serves the same bytes
+    needs: [find, rpm, deb]
+    if: ${{ !cancelled() && !inputs.dry-run && needs.find.result == 'success' && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') && (needs.deb.result == 'success' || needs.deb.result == 'skipped') }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      # the deb publish is the later push; a channel that already carried the tree pushed nothing and there is no wait
+      - uses: Open-Mixer/.github/.github/actions/pages-live@openmixer-v1
+        if: needs.deb.outputs.pushed != '' || needs.rpm.outputs.pushed != ''
+        with:
+          channel: ${{ inputs.target-repo }}
+          commit: ${{ needs.deb.outputs.pushed || needs.rpm.outputs.pushed }}
+          token: ${{ secrets.PAGES_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.package-name }}-promoted-*
+          merge-multiple: true
+          path: promoted
+
+      - name: Fetch every promoted file from the channel and compare
+        env:
+          BASE_URL: ${{ inputs.base-url }}
+        run: |
+          set -o pipefail
+          bad=0
+          while read -r want path; do
+            got=
+            for try in $(seq 1 20); do
+              got=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 "$BASE_URL/${path//+/%2B}" | sha256sum | cut -d' ' -f1) || got=
+              [ "$got" = "$want" ] && break
+              echo "attempt $try: $BASE_URL/$path is not the promoted file yet"; sleep 30
+            done
+            if [ "$got" = "$want" ]; then echo "same bytes  $want  $path"
+            else echo "::error::$BASE_URL/$path has sha256 ${got:-none}, staging held $want"; bad=1; fi
+          done < <(cat promoted/*.sha256)
+          exit "$bad"
+
+  # The promoted version installs from the channel root alone, in a clean container of every release and architecture,
+  # and what installs is the staged build of the commit.
+  verify-rpm:
+    name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
+    needs: [find, served]
+    if: ${{ !cancelled() && inputs.rpm && needs.served.result == 'success' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    container:
+      image: fedora:${{ matrix.fedora }}
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ${{ fromJSON(inputs.fedora-versions) }}
+        arch: ${{ fromJSON(inputs.rpm-arch-matrix) }}
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+        with:
+          base-url: ${{ inputs.base-url }}
+
+      - name: Install the promoted version from the channel
+        env:
+          VERSION: ${{ inputs.version }}
+          SHORT: ${{ needs.find.outputs.short }}
+          NAME: ${{ inputs.package-name }}
+          BINARIES: ${{ inputs.binary-names }}
+          BASE_URL: ${{ inputs.base-url }}
+        run: |
+          set -o pipefail
+          for bin in ${BINARIES:-$NAME}; do
+            ok=
+            for try in $(seq 1 20); do
+              dnf clean expire-cache -q || true
+              if dnf install -y --setopt=install_weak_deps=False --setopt=retries=10 "$bin-$VERSION"; then ok=1; break; fi
+              echo "attempt $try: $bin-$VERSION is not installable yet"; sleep 30
+            done
+            [ -n "$ok" ] || { echo "::error::$bin-$VERSION does not install from $BASE_URL in a clean fedora"; exit 1; }
+            rel=$(rpm -q --qf '%{RELEASE}' "$bin")
+            repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
+            echo "$bin $VERSION-$rel from $repo"
+            case $rel in *.git*".$SHORT"* | *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
+            case $repo in openmixer-staging*) echo "::error::$bin came from the staging channel, not the channel root"; exit 1 ;; esac
+          done
+
+  verify-deb:
+    name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
+    needs: [find, served]
+    if: ${{ !cancelled() && inputs.deb && needs.served.result == 'success' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    container:
+      image: debian:${{ matrix.suite }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(inputs.suite-matrix) }}
+        arch: ${{ fromJSON(inputs.deb-arch-matrix) }}
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+        with:
+          base-url: ${{ inputs.base-url }}
+
+      - name: Install the promoted version from the channel
+        env:
+          VERSION: ${{ inputs.version }}
+          SHORT: ${{ needs.find.outputs.short }}
+          NAME: ${{ inputs.package-name }}
+          BINARIES: ${{ inputs.binary-names }}
+          URL: ${{ inputs.base-url }}/deb
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -o pipefail
+          for bin in ${BINARIES:-$NAME}; do
+            ok=
+            for try in $(seq 1 20); do
+              apt-get update -qq || true
+              # the staged build of the commit, <version>+git<commit time>.<short>, never the newest
+              pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git" -v s="$SHORT" 'index($3, v) == 1 {r = substr($3, length(v) + 1); sub(/^[0-9]+\./, "", r); if (index(r, s) == 1) {print $3; exit}}')
+              if [ -n "$pinned" ] && apt-get install -y --no-install-recommends "$bin=$pinned"; then
+                dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
+                ok=1; break
+              fi
+              echo "attempt $try: $bin $VERSION+git$SHORT is not installable yet"; sleep 30
+            done
+            [ -n "$ok" ] || { echo "::error::$bin $VERSION+git$SHORT does not install from $URL in a clean debian $SUITE"; exit 1; }
+          done
+
+  # Last, and only after the channel serves the bytes and they install: the tag on the commit the staged build
+  # recorded, and the GitHub release with the promoted files. The calling workflow grants contents: write.
+  release:
+    name: Tag and GitHub release
+    needs: [find, served, verify-rpm, verify-deb]
+    if: ${{ !cancelled() && !inputs.dry-run && needs.served.result == 'success' && (needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped') && (needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped') }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tag the commit the staged build recorded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+          COMMIT: ${{ needs.find.outputs.commit }}
+        run: |
+          set -o pipefail
+          if at=$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}"); then
+            [ "$at" = "$COMMIT" ] || { echo "::error::$TAG is on $at, not on $COMMIT"; exit 1; }
+            echo "$TAG is already on $COMMIT"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$COMMIT" --jq .ref
+            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+          fi
+
+      - uses: Open-Mixer/.github/.github/actions/changelog@openmixer-v1
+        if: inputs.create-github-release
+        with:
+          mode: notes
+          tag: v${{ inputs.version }}
+          notes-file: ${{ runner.temp }}/release-notes.md
+
+      - uses: actions/download-artifact@v4
+        if: inputs.create-github-release
+        with:
+          pattern: ${{ inputs.package-name }}-promoted-*
+          merge-multiple: true
+          path: promoted
+
+      # DEB file names repeat across Debian releases, so the release is part of the asset name, as build-deb.yml has it
+      - name: Create the release from the promoted files
+        if: inputs.create-github-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          set -o pipefail
+          mkdir assets
+          find promoted -name '*.rpm' -exec cp {} assets/ \;
+          while IFS= read -r deb; do
+            suite=$(basename "$(dirname "$deb")")
+            base=$(basename "$deb" .deb)
+            cp "$deb" "assets/${base%_*}_${suite}_${base##*_}.deb"
+          done < <(find promoted -name '*.deb' | sort)
+          ls -l assets
+          test -n "$(ls assets)" || { echo "::error::no promoted file to attach"; exit 1; }
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" assets/* --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --repo "$GITHUB_REPOSITORY"
+          fi

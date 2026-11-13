@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: release-matrix
+description: Say which cells of the release matrix a run builds, the quick set or the full matrix
+
+# Used by the first job of build-rpm.yml and build-deb.yml. matrix.sh beside this file says how the set is chosen,
+# quick.txt is the quick set, and docs/release-operations.md describes both.
+
+inputs:
+  kind:
+    description: "'rpm' or 'deb'"
+    required: true
+  matrix:
+    description: "the caller's matrix input: 'quick', 'full', or empty when the caller said nothing"
+    default: ''
+  wave:
+    description: the organisation variable OMX_RELEASE_MATRIX
+    default: ''
+  staged:
+    description: "'true' on a staged run"
+    default: 'false'
+  source-ref:
+    description: the tag being released when the run is not on that tag
+    default: ''
+  releases:
+    description: the caller's Fedora releases (rpm) or Debian releases (deb), a JSON array
+    required: true
+  arches:
+    description: the caller's architectures, a JSON array
+    required: true
+
+outputs:
+  set:
+    description: "'quick' or 'full': what the run builds"
+    value: ${{ steps.matrix.outputs.set }}
+  cells:
+    description: 'the cells, a JSON array for strategy.matrix.include: {"fedora": "44", "arch": "x86_64"} or {"suite": "trixie", "arch": "arm64"}'
+    value: ${{ steps.matrix.outputs.cells }}
+  releases:
+    description: the Fedora releases or Debian releases the cells cover, space separated
+    value: ${{ steps.matrix.outputs.releases }}
+  first-arch:
+    description: the architecture that carries what ships once per release (source and noarch packages)
+    value: ${{ steps.matrix.outputs.first-arch }}
+
+runs:
+  using: composite
+  steps:
+    - id: matrix
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        MATRIX: ${{ inputs.matrix }}
+        WAVE: ${{ inputs.wave }}
+        STAGED: ${{ inputs.staged }}
+        SOURCE_REF: ${{ inputs.source-ref }}
+        RELEASES: ${{ inputs.releases }}
+        ARCHES: ${{ inputs.arches }}
+        EVENT: ${{ github.event_name }}
+        REF_TYPE: ${{ github.ref_type }}
+      run: |
+        "$GITHUB_ACTION_PATH/matrix.sh"

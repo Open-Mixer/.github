@@ -5,7 +5,7 @@ name: ci-node
 #
 #   jobs:
 #     test:
-#       uses: Open-Mixer/.github/.github/workflows/ci-node.yml@main
+#       uses: Open-Mixer/.github/.github/workflows/ci-node.yml@openmixer-v1
 #       with:
 #         commands: |
 #           npm run lint

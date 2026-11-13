@@ -7,7 +7,7 @@
 # checker, no pattern list, no private-refs engine, no SPDX check, no allow list (the engine reads none, and one left
 # lying in a tree is refused), and a commit-msg hook that is the shared stub byte for byte: a missing hook is as red as
 # a different one. A copy is found by its name and by its content, so a renamed copy is red too. A release workflow
-# is judged here as well (release-order.py): no DEB job runs after a failed RPM job.
+# is judged here as well (release-order.py): a DEB job skips no gate the RPM job waits for.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STUB=$HERE/commit-message-check/commit-msg
@@ -56,12 +56,12 @@ if [ "${1:-}" = --self-test ]; then
 on: {push: {tags: ["v*"]}}
 jobs:
   rpm:
-    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@main
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
     with: {package-name: x}'
   REL_PLAIN="$REL_HEAD
   deb:
     needs: rpm
-    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@main
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
     with: {package-name: x}"
   REL_GUARDED="$REL_PLAIN
     if: \${{ !cancelled() && needs.rpm.result == 'success' }}"
@@ -69,8 +69,26 @@ jobs:
     if: \${{ !cancelled() }}"
   REL_NONEEDS="$REL_HEAD
   deb:
-    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@main
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
     with: {package-name: x}"
+  REL_GATED='name: release
+on: {push: {tags: ["v*"]}}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps: [{run: "true"}]
+  rpm:
+    needs: check
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
+    with: {package-name: x}
+  deb:
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
+    with: {package-name: x}'
+  green() { # <name> <release.yml>: a clean tree with this release workflow must be green
+    rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/.github/workflows" "$t/r/tools"; echo 'int main(void) { return 0; }' > "$t/r/tools/main.c"
+    cp "$STUB" "$t/r/.githooks/commit-msg"; printf '%s\n' "$2" > "$t/r/.github/workflows/release.yml"; git -C "$t/r" add -A
+    if check "$t/r" >/dev/null 2>&1; then echo "ok   $1 is green"; else echo "FAIL $1 is red"; fail=1; fi
+  }
   plant() { # <name> <path> <content>: a clean tree plus one planted file must be red
     rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/tools"
     cp "$STUB" "$t/r/.githooks/commit-msg"; echo 'int main(void) { return 0; }' > "$t/r/tools/main.c"
@@ -95,7 +113,13 @@ jobs:
   plant "a renamed private-refs engine is red by its content" tools/refs.sh "# private-refs-check.sh: a public repository's files"
   plant "a script with no extension is red by its #! line" tools/check "#!/bin/sh
 # commit-message-check.sh: fail when a commit message carries a line"
-  plant "a deb job with no needs on the rpm job is red" .github/workflows/release.yml "$REL_NONEEDS"
+  green "a deb job beside an rpm job that waits for nothing" "$REL_NONEEDS"
+  green "a deb job beside the rpm job, behind the same gate" "$REL_GATED
+    needs: check"
+  plant "a deb job that skips the gate the rpm job waits for is red" .github/workflows/release.yml "$REL_GATED"
+  plant "a deb job beside the rpm job that runs after a failed gate is red" .github/workflows/release.yml "$REL_GATED
+    needs: check
+    if: \${{ always() }}"
   plant "a deb job that runs after a cancelled or failed rpm is red" .github/workflows/release.yml "$REL_CANCELLED"
   rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/.github/workflows" "$t/r/tools"; echo 'int main(void) { return 0; }' > "$t/r/tools/main.c"
   cp "$STUB" "$t/r/.githooks/commit-msg"; printf '%s\n' "$REL_PLAIN" > "$t/r/.github/workflows/release.yml"; git -C "$t/r" add -A

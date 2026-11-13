@@ -7,7 +7,7 @@ name: Build DEB (reusable)
 #
 #   jobs:
 #     deb:
-#       uses: Open-Mixer/.github/.github/workflows/build-deb.yml@main
+#       uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
 #       with: { package-name: plugin-hostd }
 #       secrets: inherit
 #
@@ -15,6 +15,24 @@ name: Build DEB (reusable)
 # architecture, in a debian: container), runs lintian, signs the apt index and publishes into deb/ of the
 # target Pages repository. Anything that is not a tag is a dry run: it builds, lints and assembles an UNSIGNED
 # tree as an artifact.
+#
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the quick set (trixie on amd64 and arm64) or, told
+# full, every suite of suite-matrix on every architecture of arch-matrix, against the staging channel, and
+# publishes it to the staging channel of the release wave:
+# staging/deb of the same target repository, signed with the same key, by the same tree script and channel-push as a
+# release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
+# priority than the real one (staging: true here, add-openmixer staging: true elsewhere) and resolve to the staged
+# packages with no code of their own. A staged run never writes the real channel; the wave's release pass publishes
+# the whole set there once, from the v<version> tags, and the purge-staging workflow then empties the staging channel.
+# staging: true on a run that is not staged (a dry run on a branch) builds against the staging channel and publishes
+# nothing. Neither runs on a tag or with source-ref, and a staged run builds the calling repository's own commit.
+#
+# WHICH CELLS A RUN BUILDS (docs/release-operations.md, "The quick set and the full matrix"): the matrix input,
+# quick or full, when the caller passes it. Without it a release (a tag, source-ref) builds what the organisation
+# variable OMX_RELEASE_MATRIX says, and the FULL matrix when it is unset: a caller that changes nothing publishes
+# every cell on a tag, as before, unless a release wave is open. A staged run and a workflow_dispatch build what the
+# variable says and the QUICK set when it is unset; a pull request always builds the full matrix. The install checks
+# run for the built cells, no others.
 #
 # The packaging is the debian/ directory of the calling repository; its changelog version is the version and
 # must equal the packaging/*.spec Version when there is one, and the tag must be v<version>. What Debian does
@@ -46,6 +64,27 @@ on:
         type: boolean
         default: false
         description: 'Sign and publish. Takes effect on a tag only; false or a branch is a dry run.'
+      staged:
+        type: boolean
+        default: false
+        description: 'Build the matrix of a release against the staging channel and publish it to the staging channel (staging/deb of target-repo), never to the real one. Excludes publish.'
+      # staged-deps is ignored: callers pass staging instead; removed in the wave's release pass once omx-panel, plugin-hostd and omx-clap-core have switched
+      staged-deps:
+        type: string
+        default: ''
+        description: 'Ignored, kept for this wave only so existing callers still validate; pass staging instead'
+      staging:
+        type: boolean
+        default: false
+        description: 'Add the staging channel at a higher priority than the real one to the build containers (staged: true implies it). A dry run only: never on a tag, with source-ref or with publish.'
+      staging-bootstrap:
+        type: boolean
+        default: false
+        description: 'With staged or staging: a staging channel never published (its index and key both 404) is skipped with a notice instead of failing the build. Only for the first layer of a wave, whose build runs before anything was staged.'
+      matrix:
+        type: string
+        default: ''
+        description: "'quick' builds the quick set alone (fc44 and fc45 x86_64 rpm, trixie amd64 and arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
       stage:
         type: string
         default: 'all'
@@ -146,7 +185,41 @@ jobs:
     name: Check the release can publish
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
+    outputs:
+      set: ${{ steps.matrix.outputs.set }}
+      cells: ${{ steps.matrix.outputs.cells }}
+      first-arch: ${{ steps.matrix.outputs.first-arch }}
     steps:
+      # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
+      - id: matrix
+        uses: Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1
+        with:
+          kind: deb
+          matrix: ${{ inputs.matrix }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          staged: ${{ inputs.staged }}
+          source-ref: ${{ inputs.source-ref }}
+          releases: ${{ inputs.suite-matrix }}
+          arches: ${{ inputs.arch-matrix }}
+
+      # what is staged is never a release: a tag, source-ref or publish builds the release, against the real channel only;
+      # a staged run publishes to the staging channel alone, the commit it runs on, of the calling repository
+      - name: A staged run publishes to staging only, and staging never builds a release
+        if: inputs.staged || inputs.staging
+        env:
+          STAGED: ${{ inputs.staged }}
+          STAGING: ${{ inputs.staging }}
+          PUBLISH: ${{ inputs.publish }}
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          no() { echo "::error::$*"; exit 1; }
+          [ "$REF_TYPE" != tag ] || no "staged and staging are for a manual run from a branch, never a tag: a tag builds the release, against the real channel alone"
+          [ -z "$SOURCE_REF" ] || no "staged and staging take no source-ref: source-ref builds a release of a tag, against the real channel alone"
+          [ "$PUBLISH" != true ] || no "staged and staging exclude publish: a staged run publishes to the staging channel only, and a release never builds against it"
+          [ "$STAGED" != true ] || [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
+
       - name: Read the stage
         env:
           STAGE: ${{ inputs.stage }}
@@ -170,15 +243,18 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
-      - uses: Open-Mixer/.github/.github/actions/release-preflight@main
+      # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
+      - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
-          publish: ${{ inputs.publish }}
+          publish: ${{ inputs.publish || inputs.staged }}
+          require-tag: ${{ !inputs.staged }}
           tag: ${{ inputs.source-ref }}
           target: ${{ inputs.target-repo }}
           packages: ${{ inputs.binary-names || inputs.package-name }}
           republish: ${{ inputs.republish }}
           kind: deb
-          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          # the already-served check reads the releases this run publishes into, no others
+          releases: ${{ steps.matrix.outputs.releases }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
@@ -199,8 +275,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
@@ -234,19 +309,33 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
-      - uses: Open-Mixer/.github/.github/actions/deb-deps@main
+      - uses: Open-Mixer/.github/.github/actions/deb-deps@openmixer-v1
         with:
           names: ${{ inputs.dependencies }}
 
       # for the build only: the source exists in this container and is never a dependency of a release
-      - uses: Open-Mixer/.github/.github/actions/add-openmixer@main
-        if: inputs.channel-deps
+      # staged or staging: the staging channel beside it, at a higher priority, so the build takes what the wave staged
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+        if: inputs.channel-deps || inputs.staged || inputs.staging
         with:
           base-url: ${{ inputs.base-url }}
+          staging: ${{ inputs.staged || inputs.staging }}
+          staging-bootstrap: ${{ inputs.staging-bootstrap }}
 
-      - uses: Open-Mixer/.github/.github/actions/build-deb@main
+      # a staged snapshot is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
+      # floor, and above the staged build of any earlier commit
+      - uses: Open-Mixer/.github/.github/actions/build-deb@openmixer-v1
         with:
           tag: ${{ env.RELEASE_TAG }}
+          separator: ${{ inputs.staged && '+git' || '~git' }}
+
+      # the full matrix never goes out on top of a version the channel has for the quick set alone: the cells the
+      # dependency lacks could not install what this release publishes (docs/release-operations.md)
+      - uses: Open-Mixer/.github/.github/actions/quick-deps@openmixer-v1
+        if: needs.preflight.outputs.set == 'full' && inputs.publish && inputs.channel-deps && env.RELEASE_TAG != ''
+        with:
+          kind: deb
+          base-url: ${{ inputs.base-url }}
 
       - name: Refuse an empty build, and one of another architecture
         env:
@@ -291,10 +380,11 @@ jobs:
       image: debian:trixie
     # A dry run (publish false) pushes nothing, so it gets its own group per run.
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ inputs.publish && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-${{ (inputs.publish || inputs.staged) && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') }}
+      # a release (publish on a tag) to the real channel, or a staged run to the staging channel
+      DO_PUBLISH: ${{ (inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged }}
     steps:
       # <suite>-<arch> only: artifacts outlive their attempt, and the published copies an earlier attempt uploaded
       # as -debs-signed are flat, which publish-tree.sh refuses (tests/deb-rerun-layout.sh)
@@ -305,11 +395,11 @@ jobs:
           path: collected
 
       - id: publish
-        uses: Open-Mixer/.github/.github/actions/publish-debs@main
+        uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
         with:
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
-          tag: ${{ inputs.source-ref || github.ref_name }}
+          tag: ${{ inputs.staged && format('staged {0}', github.sha) || inputs.source-ref || github.ref_name }}
           sign: ${{ env.DO_PUBLISH }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           # the original key co-signs the apt index while installs may hold only it (publish-debs)
@@ -319,7 +409,10 @@ jobs:
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
           requires: ${{ inputs.requires }}
-          changelogs-url: ${{ inputs.base-url }}/deb/changelogs
+          changelogs-url: ${{ inputs.base-url }}/${{ inputs.staged && 'staging/deb' || 'deb' }}/changelogs
+          staging: ${{ inputs.staged }}
+          matrix-set: ${{ needs.preflight.outputs.set }}
+          suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
 
       - uses: actions/upload-artifact@v4
         if: env.DO_PUBLISH == 'true'
@@ -360,7 +453,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: Open-Mixer/.github/.github/actions/changelog@main
+      - uses: Open-Mixer/.github/.github/actions/changelog@openmixer-v1
         with:
           mode: notes
           tag: ${{ github.ref_name }}
@@ -406,18 +499,19 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 40
     steps:
-      - uses: Open-Mixer/.github/.github/actions/pages-live@main
+      - uses: Open-Mixer/.github/.github/actions/pages-live@openmixer-v1
         with:
           channel: ${{ inputs.target-repo }}
           commit: ${{ needs.publish.outputs.commit }}
           token: ${{ secrets.PAGES_TOKEN }}
 
   # The last proof: the version the tag names installs from the channel, in a Debian that holds nothing else.
-  # Pages serves the push a little late, so the check retries before it calls the release broken.
+  # Pages serves the push a little late, so the check retries before it calls the release broken. A staged run checks
+  # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
-    needs: [publish, release, live]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.publish && inputs.verify-install && (inputs.source-ref != '' || github.ref_type == 'tag') }}
+    needs: [preflight, publish, release, live]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -425,14 +519,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     steps:
-      - uses: Open-Mixer/.github/.github/actions/add-openmixer@main
+      # the real channel alone for a release; with the staging channel for a staged run
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
           base-url: ${{ inputs.base-url }}
+          staging: ${{ inputs.staged }}
 
       - name: Install the new version from the channel
+        if: ${{ !inputs.staged }}
         env:
           TAG: ${{ inputs.source-ref || github.ref_name }}
           NAME: ${{ inputs.package-name }}
@@ -457,6 +553,32 @@ jobs:
             [ -n "$ok" ] || { echo "::error::$bin $ver does not install from $URL in a clean debian $SUITE"; exit 1; }
           done
 
+      - name: Install the staged build of this commit from the staging channel
+        if: inputs.staged
+        env:
+          NAME: ${{ inputs.package-name }}
+          BINARIES: ${{ inputs.binary-names }}
+          URL: ${{ inputs.base-url }}/staging/deb
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -o pipefail
+          for bin in ${BINARIES:-$NAME}; do
+            ok=
+            for try in $(seq 1 20); do
+              apt-get update -qq || true
+              # the candidate is the staged build of this commit, <version>+git<commit time>.<short sha>, pinned from staging
+              cand=$(apt-cache policy "$bin" | awk '/Candidate:/ {print $2}')
+              short=$(printf '%s\n' "$cand" | sed -n 's/.*+git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\).*/\1/p')
+              if [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] && apt-get install -y --no-install-recommends "$bin=$cand"; then
+                dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
+                ok=1; break
+              fi
+              echo "attempt $try: the staged $bin of $GITHUB_SHA is not the candidate yet (candidate: ${cand:-none})"; sleep 30
+            done
+            [ -n "$ok" ] || { echo "::error::the staged $bin of $GITHUB_SHA does not install from $URL in a clean debian $SUITE"; exit 1; }
+            apt-cache policy "$bin" | grep -B1 -A1 'staging/deb' || true
+          done
+
   # A tag that ends without packages must not be silent: the repository gets an issue naming the tag and the
   # failed jobs. A called workflow cannot raise the token of its caller: the `permissions` below only narrow it.
   # The calling release.yml must itself grant `issues: write` in its top-level `permissions:` (or on the job that
@@ -471,7 +593,7 @@ jobs:
       issues: write
       actions: read
     steps:
-      - uses: Open-Mixer/.github/.github/actions/release-failure-issue@main
+      - uses: Open-Mixer/.github/.github/actions/release-failure-issue@openmixer-v1
         with:
           tag: ${{ inputs.source-ref || github.ref_name }}
           token: ${{ github.token }}

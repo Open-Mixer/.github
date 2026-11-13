@@ -23,7 +23,7 @@ case " $* " in *" -X POST "*)
     { echo "POST $url"; cat; } >> "$SITE_DIR/api.log"; touch "$SITE_DIR/redeployed"; exit 0 ;;
 esac
 n=$(( $(cat "$SITE_DIR/reads" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$SITE_DIR/reads"
-f=${url#https://api.example/repos/FreeMixer/channel/}; f=${f//\//_}
+f=${url#https://api.example/repos/Open-Mixer/channel/}; f=${f//\//_}
 root=$SITE_DIR/live
 if [ -d "$SITE_DIR/next" ] && { [ -e "$SITE_DIR/redeployed" ] || [ "$n" -gt "${LIVE_AFTER:-999999}" ]; }; then root=$SITE_DIR/next; fi
 if [ -e "$root/$f" ]; then cat "$root/$f"; else echo "[]"; fi
@@ -40,7 +40,7 @@ state() { # state <dir> <deployments json> <id:state>... : one tree of API answe
 arm() { # arm <name> <expect ok|red> [pattern]
     local name=$1 dir=$work/$1 rc=0
     export SITE_DIR=$dir
-    bash "$wait_sh" FreeMixer/channel "$C" > "$dir/out.log" 2>&1 || rc=$?
+    bash "$wait_sh" Open-Mixer/channel "$C" > "$dir/out.log" 2>&1 || rc=$?
     if [ "$2" = ok ]; then [ $rc = 0 ] || { cat "$dir/out.log"; fail "$name: expected green"; }
     else [ $rc != 0 ] || { cat "$dir/out.log"; fail "$name: expected red"; }; grep -q -- "$3" "$dir/out.log" || { cat "$dir/out.log"; fail "$name: no '$3'"; }; fi
     pass=$((pass + 1))
@@ -56,10 +56,10 @@ arm later-carries ok
 
 state "$work/not-ahead/live" "[{\"id\":12,\"sha\":\"$D\"},{\"id\":11,\"sha\":\"$C\"}]" 12:success 11:in_progress
 echo '{"status":"behind"}' > "$work/not-ahead/live/compare_$C...$D"
-arm not-ahead red "deployment 11 of $C in FreeMixer/channel is 'in_progress'"
+arm not-ahead red "deployment 11 of $C in Open-Mixer/channel is 'in_progress'"
 
 state "$work/lagging/live" "[{\"id\":11,\"sha\":\"$C\"}]" 11:in_progress
-arm lagging red "deployment 11 of $C in FreeMixer/channel is 'in_progress'"
+arm lagging red "deployment 11 of $C in Open-Mixer/channel is 'in_progress'"
 [ ! -e "$work/lagging/api.log" ] || fail "lagging: a deployment still in progress must not trigger another build"
 
 state "$work/slow/live" "[{\"id\":11,\"sha\":\"$C\"}]" 11:in_progress
@@ -68,7 +68,7 @@ LIVE_AFTER=3 arm slow ok
 
 state "$work/none/live" "[]"
 arm none red "no deployment for $C"
-grep -q '^POST https://api.example/repos/FreeMixer/channel/pages/builds' "$work/none/api.log" || fail "none: Pages was not asked for a build"
+grep -q '^POST https://api.example/repos/Open-Mixer/channel/pages/builds' "$work/none/api.log" || fail "none: Pages was not asked for a build"
 grep -q '^Authorization: Bearer test-token' "$work/none/api.log" || fail "none: the build request carries no token"
 
 state "$work/failed/live" "[{\"id\":11,\"sha\":\"$C\"}]" 11:failure

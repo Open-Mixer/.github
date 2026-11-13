@@ -11,7 +11,9 @@ name: public-sources-check
 #
 #   jobs:
 #     public-sources:
-#       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@main
+#       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@openmixer-v1
+#       with:
+#         runner: arc-freemixer      # optional: a private repository's own runners (default ubuntu-latest)
 on:
   workflow_call:
     inputs:
@@ -19,6 +21,10 @@ on:
         description: the checks of a public repository, private-refs-check and public-layout-check (a private repository passes false)
         type: boolean
         default: true
+      runner:
+        description: runner label for every job (a private repository passes its own runners, e.g. arc-freemixer; a pull request from a fork always runs on GitHub-hosted runners)
+        type: string
+        default: ubuntu-latest
 
 permissions:
   contents: read
@@ -27,39 +33,39 @@ jobs:
   commit-messages:
     name: commit messages pass the message check
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: Open-Mixer/.github/.github/actions/commit-message-check@main
+      - uses: Open-Mixer/.github/.github/actions/commit-message-check@openmixer-v1
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
 
   private-refs:
     name: no tracked file points into a private repository
     if: inputs.private-refs
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: Open-Mixer/.github/.github/actions/private-refs-check@main
+      - uses: Open-Mixer/.github/.github/actions/private-refs-check@openmixer-v1
 
   public-layout:
     name: no dated document, no dated folder, no evidence or notes folder
     if: inputs.private-refs
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: Open-Mixer/.github/.github/actions/public-layout-check@main
+      - uses: Open-Mixer/.github/.github/actions/public-layout-check@openmixer-v1
 
   no-local-copies:
     name: the shared checks are not copied here
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: Open-Mixer/.github/.github/actions/no-local-copies@main
+      - uses: Open-Mixer/.github/.github/actions/no-local-copies@openmixer-v1

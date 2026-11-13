@@ -46,7 +46,7 @@ cat > "$tmp/tree.json" <<'J'
 J
 export TREE_DIR=$tmp
 run() { # run <publish> <ref-type> <tag> <packages> [republish] [kind] [releases]
-  PATH=$tmp/bin:$PATH PUBLISH=$1 TARGET=FreeMixer/freemixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/tags/$3 \
+  PATH=$tmp/bin:$PATH PUBLISH=$1 TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/tags/$3 \
     REF_TYPE=$2 REQUIRE_TAG=true TAG=$3 PACKAGES=$4 REPUBLISH=${5:-false} KIND=${6:-} RELEASES=${7:-} \
     GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1
 }

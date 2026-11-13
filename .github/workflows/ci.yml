@@ -8,7 +8,8 @@ name: ci
 # and never signed (tests/sign-only-placed.sh), and so is a key file whose keys the repository does not pin
 # (tests/pinned-keys.sh). The changelog generator (from git), and
 # what the channel publish adds from them: an updateinfo.xml for dnf and a Changelogs URL for apt
-# (docs/packaging-changelog.md). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
+# (docs/packaging-changelog.md). The language packs of an owner and the openmixer meta packs build and install, and a
+# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
 # taken out again fails its check, and the RPMs and DEBs pass the installed-library checks and upgrade the
 # channel's earlier builds (docs/mod-host.md).
 
@@ -46,6 +47,9 @@ jobs:
       - run: tests/release-checks.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
+      - run: tests/staging-channel.sh
+      - run: tests/release-matrix.sh
+      - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
@@ -107,6 +111,111 @@ jobs:
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
 
+  staging-publish:
+    name: Staging channel, publish and purge (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: rpm
+            image: fedora:44
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git
+          - kind: deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev python3 python3-yaml git ca-certificates
+    steps:
+      - name: Install the packaging tools
+        run: ${{ matrix.tools }}
+
+      - uses: actions/checkout@v4
+
+      # a throwaway key of its own; the client arm writes the container's /etc
+      - name: A staged publish lands in staging only, a client prefers it, and the purge leaves the real tree untouched
+        shell: bash
+        run: tests/staging-publish.sh ${{ matrix.kind }}
+
+      - name: A staged build is promoted to the channel root with the same bytes, and only when the release key vouches for it
+        shell: bash
+        run: tests/promote-publish.sh ${{ matrix.kind }}
+
+  staging-bootstrap:
+    name: First staged run into a channel with no staging path (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: rpm
+            image: fedora:44
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git curl
+          - kind: deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev python3 python3-yaml git ca-certificates curl
+    steps:
+      - name: Install the packaging tools
+        run: ${{ matrix.tools }}
+
+      - uses: actions/checkout@v4
+
+      # the channel served over HTTP in the container, so a missing staging index is a real 404
+      - name: The first staged run adds staging only once published, and its publish creates the staging index
+        shell: bash
+        run: tests/staging-bootstrap.sh ${{ matrix.kind }}
+
+  staging-installability:
+    name: channel-installability judges the real channel alone
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:44
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c dnf5-plugins python3 git findutils
+
+      # the gate lives on main: the test reads it from origin/main when this tree does not carry it
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: A staged minor does not change the verdict
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tests/staging-installability.sh
+
+  langpacks:
+    name: language packs (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fedora:44
+            kind: rpm
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
+          - image: fedora:45
+            kind: rpm
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
+          - image: debian:bookworm
+            kind: deb
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+          - image: debian:trixie
+            kind: deb
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+    steps:
+      - run: ${{ matrix.tools }}
+      - uses: actions/checkout@v4
+      - run: tests/langpacks.sh ${{ matrix.kind }}
+
   channel-installability:
     name: channel installability (${{ matrix.arm }})
     runs-on: ubuntu-latest
@@ -154,6 +263,17 @@ jobs:
       - run: tests/srpm-publish.sh
       - run: tests/every-arch-dir-repodata.sh
 
+  build-rpm-same-bytes:
+    name: two RPM builds of one commit give the same bytes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:44
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build gcc git python3 findutils diffutils
+      - uses: actions/checkout@v4
+      - run: tests/build-rpm-same-bytes.sh
+
   deb-changelog:
     name: apt changelog from the published tree
     runs-on: ubuntu-latest
@@ -164,6 +284,8 @@ jobs:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils dpkg-dev debhelper build-essential python3 apt ca-certificates
       - uses: actions/checkout@v4
       - run: tests/deb-changelog.sh
+      - run: apt-get install -y --no-install-recommends git
+      - run: tests/build-deb-same-bytes.sh
 
   deb-rerun-layout:
     name: a rerun of a DEB release keeps its packages
