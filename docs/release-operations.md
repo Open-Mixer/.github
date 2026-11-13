@@ -308,6 +308,53 @@ names, no others. The run says which set it builds, and why, in a notice.
 - The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
   cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
 
+### Checks follow the set
+
+A check outside the release workflows (a full-stack install check after the publish, like plugin-hostd's
+`plugin-hostd-full`, or a repository's ordinary CI matrix of containers) covers the cells the set builds and no others
+(ruling D25): while `OMX_RELEASE_MATRIX` is `quick` only the quick cells, and `full` (or the variable unset) adds the
+rest. A cell the channel does not serve for the wave (bookworm) is skipped by reading the variable, never deleted from
+the workflow, and comes back with `full`. Without this a check can only fail on a cell the set never built, every quick
+release ends red, and a real failure no longer stands out (Open-Mixer/.github#59).
+
+The `check-matrix` action renders such a matrix. The caller writes its whole matrix once; the action reads
+`quick.txt` through `release-matrix`'s `matrix.sh`, so the quick set is still written in one place:
+
+```yaml
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      deb: ${{ steps.m.outputs.deb }}
+      deb-count: ${{ steps.m.outputs.deb-count }}
+    steps:
+      - id: m
+        uses: Open-Mixer/.github/.github/actions/check-matrix@openmixer-v1
+        with:
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          deb-releases: '["bookworm", "trixie"]'
+          deb-arches: '["amd64", "arm64"]'
+
+  full-deb:
+    needs: [deb, checks]
+    if: needs.checks.outputs.deb-count != '0'
+    runs-on: ${{ matrix.cell.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container:
+      image: ${{ matrix.cell.image }}
+    strategy:
+      matrix:
+        cell: ${{ fromJSON(needs.checks.outputs.deb) }}
+        mode: [default, headless]
+```
+
+Each cell carries its container image (`{"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}`); `images` is
+the list of images alone, for a CI job that runs on the runner's own architecture. Unlike a release, a kind whose
+matrix holds no quick cell renders no cell while `quick` (count 0, the job is skipped), never its full matrix. The
+notice names the cells skipped. The cell is a matrix dimension of its own (`matrix.cell`), not an `include`: `include`
+rows beside another dimension (`mode`) overwrite each other's added keys. `tests/check-matrix.sh` renders quick and
+full for plugin-hostd's checks and for a CI image list, with two sabotages.
+
+The install checks of `build-rpm.yml` and `build-deb.yml` already take their cells from the release's own first job.
+
 ### What the channel records
 
 The tree scripts write `cells.tsv` at the top of each tree (`rpm/cells.tsv`, `deb/cells.tsv`, and the same under
@@ -373,6 +420,23 @@ gh workflow run release.yml -R Open-Mixer/<repository> --ref main \
 `tests/catch-up-plan.sh` (the plan, the refusals, the workflow wiring) and `tests/catch-up-publish.sh rpm|deb` (a
 catch-up onto a fixture channel, served files byte-identical, an overwrite refused) run in CI, each with a sabotage
 that goes red.
+
+### An `all` package pinned by its source
+
+A Debian suite of the channel is one flat index for every architecture: an `Architecture: all` deb is served to all of
+them, and apt takes the newest version of each package as its candidate and never an older one to meet an exact
+dependency. plugin-hostd 0.20.5 and 0.20.6 went out while the quick set's Debian cells were trixie arm64 alone; their
+`plugin-hostd-contract` (all) became the candidate on amd64 too, where `plugin-hostd` 0.20.4 asks for
+`plugin-hostd-contract (= 0.20.4)`, and `apt-get install plugin-hostd` failed there (Open-Mixer/.github#59).
+
+So the deb publish (`publish-tree.sh`) **refuses**, before anything is placed or signed, an `all` package that becomes
+its suite's newest while a package of the same source in the run pins it exactly (`= ${source:Version}`,
+`= ${binary:Version}`) and the run does not build that package, at that version, for every architecture of the suite
+that already serves it. The refusal names the `all` package, the suite, the pinning package and the architectures
+left behind. Build them too (the full matrix, or a quick set that covers them). A catch-up is never refused by it: it
+drops the served `all` package, so the missing architecture of such a release is filled as above. Rpm needs no such
+rule: dnf takes an older `noarch` build to meet an exact dependency. `tests/arch-all-pin.sh` reproduces the case on a
+fixture channel, with the passing arms (every architecture built, an older `all`, the catch-up) and a sabotage.
 
 ### Tests
 

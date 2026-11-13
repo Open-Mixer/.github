@@ -50,6 +50,7 @@ jobs:
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
       - run: tests/release-matrix.sh
+      - run: tests/check-matrix.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
@@ -116,6 +117,11 @@ jobs:
       - name: A catch-up publishes the missing cell and rewrites no served file
         shell: bash
         run: tests/catch-up-publish.sh ${{ matrix.kind }}
+
+      - name: An all package pinned by its source is never published ahead of an architecture the run did not build
+        if: matrix.kind == 'deb'
+        shell: bash
+        run: tests/arch-all-pin.sh
 
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})

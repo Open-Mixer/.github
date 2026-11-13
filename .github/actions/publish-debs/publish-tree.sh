@@ -120,6 +120,69 @@ if [ "${CATCH_UP:-}" = true ]; then
     done
     [ "$clash" = 0 ] || { echo "catch-up: the channel already serves the files above: nothing was placed or signed" >&2; exit 1; }
 fi
+
+# AN ALL PACKAGE PINNED BY ITS SOURCE IS NEVER PUBLISHED AHEAD OF AN ARCHITECTURE THE RUN DID NOT BUILD
+# (Open-Mixer/.github#59). A suite is one flat index for every architecture, so an Architecture: all package is served to
+# all of them, and apt takes the newest version as its candidate and never an older one to meet an exact dependency.
+# When a package of the same source pins it exactly (= ${source:Version} or ${binary:Version}), every architecture of the
+# suite that serves that package must have it at the pinned version: placed by this run, or already in the tree.
+# Otherwise the package left behind there no longer installs (plugin-hostd 0.20.4 on amd64 against
+# plugin-hostd-contract 0.20.6, all, published by a quick release built for arm64 alone). Judged only for an all package
+# this run places that becomes the suite's newest, so a catch-up (which drops a served all package) and an older all
+# package are never refused. Nothing is placed or signed when it refuses.
+src_of() { local s; s=$(dpkg-deb -f "$1" Source 2>/dev/null || true); s=${s%% *}; printf '%s' "${s:-$(dpkg-deb -f "$1" Package)}"; }
+pins_exactly() { # <deb> <name> <version>: true when its Depends or Pre-Depends holds "<name> (= <version>)"
+    local item n
+    while IFS= read -r item; do
+        item=$(tr -d ' \t' <<< "$item")
+        n=${item%%(*} n=${n%%:*}
+        [ "$n" = "$2" ] && [ "${item#*(}" = "=$3)" ] && return 0
+    done < <(dpkg-deb -f "$1" Depends Pre-Depends 2>/dev/null | sed 's/^[A-Za-z-]*: //' | tr ',' '\n')
+    return 1
+}
+pin_refused=0
+for q in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$q]:-}" ] || continue
+    [ "$(dpkg-deb -f "$q" Architecture)" = all ] || continue
+    suite=$(basename "$(dirname "$q")")
+    [ ! -f "$tree/debian/$suite/all/$(basename "$q")" ] || continue
+    qname=$(dpkg-deb -f "$q" Package) qver=$(dpkg-deb -f "$q" Version) qsrc=$(src_of "$q")
+    newest=1
+    for other in "$tree/debian/$suite/all/${qname}"_*_all.deb; do
+        [ -f "$other" ] || continue
+        if dpkg --compare-versions "$(dpkg-deb -f "$other" Version)" gt "$qver"; then newest=; break; fi
+    done
+    [ -n "$newest" ] || continue
+    # the packages of this run, of the same source and suite and at the same version, that pin it exactly: the
+    # architectures the run builds each for
+    declare -A pinners=()
+    for p in ${found[@]+"${found[@]}"}; do
+        [ "$(basename "$(dirname "$p")")" = "$suite" ] || continue
+        parch=$(dpkg-deb -f "$p" Architecture)
+        [ "$parch" != all ] && [ "$(dpkg-deb -f "$p" Version)" = "$qver" ] && [ "$(src_of "$p")" = "$qsrc" ] || continue
+        pins_exactly "$p" "$qname" "$qver" || continue
+        pname=$(dpkg-deb -f "$p" Package)
+        pinners[$pname]="${pinners[$pname]:-} $parch"
+    done
+    for pname in $(printf '%s\n' "${!pinners[@]}" | LC_ALL=C sort); do
+        left=()
+        for archdir in "$tree/debian/$suite"/*/; do
+            a=$(basename "$archdir")
+            [ "$a" != all ] || continue
+            # an architecture that never served the pinning package has nothing to leave behind
+            compgen -G "$archdir${pname}_*_$a.deb" >/dev/null || continue
+            case " ${pinners[$pname]} " in *" $a "*) continue ;; esac
+            [ ! -f "$archdir${pname}_${qver#*:}_$a.deb" ] || continue
+            left+=("$a")
+        done
+        [ "${#left[@]}" -gt 0 ] || continue
+        echo "refused $(basename "$q") in debian/$suite: $pname pins it exactly (= $qver); this run built $pname $qver for${pinners[$pname]} and not built for ${left[*]}, where debian/$suite serves $pname, so apt would offer $qname $qver there and no $pname it serves installs with it. Build every architecture of the suite that serves $pname (the full matrix, or a quick set that covers them)" >&2
+        pin_refused=1
+    done
+    unset pinners
+done
+[ "$pin_refused" = 0 ] || { echo "an all package would be published ahead of an architecture this run did not build: nothing was placed or signed" >&2; exit 1; }
+
 for f in ${found[@]+"${found[@]}"}; do
     [ -z "${dropped[$f]:-}" ] || continue
     suite=$(basename "$(dirname "$f")")
