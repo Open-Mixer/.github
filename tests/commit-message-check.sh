@@ -107,6 +107,26 @@ grep -q 'FREEMIXER_DOTGITHUB_URL is deprecated, use OPENMIXER_DOTGITHUB_URL' "$t
 rm -rf "$tmp/home/.cache"
 envhook OPENMIXER_DOTGITHUB_URL="$tmp/o.git" FREEMIXER_DOTGITHUB_URL="$tmp/none.git" >/dev/null || fail "both URL names set: the new did not win"
 
+# the stub as git runs it: a real commit in a throwaway repository whose core.hooksPath holds the stub. git exports GIT_DIR
+# and GIT_INDEX_FILE to a hook, and the stub's cache commands must not read them as the cache's: before, every fetch ran
+# against the committing repository, failed, and every repository kept the checker its cache first cloned
+rm -rf "$tmp/home/.cache" "$tmp/w" "$tmp/hooks"; mkdir -p "$tmp/hooks"; cp "$stub" "$tmp/hooks/commit-msg"; chmod +x "$tmp/hooks/commit-msg"
+# a linked worktree, as every working branch is: there git exports an ABSOLUTE GIT_DIR (.git/worktrees/<name>); in a plain
+# checkout it is a relative .git, which after git -C <cache> happens to name the cache's own
+git init -q "$tmp/w"; git -C "$tmp/w" -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m base
+git -C "$tmp/w" worktree add -q --detach "$tmp/wt"
+realcommit() { (cd "$tmp/wt" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" \
+  HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$tmp/o.git git -c core.hooksPath="$tmp/hooks" -c commit.gpgsign=false commit -q --allow-empty "$@") 2>"$tmp/rerr"; }
+realcommit -m "clean change" || fail "a real commit through the stub refused a clean message: $(cat "$tmp/rerr")"
+[ "$(git -C "$cache" rev-parse HEAD 2>/dev/null)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "the first real commit did not clone openmixer-v1 into the cache"
+touch "$tmp/o/moved2"; $G add -A; $G commit -qm three; $G branch -f openmixer-v1; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/heads/openmixer-v1
+touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
+realcommit -m "another clean change" || fail "a real commit after the line moved was refused: $(cat "$tmp/rerr")"
+! grep -q 'could not fetch' "$tmp/rerr" || fail "inside a real hook the stub could not fetch: $(cat "$tmp/rerr")"
+[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "inside a real hook a stale cache was not fetched at the moved openmixer-v1"
+[ "$(git -C "$tmp/wt" rev-list --count HEAD)" = 3 ] || fail "the committing worktree is not where the two commits are"
+if realcommit -m "change" -m "Co-Authored""-By: Claude <noreply@anthro""pic.com>"; then fail "a real commit with an attributed message passed"; fi
+
 # the commit-msg mode judges a message before the commit exists, so a repository whose lanes push from post-commit never
 # publishes one it refuses: the message is also read by private-refs-check (no private repository, issue, machine or path),
 # and the commit's author and committer must be the house's (author Pau Aliagas <linuxnow@gmail.com>, committer email
