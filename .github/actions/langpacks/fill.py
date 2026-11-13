@@ -37,6 +37,12 @@ INVALID = object()  # a catalog that is no JSON catalog
 PROBLEM = re.compile(r"^(?P<file>\S+\.json): (?P<key>\S+): (?P<what>missing|stale|no catalog)(?P<rest>.*)$")
 
 
+# a translate that never got an answer: the router was not reached (a refused or failed connection, no name, a
+# timeout), which is the network's, not the model's
+TRANSPORT = re.compile(r"[^\n]*(fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|"
+                       r"socket hang up|operation was aborted|timed? ?out)[^\n]*", re.I)
+
+
 def run(cmd, env=None):
     p = subprocess.run(cmd if isinstance(cmd, list) else ["bash", "-c", cmd], stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, universal_newlines=True, env=env)
@@ -219,9 +225,15 @@ def main(argv):
         rc, out = run("%s --lang %s --model %s" % (a.fill, shlex.quote(lang), shlex.quote(a.model)), fill_env)
         sys.stdout.write(out)
         if rc != 0:
-            print("langpacks fill: translate --lang %s refused some entries; the catalogs are put back" % lang)
             restore()
-            name_the_gaps(fillable, person, other, a.fill, a.model, "the router's answer was refused (above)")
+            transport = TRANSPORT.search(out)
+            if transport:
+                where = "router not reached (%s, %s)" % (os.environ.get("OMX_TRANSLATE_URL", "no address"), transport.group(0).strip())
+                print("langpacks fill: translate --lang %s: %s; the catalogs are put back" % (lang, where))
+                name_the_gaps(fillable, person, other, a.fill, a.model, where)
+            else:
+                print("langpacks fill: translate --lang %s refused some entries; the catalogs are put back" % lang)
+                name_the_gaps(fillable, person, other, a.fill, a.model, "the router's answer was refused (above)")
             return 1
     for f, keys in by_file.items():
         made = [k for k in keys if k != "-"]
