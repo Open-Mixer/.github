@@ -137,6 +137,17 @@ jobs:
   elif grep -q 'private-refs-allow.txt is a copy' <<<"$out"; then echo "ok   a checkout another user owns is read"; else echo "FAIL another user's checkout, red for another reason: $out"; fail=1; fi
   rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/logs" "$t/r/.githooks"; cp "$STUB" "$t/r/.githooks/commit-msg"; printf '%s\n' 'commit-message-check.sh: fail when a commit message' > "$t/r/logs/run.jsonl"; git -C "$t/r" add -A
   if check "$t/r" >/dev/null 2>&1; then echo "ok   a log quoting the checker is green"; else echo "FAIL a log quoting the checker is red"; fail=1; fi
+  hook() { # <name> <expect: green|red> <source file>: a clean tree whose hook is a copy of this file
+    rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/tools"; echo 'int main(void) { return 0; }' > "$t/r/tools/main.c"
+    cp "$3" "$t/r/.githooks/commit-msg"; git -C "$t/r" add -A
+    if check "$t/r" >/dev/null 2>&1; then r=green; else r=red; fi
+    if [ "$r" = "$2" ]; then echo "ok   $1"; else echo "FAIL $1 is $r"; fail=1; fi
+  }
+  hook "a hook that is the previous stub is green (grace)" green "$HERE/commit-message-check/commit-msg.previous"
+  { cat "$STUB"; echo '# edited'; } > "$t/third"
+  hook "a hook that is neither the stub nor the previous stub is red" red "$t/third"
+  { cat "$HERE/commit-message-check/commit-msg.previous"; echo '# edited'; } > "$t/third2"
+  hook "a hook that is an edited previous stub is red" red "$t/third2"
   plant "a hook that is not the stub is red" .githooks/commit-msg 'exec tools/commit-message-check.sh --msg-file "$1"'
   # sabotage: with the name and content rules gone, a planted copy passes, so the arms above are what catch it
   sed -e "s|^HERE=.*|HERE=$HERE|" -e "s/^NAMES=.*/NAMES='^\$'/" -e "s/^  '.*'\$/  '^\$NEVER'/" "${BASH_SOURCE[0]}" > "$t/sab.sh"
