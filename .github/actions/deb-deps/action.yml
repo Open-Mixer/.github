@@ -3,8 +3,8 @@
 name: deb-deps
 description: Build and install the Debian build dependencies the distribution does not carry
 
-# mod-host, libmod-host-protocol0 and libmod-host-protocol-dev from the FreeMixer fork of mod-host, the CLAP
-# headers from the free-audio/clap commit of .github/pins.txt: what a FreeMixer package Build-Depends on.
+# mod-host, libmod-host-protocol0 and libmod-host-protocol-dev from the OpenMixer fork of mod-host, the CLAP
+# headers from the free-audio/clap commit of .github/pins.txt: what an OpenMixer package Build-Depends on.
 # The protocol library is published with the packages that link it; the CLAP headers are published as
 # clap-headers by clap-headers-deb.yml, and the -dev packages that Depend on them install it from there.
 # The caller runs as root in a Debian container with dpkg-dev, debhelper, build-essential, git and lintian.

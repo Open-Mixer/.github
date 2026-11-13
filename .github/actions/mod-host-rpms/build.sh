@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# Build the mod-host RPMs, with mod-host-protocol and mod-host-protocol-devel, into $1: the FreeMixer fork at the
+# Build the mod-host RPMs, with mod-host-protocol and mod-host-protocol-devel, into $1: the OpenMixer fork at the
 # commit .github/pins.txt names, by its own packaging/mod-host.spec (actions/build-rpm/build-rpm.sh). When the fork's
 # tag v<Version> is that commit the build is the release (<Version>-<Release>), otherwise a snapshot
 # (<Version>-<Release>.git<sha>). Runs as root in a Fedora container.

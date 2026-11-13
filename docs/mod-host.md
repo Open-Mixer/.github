@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
-# mod-host: one source, the FreeMixer fork
+# mod-host: one source, the OpenMixer fork
 
 plugin-hostd and omx-clap-host link `libmod-host-protocol.so.0`, the socket and protocol library of mod-host. Every
-mod-host package FreeMixer ships, and every source build of the library in CI, comes from one place: the
-[FreeMixer fork of mod-host](https://github.com/Open-Mixer/mod-host), branch `freemixer`, which carries each change
+mod-host package OpenMixer ships, and every source build of the library in CI, comes from one place: the
+[OpenMixer fork of mod-host](https://github.com/Open-Mixer/mod-host), branch `freemixer`, which carries each change
 as a commit and offers each one upstream. No patch is applied here.
 
 ## The fixes, and where they live

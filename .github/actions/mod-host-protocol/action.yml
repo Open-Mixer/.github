@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: mod-host-protocol
-description: Build libmod-host-protocol from the FreeMixer fork of mod-host and install it into a prefix
+description: Build libmod-host-protocol from the Open-Mixer fork of mod-host and install it into a prefix
 
-# One way to get the protocol library for every FreeMixer host repository's source build: the fork at the commit
+# One way to get the protocol library for every OpenMixer host repository's source build: the fork at the commit
 # .github/pins.txt names, the same source as the published packages. The installed library is checked by
 # checks/framing-test.sh. The caller has git, gcc, make, python3 and pkg-config.
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: public-sources-check
-# The checks every FreeMixer repository runs on what it publishes, from this repository and nowhere else:
+# The checks every OpenMixer repository runs on what it publishes, from this repository and nowhere else:
 #   - its pull request's own commits carry no attribution line (commit-message-check);
 #   - no tracked file points into a private repository (private-refs-check);
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);

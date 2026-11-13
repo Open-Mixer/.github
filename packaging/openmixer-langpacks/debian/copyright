@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: openmixer-langpacks
-Source: https://github.com/FreeMixer/.github
+Source: https://github.com/Open-Mixer/.github
 
 Files: *
 Copyright: 2026 Pau Aliagas <linuxnow@gmail.com>

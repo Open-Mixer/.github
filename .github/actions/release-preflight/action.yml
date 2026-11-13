@@ -95,7 +95,7 @@ runs:
         [ -n "$GPG_KEY" ] || missing="$missing signing-key"
         [ -n "$PAGES_TOKEN" ] || missing="$missing PAGES_TOKEN"
         if [ -n "$missing" ]; then
-          echo "::error::missing secrets:$missing -- create them as FreeMixer organisation secrets shared with this repository"
+          echo "::error::missing secrets:$missing -- create them as Open-Mixer organisation secrets shared with this repository"
           exit 1
         fi
 
