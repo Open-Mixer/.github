@@ -4,4 +4,5 @@
 # matrix.sh reads it, and docs/release-operations.md describes it.
 rpm 44 x86_64
 rpm 45 x86_64
+deb trixie amd64
 deb trixie arm64

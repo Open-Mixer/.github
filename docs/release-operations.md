@@ -158,7 +158,7 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the quick set (fc44 and fc45 on x86_64, trixie on arm64), or the whole
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc44 and fc45 on x86_64, trixie on amd64 and arm64), or the whole
   matrix when told full ("The quick set and the full matrix" below), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
@@ -241,7 +241,11 @@ set** instead:
 | kind | cells |
 |------|-------|
 | rpm  | fc44 x86_64, fc45 x86_64 |
-| deb  | trixie arm64 |
+| deb  | trixie amd64, trixie arm64 |
+
+trixie amd64 joined the set on 2026-11-13: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
+from the deb channel, and with no quick amd64 cell every one of their runs failed on a version the wave had not
+built there. bookworm stays out.
 
 The set is written once, in `.github/actions/release-matrix/quick.txt`. `build-rpm.yml` and `build-deb.yml` ask the
 `release-matrix` action in their first job, and the build jobs and the install checks both run for the cells it
@@ -259,14 +263,14 @@ names, no others. The run says which set it builds, and why, in a notice.
 
 - **A caller that changes nothing** passes no `matrix`. Its tag push builds the full matrix, as it always did,
   unless the organisation variable `OMX_RELEASE_MATRIX` is `quick`. The default is full on purpose: a tag pushed by
-  hand with no wave open must never publish three cells of eight because nobody said otherwise.
+  hand with no wave open must never publish four cells of eight because nobody said otherwise.
 - **`OMX_RELEASE_MATRIX`** is the one thing the release chain sets: `quick` when it opens a wave, `full` (or
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
   `publish-fedora.yml` always passes `full`: a new Fedora release is filled whole.
-- The quick set is cut down to the caller's own matrix and never adds to it. A library built for x86_64 alone has no
-  trixie arm64 cell: its deb half builds its own full matrix and says so.
+- The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
+  cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
 
 ### What the channel records
 
