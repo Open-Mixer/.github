@@ -15,6 +15,13 @@
 #     cell and builds its own full deb matrix;
 #   - a matrix or a variable that is neither quick nor full fails the first job;
 #   - release-c-lib.yml hands its matrix input on to both, and publish-fedora.yml always asks for the full matrix.
+#   - cells.sh, run on a tree: one line per package and version with the cells its files lie in, the set of the run
+#     that published it, kept by a later run that publishes something else, replaced when the version goes out again
+#     for the full matrix, and gone with the files; both tree scripts call it and both publish actions hand it the
+#     set the first job named, a promotion always full;
+#   - quick-deps.sh, run on a list of installed packages: a quick-only version among them is refused by name, a full
+#     one and an older one pass, a channel with no cells.tsv passes and says so, an unreadable one fails; the build
+#     jobs run it on a release of the full matrix only.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
@@ -199,4 +206,122 @@ for job in ("rpm", "deb"):
 fed = yaml.safe_load(open(f"{here}/.github/workflows/publish-fedora.yml"))
 assert fed["jobs"]["rpm"]["with"]["matrix"] == "full", "publish-fedora.yml fills a Fedora release: it must ask for the full matrix"
 print("ok   release-c-lib.yml hands matrix on; publish-fedora.yml asks for the full matrix")
+
+# ---- the set reaches the channel index, and a full release reads it
+for kind, (path, rel_in, key) in WF.items():
+    d = docs[kind]
+    on = d.get(True) or d.get("on")
+    base = {k: v.get("default") for k, v in on["workflow_call"]["inputs"].items()}
+    pub = d["jobs"]["publish"]
+    assert "preflight" in pub["needs"], f"{path}: publish reads the set of a job it does not need"
+    st = [s for s in pub["steps"] if f"/actions/publish-{kind}s@" in s.get("uses", "")][0]
+    assert st["with"]["matrix-set"].replace(" ", "") == "${{needs.preflight.outputs.set}}", f"{path}: the publish is not told the set"
+    a = yaml.safe_load(open(f"{here}/.github/actions/publish-{kind}s/action.yml"))
+    assert a["inputs"]["matrix-set"]["default"] == "", f"publish-{kind}s: matrix-set must default to nothing recorded"
+    first = a["runs"]["steps"][1]
+    assert first["env"]["MATRIX_SET"] == "${{ inputs.matrix-set }}" and 'echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"' in first["run"], \
+        f"publish-{kind}s: the set is not in the job's environment before the tree is assembled (the lost-race rebuild reads it there)"
+    tree = open(f"{here}/.github/actions/publish-{kind}s/publish-tree.sh").read()
+    assert re.search(r'(?m)^".*/\.\./release-matrix/cells\.sh" %s "\$tree" "\$src"$' % kind, tree), f"publish-{kind}s/publish-tree.sh does not write cells.tsv"
+    qd = [s for s in d["jobs"]["build"]["steps"] if "/actions/quick-deps@" in s.get("uses", "")]
+    bld = [k for k, s in enumerate(d["jobs"]["build"]["steps"]) if f"/actions/build-{kind}@" in s.get("uses", "")][0]
+    assert len(qd) == 1 and d["jobs"]["build"]["steps"].index(qd[0]) == bld + 1 and qd[0]["with"]["kind"] == kind, \
+        f"{path}: quick-deps does not run once, right after the build installed its dependencies"
+    def runs(inputs, rt, set_):
+        full = dict(base, **inputs)
+        tag = ev(d["jobs"]["build"]["env"]["RELEASE_TAG"], full, "push", rt)
+        e = qd[0]["if"].replace("env.RELEASE_TAG", repr(tag))
+        return bool(ev("${{ " + e + " }}", full, "push", rt, needs=O(preflight=O(outputs=O(set=set_)))))
+    assert runs({"publish": True}, "tag", "full"), f"{path}: a full release does not check its dependencies"
+    assert runs({"publish": True, "source-ref": "v1.2.0"}, "branch", "full"), f"{path}: a full release of another tag does not check its dependencies"
+    assert not runs({"publish": True}, "tag", "quick"), f"{path}: an interim tag is held to full dependencies"
+    assert not runs({"staged": True}, "branch", "full"), f"{path}: a staged run is held to full dependencies"
+    assert not runs({}, "branch", "full"), f"{path}: a dry run is held to full dependencies"
+    assert not runs({"publish": True, "channel-deps": False}, "tag", "full"), f"{path}: a build that takes nothing from the channel asks the channel"
+pro = yaml.safe_load(open(f"{here}/.github/workflows/promote-staged.yml"))
+sets = [s["with"].get("matrix-set") for j in pro["jobs"].values() for s in j.get("steps", []) if re.search(r"/actions/publish-(rpm|deb)s@", s.get("uses", ""))]
+assert sets == ["full", "full"], f"promote-staged.yml records {sets}: a promotion holds every cell of the matrix"
+print("ok   the publish is told the set and writes cells.tsv; a full release checks its dependencies, nothing else does; a promotion is full")
 PY
+
+fail() { echo "FAIL: $*"; exit 1; }
+ok() { echo "ok   $*"; }
+act=$here/.github/actions/release-matrix
+row() { awk -F'\t' -v n="$2" -v v="$3" '$1 == n && $2 == v {print $3 "|" $4}' "$1/cells.tsv"; }
+
+# ---- cells.sh on an rpm tree and a deb tree
+r=$t/rpm; mkdir -p "$r"/fedora/{44,45}/{x86_64,aarch64,noarch,SRPMS} "$t/q" "$t/f"
+for f in 44/x86_64/omx-lib-devel-3.14.0-1.fc44.x86_64 45/x86_64/omx-lib-devel-3.14.0-1.fc45.x86_64 44/SRPMS/omx-lib-3.14.0-1.fc44.src \
+    44/x86_64/omx-lib-devel-3.13.0-1.fc44.x86_64 44/aarch64/omx-lib-devel-3.13.0-1.fc44.aarch64 45/x86_64/omx-lib-devel-3.13.0-1.fc45.x86_64 \
+    45/aarch64/omx-lib-devel-3.13.0-1.fc45.aarch64 44/noarch/omx-lang-ca-1.0.0-1.fc44.noarch; do : > "$r/fedora/$f.rpm"; done
+: > "$t/q/omx-lib-devel-3.14.0-1.fc44.x86_64.rpm"; : > "$t/q/omx-lib-3.14.0-1.fc44.src.rpm"
+MATRIX_SET=quick "$act/cells.sh" rpm "$r" "$t/q" >/dev/null
+[ "$(head -1 "$r/cells.tsv")" = "$(printf '# package\tversion\tset\tcells')" ] || fail "cells.tsv has no header: $(head -1 "$r/cells.tsv")"
+[ "$(row "$r" omx-lib-devel 3.14.0)" = "quick|fc44/x86_64 fc45/x86_64" ] || fail "the quick version reads $(row "$r" omx-lib-devel 3.14.0)"
+[ "$(row "$r" omx-lib-devel 3.13.0)" = "-|fc44/aarch64 fc44/x86_64 fc45/aarch64 fc45/x86_64" ] || fail "a version published before sets were recorded reads $(row "$r" omx-lib-devel 3.13.0)"
+[ "$(row "$r" omx-lang-ca 1.0.0)" = "-|fc44/noarch" ] || fail "a noarch package reads $(row "$r" omx-lang-ca 1.0.0)"
+! grep -q $'^omx-lib\t' "$r/cells.tsv" || fail "a source package has a line"
+[ "$(wc -l < "$r/cells.tsv")" = 4 ] || fail "cells.tsv has $(wc -l < "$r/cells.tsv") lines, want the header and 3"
+# another package goes out: the quick mark of the first stays
+: > "$r/fedora/44/x86_64/omx-other-0.2.0-1.fc44.x86_64.rpm"; : > "$t/f/omx-other-0.2.0-1.fc44.x86_64.rpm"
+MATRIX_SET=full "$act/cells.sh" rpm "$r" "$t/f" >/dev/null
+[ "$(row "$r" omx-lib-devel 3.14.0)" = "quick|fc44/x86_64 fc45/x86_64" ] || fail "another package's publish changed the quick mark: $(row "$r" omx-lib-devel 3.14.0)"
+[ "$(row "$r" omx-other 0.2.0)" = "full|fc44/x86_64" ] || fail "the full publish reads $(row "$r" omx-other 0.2.0)"
+# a run that names no set (the purge, a tree script run by hand) claims nothing and loses nothing
+"$act/cells.sh" rpm "$r" "$t/f" >/dev/null
+[ "$(row "$r" omx-lib-devel 3.14.0)|$(row "$r" omx-other 0.2.0)" = "quick|fc44/x86_64 fc45/x86_64|full|fc44/x86_64" ] || fail "a run with no set rewrote the sets"
+# the version goes out again for the full matrix: its cells grow and the mark is replaced
+: > "$r/fedora/44/aarch64/omx-lib-devel-3.14.0-1.fc44.aarch64.rpm"; : > "$r/fedora/45/aarch64/omx-lib-devel-3.14.0-1.fc45.aarch64.rpm"
+MATRIX_SET=full "$act/cells.sh" rpm "$r" "$t/q" >/dev/null
+[ "$(row "$r" omx-lib-devel 3.14.0)" = "full|fc44/aarch64 fc44/x86_64 fc45/aarch64 fc45/x86_64" ] || fail "the full release of a quick version reads $(row "$r" omx-lib-devel 3.14.0)"
+# the files go (a purge): so do the lines
+find "$r" -name '*.rpm' -delete
+"$act/cells.sh" rpm "$r" >/dev/null
+[ "$(cat "$r/cells.tsv")" = "$(printf '# package\tversion\tset\tcells')" ] || fail "an emptied tree still lists $(sed 1d "$r/cells.tsv")"
+if MATRIX_SET=some "$act/cells.sh" rpm "$r" >/dev/null 2>&1; then fail "MATRIX_SET=some was taken"; fi
+ok "cells.sh rpm: cells from the tree, the set from the run, kept by other runs, replaced by a full release, gone with the files"
+
+d=$t/deb; mkdir -p "$d"/debian/{bookworm,trixie}/{amd64,arm64,all} "$t/dq/trixie"
+for f in trixie/arm64/libomx-lib-dev_3.14.0+git20261113101500.abc1234_arm64 trixie/arm64/libomx-lib-dev_3.13.0-1_arm64 trixie/amd64/libomx-lib-dev_3.13.0-1_amd64 \
+    bookworm/arm64/libomx-lib-dev_3.13.0-1_arm64 bookworm/amd64/libomx-lib-dev_3.13.0-1_amd64 trixie/all/omx-lang-ca_1.0.0_all; do : > "$d/debian/$f.deb"; done
+: > "$t/dq/trixie/libomx-lib-dev_3.14.0+git20261113101500.abc1234_arm64.deb"
+MATRIX_SET=quick "$act/cells.sh" deb "$d" "$t/dq" >/dev/null
+[ "$(row "$d" libomx-lib-dev 3.14.0)" = "quick|trixie/arm64" ] || fail "the quick deb reads $(row "$d" libomx-lib-dev 3.14.0)"
+[ "$(row "$d" libomx-lib-dev 3.13.0)" = "-|bookworm/amd64 bookworm/arm64 trixie/amd64 trixie/arm64" ] || fail "the full deb reads $(row "$d" libomx-lib-dev 3.13.0)"
+[ "$(row "$d" omx-lang-ca 1.0.0)" = "-|trixie/all" ] || fail "an all package reads $(row "$d" omx-lang-ca 1.0.0)"
+ok "cells.sh deb: the upstream version without revision or +git suffix, all as a cell"
+
+# ---- quick-deps.sh
+printf '# package\tversion\tset\tcells\nomx-lib-devel\t3.13.0\tfull\tfc44/x86_64 fc44/aarch64\nomx-lib-devel\t3.14.0\tquick\tfc44/x86_64 fc45/x86_64\nomx-old\t1.0.0\t-\tfc44/x86_64\n' > "$t/cells.tsv"
+printf 'glibc 2.42\nomx-lib-devel 3.14.0\nomx-old 1.0.0\n' > "$t/inst-quick"
+printf 'glibc 2.42\nomx-lib-devel 3.13.0\nomx-old 1.0.0\n' > "$t/inst-full"
+if out=$("$act/quick-deps.sh" rpm "$t/cells.tsv" "$t/inst-quick" 2>&1); then fail "a release built on a quick-only version passed: $out"; fi
+echo "$out" | grep -q '::error::.*omx-lib-devel 3.14.0.*quick set alone (fc44/x86_64 fc45/x86_64)' || fail "the quick-only dependency is not named with its cells: $out"
+out=$("$act/quick-deps.sh" rpm "$t/cells.tsv" "$t/inst-full" 2>&1) || fail "a release built on full versions is refused: $out"
+echo "$out" | grep -q '1 quick version(s) recorded' || fail "the pass does not say what it looked at: $out"
+echo 'not a cells file' > "$t/bad.tsv"
+if "$act/quick-deps.sh" rpm "$t/bad.tsv" "$t/inst-full" >/dev/null 2>&1; then fail "a file that is not a cells.tsv was read as one"; fi
+if "$act/quick-deps.sh" rpm "$t/none.tsv" "$t/inst-full" >/dev/null 2>&1; then fail "a missing cells.tsv is a pass"; fi
+: > "$t/empty"
+if "$act/quick-deps.sh" rpm "$t/cells.tsv" "$t/empty" >/dev/null 2>&1; then fail "an empty list of installed packages is a pass"; fi
+# over HTTP, as the build job reads it: 200 is read, 404 passes and says so, anything else fails
+mkdir -p "$t/www/rpm" "$t/bin"; cp "$t/cells.tsv" "$t/www/rpm/cells.tsv"
+cat > "$t/bin/curl" <<'SH'
+#!/bin/bash
+# a channel on disk: the last argument is the URL, -o names the file, the status goes to standard output
+url=${!#}; out=
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+case $url in
+*/down/*) echo 503 ;;
+*) f=$WWW/${url#https://channel.test/}; if [ -f "$f" ]; then cp "$f" "$out"; echo 200; else echo 404; fi ;;
+esac
+SH
+chmod +x "$t/bin/curl"
+web() { WWW=$t/www PATH=$t/bin:$PATH "$act/quick-deps.sh" "$@" 2>&1; }
+if out=$(web rpm https://channel.test/rpm/cells.tsv "$t/inst-quick"); then fail "over HTTP a quick-only dependency passed: $out"; fi
+echo "$out" | grep -q 'omx-lib-devel 3.14.0' || fail "over HTTP the dependency is not named: $out"
+out=$(web deb https://channel.test/deb/cells.tsv "$t/inst-quick") || fail "a channel with no cells.tsv yet is refused: $out"
+echo "$out" | grep -q 'not served yet' || fail "the 404 is not said: $out"
+if out=$(web rpm https://channel.test/down/rpm/cells.tsv "$t/inst-full"); then fail "a channel that answers 503 is a pass: $out"; fi
+ok "quick-deps.sh: a quick-only version is refused by name and cells; full, older, and a channel with no record pass; an unreadable record fails"
+echo "release-matrix: all passed"
