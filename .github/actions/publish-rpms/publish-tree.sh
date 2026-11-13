@@ -84,6 +84,73 @@ if [ "${CATCH_UP:-}" = true ]; then
     done
     [ "$clash" = 0 ] || { echo "catch-up: the channel already serves the files above: nothing was placed or signed" >&2; exit 1; }
 fi
+
+# A NOARCH PACKAGE PINNED BY ITS SOURCE IS NEVER PUBLISHED AHEAD OF AN ARCHITECTURE THE RUN DID NOT BUILD
+# (Open-Mixer/.github#62, the rpm face of #59). fedora/<release>/noarch is served to every architecture of the release, and
+# dnf offers the newest noarch build. When a package of the same source pins it exactly (Requires: name =
+# %{version}-%{release}), every architecture of the release that already serves that package must have it at the pinned
+# version: built by this run, or already in the tree. Otherwise the binary left behind there pins an older noarch build
+# than the one the channel now offers (omx-clap-core 0.32.3 on aarch64 against omx-clap-core-contract 0.32.4, published
+# by a quick release built for x86_64 alone). Judged only for a noarch package this run places that becomes the newest of
+# its name in the release, so a catch-up (which drops a served noarch package) and an older noarch package are never
+# refused. Nothing is placed or signed when it refuses.
+rpm_cmp() { # <e> <v> <r> <e> <v> <r>: -1, 0 or 1 by rpm's own ordering
+    python3 -I -c 'import sys, rpm; print(rpm.labelCompare(tuple(sys.argv[1:4]), tuple(sys.argv[4:7])))' "$@"
+}
+pin_refused=0
+for q in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$q]:-}" ] || continue
+    IFS='|' read -r qsrc_is arch qrel qname qver qepoch qsrcrpm < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}|%{EPOCHNUM}|%{SOURCERPM}\n' "$q")
+    [ "$qsrc_is" != 1 ] && [ "$arch" = noarch ] || continue
+    releasever=$(printf '%s\n' "$qrel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
+    [ -n "$releasever" ] || continue
+    [ ! -f "$tree/fedora/$releasever/noarch/$(basename "$q")" ] || continue
+    newest=1
+    for other in "$tree/fedora/$releasever/noarch/"*.rpm; do
+        [ -f "$other" ] || continue
+        IFS='|' read -r oname oe ov or < <(rpm -qp --qf '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}\n' "$other")
+        [ "$oname" = "$qname" ] || continue
+        if [ "$(rpm_cmp "$oe" "$ov" "$or" "$qepoch" "$qver" "$qrel")" = 1 ]; then newest=; break; fi
+    done
+    [ -n "$newest" ] || continue
+    # the packages of this run, of the same source and release, that pin it exactly: the architectures the run builds each for
+    declare -A pinners=()
+    for p in ${found[@]+"${found[@]}"}; do
+        IFS='|' read -r p_is parch prel pname psrcrpm < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{SOURCERPM}\n' "$p")
+        [ "$p_is" != 1 ] && [ "$parch" != noarch ] && [ "$psrcrpm" = "$qsrcrpm" ] || continue
+        case $prel in *".fc$releasever"*) ;; *) continue ;; esac
+        rpm -qp --requires "$p" | grep -qxE "$qname = ($qepoch:)?$qver-$qrel" || continue
+        pinners[$pname]="${pinners[$pname]:-} $parch"
+    done
+    for pname in $(printf '%s\n' "${!pinners[@]}" | LC_ALL=C sort); do
+        left=()
+        for archdir in "$tree/fedora/$releasever"/*/; do
+            a=$(basename "$archdir")
+            [ "$a" != noarch ] && [ "$a" != SRPMS ] || continue
+            # an architecture that never served the pinning package has nothing to leave behind
+            serves=
+            for s in "$archdir"*.rpm; do
+                [ -f "$s" ] && [ "$(rpm -qp --qf '%{NAME}' "$s")" = "$pname" ] && { serves=1; break; }
+            done
+            [ -n "$serves" ] || continue
+            case " ${pinners[$pname]} " in *" $a "*) continue ;; esac
+            # a build of the pinning package at the pinned version already there is not left behind
+            built=
+            for s in "$archdir"*.rpm; do
+                [ -f "$s" ] || continue
+                [ "$(rpm -qp --qf '%{NAME}|%{VERSION}-%{RELEASE}' "$s")" = "$pname|$qver-$qrel" ] && { built=1; break; }
+            done
+            [ -z "$built" ] || continue
+            left+=("$a")
+        done
+        [ "${#left[@]}" -gt 0 ] || continue
+        echo "refused $(basename "$q") in fedora/$releasever: $pname pins it exactly (= $qver-$qrel); this run built $pname $qver-$qrel for${pinners[$pname]} and not built for ${left[*]}, where fedora/$releasever serves $pname, so dnf would offer $qname $qver-$qrel there and no $pname it serves installs with it. Build every architecture of the release that serves $pname (the full matrix, or a quick set that covers them)" >&2
+        pin_refused=1
+    done
+    unset pinners
+done
+[ "$pin_refused" = 0 ] || { echo "a noarch package would be published ahead of an architecture this run did not build: nothing was placed or signed" >&2; exit 1; }
+
 for f in ${found[@]+"${found[@]}"}; do
     [ -z "${dropped[$f]:-}" ] || continue
     IFS='|' read -r is_src arch rel pkg ver < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}\n' "$f")
