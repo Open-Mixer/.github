@@ -34,7 +34,7 @@ inputs:
     default: dedupe/all
   owner:
     description: the GitHub owner of the siblings
-    default: FreeMixer
+    default: Open-Mixer
   when:
     description: auto (the wave branch's runs only), always, or never
     default: auto

@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # no-local-copies check.sh [ROOT] | --self-test
 #
-# A FreeMixer repository runs the shared checks from Open-Mixer/.github and keeps no copy of them: no commit message
+# An OpenMixer repository runs the shared checks from Open-Mixer/.github and keeps no copy of them: no commit message
 # checker, no pattern list, no private-refs engine, no SPDX check, no allow list (the engine reads none, and one left
 # lying in a tree is refused), and a commit-msg hook that is the shared stub byte for byte: a missing hook is as red as
 # a different one. A copy is found by its name and by its content, so a renamed copy is red too. A release workflow

@@ -38,7 +38,7 @@ CN=$cn CE=$ae ident "Pau Aliagas" linuxnow@gmail.com "ordinary change"
 if "$chk" main..HEAD >/dev/null; then fail "a commit committed by $cn passed"; fi
 ident "Pau Aliagas" "bot@$an.com" "ordinary change"
 if "$chk" main..HEAD >/dev/null; then fail "a commit with an $an.com address passed"; fi
-ident GitHub noreply@github.com "Merge pull request #393 from FreeMixer/${cl}/hostd-385-fix"
+ident GitHub noreply@github.com "Merge pull request #393 from Open-Mixer/${cl}/hostd-385-fix"
 if "$chk" main..HEAD >/dev/null; then fail "a merge of a ${cl}/ branch passed"; fi
 ident GitHub noreply@github.com "Merge branch '${cl}/x' into main"
 if "$chk" main..HEAD >/dev/null; then fail "a local merge of a ${cl}/ branch passed"; fi

@@ -3,7 +3,7 @@
 name: mod-host-protocol RPMs
 
 # Builds mod-host, mod-host-protocol, which carries libmod-host-protocol.so.0, and mod-host-protocol-devel from the
-# FreeMixer fork of mod-host at the commit .github/pins.txt names, by the fork's own packaging/mod-host.spec, for
+# OpenMixer fork of mod-host at the commit .github/pins.txt names, by the fork's own packaging/mod-host.spec, for
 # every architecture and publishes them into rpm/ of the Pages repository, where omx-clap-host and plugin-hostd
 # Require them. Move the pin to the fork's release tag, then run this by hand: a published NEVRA is never rebuilt
 # with new bytes (docs/mod-host.md).

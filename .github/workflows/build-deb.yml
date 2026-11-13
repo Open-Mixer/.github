@@ -36,7 +36,7 @@ name: Build DEB (reusable)
 #
 # The packaging is the debian/ directory of the calling repository; its changelog version is the version and
 # must equal the packaging/*.spec Version when there is one, and the tag must be v<version>. What Debian does
-# not carry, libmod-host-protocol (from the FreeMixer fork of mod-host) and the CLAP headers (from .github/pins.txt), is built first: the
+# not carry, libmod-host-protocol (from the OpenMixer fork of mod-host) and the CLAP headers (from .github/pins.txt), is built first: the
 # protocol library is published once by mod-host-protocol-deb.yml and the packages Depend on it, they never
 # carry a copy; the CLAP headers are a build dependency only. A build dependency the channel already serves
 # (plugin-hostd-dev) comes from the channel's apt source, added inside the build container only.

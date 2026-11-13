@@ -9,7 +9,7 @@ name: ci
 # (tests/pinned-keys.sh). The changelog generator (from git), and
 # what the channel publish adds from them: an updateinfo.xml for dnf and a Changelogs URL for apt
 # (docs/packaging-changelog.md). The language packs of an owner and the openmixer meta packs build and install, and a
-# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md); the fill of a catalog's missing entries through a fixture router, and its refusals (tests/langpacks-fill.sh). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
+# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md); the fill of a catalog's missing entries through a fixture router, and its refusals (tests/langpacks-fill.sh). The mod-host packages from the OpenMixer fork at its pin: its tests pass, each fix
 # taken out again fails its check, and the RPMs and DEBs pass the installed-library checks and upgrade the
 # channel's earlier builds (docs/mod-host.md).
 

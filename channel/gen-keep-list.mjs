@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 //
-// Generate channel/keep-list.txt: every package version the package channel (FreeMixer/freemixer.github.io)
+// Generate channel/keep-list.txt: every package version the package channel (Open-Mixer/open-mixer.github.io)
 // must keep besides the newest builds, each with the pin that keeps it. The list is never edited by hand:
 // tests/channel-keep-list.sh fails a line that no source in the header produced, and a file whose lines do
 // not match its checksum.
@@ -20,9 +20,9 @@
 // The sources (read from the default branch, or from a --local checkout):
 //   the worker image's repository (private: --worker-image <owner/repo> or OMX_WORKER_IMAGE_REPO; it is named
 //                         in the output by its role only)  k8s/omx-worker/images/*/baked-versions.yml   exact rpm rows, and the released floors
-//   FreeMixer/.github     .github/pins.txt                             lines that name a version
-//   FreeMixer/zynthian-sys scripts/recipes/install_openmixer.sh at every omx-track/* tag: what a device installs
-//   FreeMixer/plugin-qualify .github/actions/install-plugin-hostd/action.yml   the plugin-hostd it fetches
+//   Open-Mixer/.github     .github/pins.txt                             lines that name a version
+//   Open-Mixer/zynthian-sys scripts/recipes/install_openmixer.sh at every omx-track/* tag: what a device installs
+//   Open-Mixer/plugin-qualify .github/actions/install-plugin-hostd/action.yml   the plugin-hostd it fetches
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -130,11 +130,11 @@ export function collect(reader, workerImage) {
   for (const f of reader.files(workerImage, 'main', /^k8s\/omx-worker\/images\/[^/]+\/baked-versions\.yml$/)) {
     src(workerImage, 'main', f, bakedRows);
   }
-  src('FreeMixer/.github', 'main', '.github/pins.txt', pinsTxtRows);
-  for (const tag of reader.tags('FreeMixer/zynthian-sys', 'omx-track/')) {
-    src('FreeMixer/zynthian-sys', tag, 'scripts/recipes/install_openmixer.sh', installSet);
+  src('Open-Mixer/.github', 'main', '.github/pins.txt', pinsTxtRows);
+  for (const tag of reader.tags('Open-Mixer/zynthian-sys', 'omx-track/')) {
+    src('Open-Mixer/zynthian-sys', tag, 'scripts/recipes/install_openmixer.sh', installSet);
   }
-  src('FreeMixer/plugin-qualify', 'main', '.github/actions/install-plugin-hostd/action.yml', pluginQualifyRows);
+  src('Open-Mixer/plugin-qualify', 'main', '.github/actions/install-plugin-hostd/action.yml', pluginQualifyRows);
   return { rows, sources };
 }
 
