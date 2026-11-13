@@ -11,6 +11,25 @@ description: Hold an owner's language packs to its catalogs and omx-contract's l
 # language with no catalog, a missing key, a stale entry. Nothing is written. The caller has checked the repository
 # out and installed omx-contract (its CLI and omx-contract-data, 3.16.0 or later, which carries languages.json).
 # To write the blocks: python3 <this directory>/langpacks.py rpm|deb ... without --check.
+#
+# The gate's gaps fill themselves (fill.py, Open-Mixer/.github#46) when `fill` is true (the default): a missing or stale
+# entry of a catalog is made by `omx-contract translate --model draft-prose` through the in-cluster router and pushed, signed, to
+# the pull request's branch; or the step fails naming each entry (catalog, key) and the command a person runs. Entries
+# `"by": "human"` are never written. The fill is made only when ALL hold, else the step names the gaps and fails:
+#   - the run is a pull request of this repository (never a fork), on a runner that is not GitHub-hosted
+#     (runs-on: ${{ vars.OMX_RUNNER }}, where router-url answers), with router-key and signing-key passed;
+#   - the checkout is the pull request's head (actions/checkout with ref: ${{ github.event.pull_request.head.sha }}), gpg and
+#     git are installed, and the job may push (permissions: contents: write; push-token, a token that starts workflows,
+#     makes the push start the new head's run: the job's own token starts none, so the run says to re-run the job).
+# After a push this run is RED on purpose: the check that counts is the new head's. The caller:
+#
+#   - uses: actions/checkout@v4
+#     with: { ref: "${{ github.event.pull_request.head.sha || github.sha }}" }
+#   - uses: Open-Mixer/.github/.github/actions/langpacks@openmixer-v1
+#     with:
+#       name: ...
+#       router-key: ${{ secrets.OMX_ROUTER_KEY }}
+#       signing-key: ${{ secrets.OPENMIXER_CI_SIGNING_KEY }}
 
 inputs:
   name:
@@ -51,6 +70,47 @@ inputs:
     required: false
     default: omx-contract translate --check --owner .
 
+  fill:
+    description: Fill the catalogs' missing and stale entries through the router and push them, or name them (true|false)
+    required: false
+    default: 'true'
+  fill-command:
+    description: The command that makes one language's entries (--lang and --model are appended), run in the checkout
+    required: false
+    default: omx-contract translate --owner .
+  model:
+    description: The router alias the entries are made by (provenance records the model that served it)
+    required: false
+    default: draft-prose
+  router-url:
+    description: The router's base address (the in-cluster service)
+    required: false
+    default: http://llm-router.llm-router.svc.cluster.local:4000
+  router-key:
+    description: The router key (secrets.OMX_ROUTER_KEY); without it the step names the gaps
+    required: false
+    default: ''
+  signing-key:
+    description: The armored key the pushed commit is signed with (secrets.OPENMIXER_CI_SIGNING_KEY)
+    required: false
+    default: ''
+  signing-passphrase:
+    description: Its passphrase, empty for a key without one
+    required: false
+    default: ''
+  push-token:
+    description: A token whose push starts workflows (default the checkout's own credentials, whose push starts none)
+    required: false
+    default: ''
+  committer-name:
+    description: The committer name of the pushed commit
+    required: false
+    default: Pau Aliagas
+  committer-email:
+    description: The committer email of the pushed commit, the one the signing key carries
+    required: false
+    default: linuxnow@gmail.com
+
 runs:
   using: composite
   steps:
@@ -66,6 +126,20 @@ runs:
         MOVED: ${{ inputs.moved }}
         LANGUAGES: ${{ inputs.languages }}
         GATE: ${{ inputs.gate }}
+        FILL: ${{ inputs.fill }}
+        FILL_COMMAND: ${{ inputs.fill-command }}
+        MODEL: ${{ inputs.model }}
+        OMX_TRANSLATE_URL: ${{ inputs.router-url }}
+        OMX_TRANSLATE_KEY: ${{ inputs.router-key }}
+        SIGNING_KEY: ${{ inputs.signing-key }}
+        SIGNING_PASSPHRASE: ${{ inputs.signing-passphrase }}
+        PUSH_TOKEN: ${{ inputs.push-token }}
+        COMMITTER_NAME: ${{ inputs.committer-name }}
+        COMMITTER_EMAIL: ${{ inputs.committer-email }}
+        FILL_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        EXPECT_HEAD: ${{ github.event.pull_request.head.sha }}
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
       run: |
         set -euo pipefail
         gen=$GITHUB_ACTION_PATH/langpacks.py
@@ -79,4 +153,24 @@ runs:
           python3 "$gen" deb --debian "$DEBIAN" "${args[@]}" "${moved[@]}"
         fi
         echo "langpacks: $NAME's packs are current for $(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["languages"]))' "$LANGUAGES")"
-        bash -c "$GATE"
+        if [ "$FILL" != true ]; then
+          bash -c "$GATE"
+          exit
+        fi
+        # secrets never reach a log line; a fork never gets the key, and neither does a run that is not a pull request
+        # of this repository
+        for s in "$OMX_TRANSLATE_KEY" "$SIGNING_KEY" "$SIGNING_PASSPHRASE" "$PUSH_TOKEN"; do
+          [ -z "$s" ] || echo "::add-mask::$s"
+        done
+        if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "${SAME_REPO:-}" = true ] && [ "$FILL_FORK" != true ]; then
+          export GITHUB_HEAD_REF=$HEAD_REF
+        else
+          unset OMX_TRANSLATE_KEY SIGNING_KEY SIGNING_PASSPHRASE PUSH_TOKEN GITHUB_HEAD_REF
+        fi
+        git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+        remote=origin
+        if [ -n "${PUSH_TOKEN:-}" ]; then
+          remote="https://x-access-token:${PUSH_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}"
+        fi
+        exec python3 "$GITHUB_ACTION_PATH/fill.py" --gate "$GATE" --fill "$FILL_COMMAND" --languages "$LANGUAGES" \
+          --model "$MODEL" --remote "$remote" --expect-head "$EXPECT_HEAD"
