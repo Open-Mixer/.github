@@ -1,11 +1,11 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# Build the Debian build dependencies of the FreeMixer packages.
+# Build the Debian build dependencies of the OpenMixer packages.
 #
 #   build.sh <output dir> <name>...      name: a directory here holding its debian/ files
 #
-# mod-host-protocol is the FreeMixer fork of mod-host at its commit in .github/pins.txt, built by the fork's own
+# mod-host-protocol is the OpenMixer fork of mod-host at its commit in .github/pins.txt, built by the fork's own
 # debian/ (mod-host, libmod-host-protocol0, libmod-host-protocol-dev), the source the RPMs come from too; the
 # installed library is checked by actions/mod-host-protocol/checks/framing-test.sh. The others are fetched at their
 # commit in .github/pins.txt and given the debian/ directory of their name here. Each is built binary-only, linted

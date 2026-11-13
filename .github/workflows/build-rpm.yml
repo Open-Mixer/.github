@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: Build RPM (reusable)
 
-# One release path for every FreeMixer package, called by a thin workflow in the package's repository:
+# One release path for every OpenMixer package, called by a thin workflow in the package's repository:
 #
 #   on: { push: { tags: ['v*'] }, workflow_dispatch: {} }
 #   jobs:
@@ -114,7 +114,7 @@ on:
       needs-mod-host:
         type: boolean
         default: true
-        description: 'Build and install mod-host-protocol-devel from the FreeMixer fork first (docs/mod-host.md) (BuildRequires pkgconfig(mod-host-protocol))'
+        description: 'Build and install mod-host-protocol-devel from the Open-Mixer fork first (docs/mod-host.md) (BuildRequires pkgconfig(mod-host-protocol))'
       build-packages:
         type: string
         default: ''

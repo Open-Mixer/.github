@@ -103,7 +103,7 @@ def selftest():
     ifx = [
         ("author", ((nm, "Pau"), (em, "x@example.invalid"), "fix x", 1), True),
         ("committer", (("Pau", nm), ("x@example.invalid", em), "fix x", 1), True),
-        ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from FreeMixer/{cl}/a", 2), True),
+        ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from Open-Mixer/{cl}/a", 2), True),
         ("ordinary", (("Pau Aliagas", "Pau Aliagas"), ("linuxnow@gmail.com", "commits@openmixer.org"), "fix x", 1), False),
         ("github-merge", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, "Merge pull request #1 from Open-Mixer/fix/a", 2), False),
     ]

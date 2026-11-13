@@ -17,7 +17,7 @@ assert isinstance(on, dict) and "workflow_call" in on, f"{f}: not callable"
 declared = set(((on["workflow_call"] or {}).get("inputs") or {}).keys())
 used = set(re.findall(r"inputs\.([a-z0-9-]+)", text))
 assert used <= declared, f"{f}: reads undeclared inputs {sorted(used - declared)}"
-for ref in re.findall(r"uses: (FreeMixer/\.github/\S+)", text):
+for ref in re.findall(r"uses: (Open-Mixer/\.github/\S+)", text):
     assert ref.endswith("@v1"), f"{f}: {ref} is not called at v1"
 fork = ("startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != "
         "github.repository && 'ubuntu-latest'")
