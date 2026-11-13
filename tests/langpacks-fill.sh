@@ -124,6 +124,12 @@ refusal "a fork pull request" fork "fork" FILL_FORK=true
 refusal "a GitHub-hosted runner" hosted "GitHub-hosted" RUNNER_ENVIRONMENT=github-hosted
 refusal "no router key" nokey "OMX_ROUTER_KEY" OMX_TRANSLATE_KEY=
 refusal "no router address" nourl "router" OMX_TRANSLATE_URL=
+# a router nothing answers on is a transport failure, named as such with its address and error, never "refused": the
+# CI fill on a runner whose network policy did not reach the router read as a model refusal for a day
+DEAD_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+refusal "a router that cannot be reached" unreached "router not reached (http://127.0.0.1:$DEAD_PORT, " OMX_TRANSLATE_URL="http://127.0.0.1:$DEAD_PORT"
+! grep -q "refused" "$work/unreached.out"
+step $? "a router that cannot be reached is never called a refusal: $(grep -m1 'not reached' "$work/unreached.out")"
 
 # ---- sabotage: a translator that writes a person's entry, and one that skips a missing key
 cat > "$work/evil.sh" <<'EOS'
