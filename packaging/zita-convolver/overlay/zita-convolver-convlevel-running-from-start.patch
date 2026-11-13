@@ -1,0 +1,42 @@
+zita-convolver: a level is running from start (), not from when its thread is first scheduled
+
+Convlevel::start () creates a detached thread and returns; the thread sets
+_stat = ST_PROC when it first runs. A Convproc::stop_process () and
+cleanup () that come before the thread is scheduled therefore see the level
+idle, skip waiting for it and free its buffers, and the thread then runs on
+freed memory: SIGSEGV, or SIGABRT from malloc ("unaligned tcache chunk
+detected"). guitarix's gx_amp, gx_cabinet and gxmetal_head hit this in the
+lifecycle step (instantiate, activate, deactivate, free, no run between) at
+192 kHz in 128-frame blocks, the cell with the most levels and so the most
+threads: 10 of 10 runs crashed, 0 of 10 with this patch.
+
+The level is marked running before pthread_create (), so a stop sees it and
+waits; a pthread_create () that fails marks it idle again, as before the
+patch, where readout () processes the level in line. The same change is in
+the GrandOrgue project's maintained copy of zita-convolver (its commits
+4967141 and 28dac3d, "Fix Convproc::cleanup() hang when torn down right
+after start_process()").
+https://github.com/Open-Mixer/plugin-qualify/issues/29
+
+--- a/source/zita-convolver.cc
++++ b/source/zita-convolver.cc
+@@ -621,7 +621,10 @@
+     pthread_attr_setscope (&attr, PTHREAD_SCOPE_SYSTEM);
+     pthread_attr_setinheritsched (&attr, PTHREAD_EXPLICIT_SCHED);
+     pthread_attr_setstacksize (&attr, 0x10000);
+-    pthread_create (&_pthr, &attr, static_main, this);
++    // The level runs from here, not from when its thread is first scheduled: a stop () and a cleanup () that come
++    // before the thread runs must see it running and wait for it, or they free what the thread then uses.
++    _stat = ST_PROC;
++    if (pthread_create (&_pthr, &attr, static_main, this)) _stat = ST_IDLE;
+     pthread_attr_destroy (&attr);
+ }
+
+@@ -689,7 +692,6 @@
+
+ void Convlevel::main (void)
+ {
+-    _stat = ST_PROC;
+     while (true)
+     {
+ 	_trig.wait ();
