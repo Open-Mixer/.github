@@ -152,6 +152,10 @@ jobs:
   hook "a hook that is neither the stub nor the previous stub is red" red "$t/third"
   { cat "$HERE/commit-message-check/commit-msg.previous"; echo '# edited'; } > "$t/third2"
   hook "a hook that is an edited previous stub is red" red "$t/third2"
+  # the stub before it read openmixer-v1 (it read the frozen tag v1): a second previous stub, accepted for the same pass
+  hook "a hook that is the stub before openmixer-v1 is green (grace)" green "$HERE/commit-message-check/commit-msg.previous-v1"
+  { cat "$HERE/commit-message-check/commit-msg.previous-v1"; echo '# edited'; } > "$t/third3"
+  hook "a hook that is an edited stub-before-openmixer-v1 is red" red "$t/third3"
   plant "a hook that is not the stub is red" .githooks/commit-msg 'exec tools/commit-message-check.sh --msg-file "$1"'
   # sabotage: with the name and content rules gone, a planted copy passes, so the arms above are what catch it
   sed -e "s|^HERE=.*|HERE=$HERE|" -e "s/^NAMES=.*/NAMES='^\$'/" -e "s/^  '.*'\$/  '^\$NEVER'/" "${BASH_SOURCE[0]}" > "$t/sab.sh"
