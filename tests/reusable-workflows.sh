@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # The reusable workflows: each is callable (workflow_call), names every input it reads, and calls this repository's
-# actions and workflows at v1, never at a branch; the no-local-copies check proves itself. A job whose runner the
+# actions and workflows at openmixer-v1 (the release line, moved only by fast-forward from main), never at another branch or
+# a commit (a ref moved to main is red); the no-local-copies check proves itself. A job whose runner the
 # caller can choose (its runs-on or runner input, or a repository variable) falls back to a GitHub-hosted runner for a
 # pull request from a fork before any of those is read, so fork pull requests never reach a self-hosted runner.
 set -euo pipefail
@@ -17,8 +18,9 @@ assert isinstance(on, dict) and "workflow_call" in on, f"{f}: not callable"
 declared = set(((on["workflow_call"] or {}).get("inputs") or {}).keys())
 used = set(re.findall(r"inputs\.([a-z0-9-]+)", text))
 assert used <= declared, f"{f}: reads undeclared inputs {sorted(used - declared)}"
-for ref in re.findall(r"uses: (Open-Mixer/\.github/\S+)", text):
-    assert ref.endswith("@v1"), f"{f}: {ref} is not called at v1"
+refs = re.findall(r"uses: (Open-Mixer/\.github/\S+)", text)
+for ref in refs:
+    assert ref.endswith("@openmixer-v1"), f"{f}: {ref} is not called at openmixer-v1"
 fork = ("startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != "
         "github.repository && 'ubuntu-latest'")
 chosen = re.compile(r"inputs\.(runs-on|runner)\b|vars\.")
@@ -41,6 +43,11 @@ for w in public-sources-check ci-node ci-c fuzz release-c-lib release-npm build-
 done
 "$here/.github/actions/no-local-copies/check.sh" --self-test >/dev/null || { echo "FAIL no-local-copies self-test"; fail=1; }
 
+# sabotage: a call moved off the release line is caught
+sed '0,/@openmixer-v1/s//@main/' .github/workflows/ci-c.yml > "$t/ci-c-main.yml"
+cmp -s .github/workflows/ci-c.yml "$t/ci-c-main.yml" && { echo "FAIL sabotage: ci-c.yml calls nothing at openmixer-v1"; fail=1; }
+if check "$t/ci-c-main.yml" >/dev/null 2>&1; then echo "FAIL sabotage: a call at main passes"; fail=1
+else echo "ok   sabotage: a call at main is red"; fi
 # sabotage: an input read but not declared is caught
 sed 's/\${{ inputs.commands }}/${{ inputs.undeclared }}/' "$here/.github/workflows/ci-c.yml" > "$t/ci-c.yml"
 if check "$t/ci-c.yml" >/dev/null 2>&1; then echo "FAIL sabotage: an undeclared input passes"; fail=1
