@@ -431,9 +431,12 @@ def newest_judge(where, before, after, same_pass, reds, warns, notes):
     brings is RED; one that was there before is reported."""
     for k in sorted(after):
         req, dep = k
+        # a package that does not resolve names what is missing only in dnf's problem: when every name it misses is
+        # released in the same pass (an architecture a dry run built nothing for), it waits for the pass like the rest
+        missing = set(re.findall(r"nothing provides ([^\s(]+)", after[k]))
         if k in before:
             warns.append(f"{where}: already before this release: {after[k]}")
-        elif {req, dep} & set(same_pass):
+        elif {req, dep} & set(same_pass) or (missing and missing <= set(same_pass)):
             notes.append(f"{where}: until the rest of the pass is released: {after[k]}")
         else:
             reds.append(f"{where}: {after[k]}")

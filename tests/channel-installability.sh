@@ -234,6 +234,20 @@ arm_rpm_unbuilt() {
     "${args[@]}" --new-dir "$d/new" --unbuilt-arch-pass
   grep -qF 'fedora/44 aarch64: plug 0.19.1-1.fc44.aarch64 is uninstallable until the rest of the pass (plug)' "$t/out" \
     && ok 'rpm (dry run): ... naming aarch64 plug as the rest of the pass' || bad 'rpm (dry run): aarch64 not reported'
+  # the newest arm, the same dry run (openmixer 0.2.0, #161): a new noarch app pins plug at the release's version, built on
+  # x86_64 only; on aarch64 `dnf install plug-app` cannot resolve until the rest of the pass is released, which names plug
+  # only in dnf's problem, never as the package installed. With --unbuilt-arch-pass that is a note; with no plug built at
+  # all, it is red
+  mkdir -p "$d/new-app" "$d/new-app-alone"
+  cp "$d/new/"*.rpm "$d/new-app/"
+  mv "$(mka plug-app 0.19.2 noarch 'plug = 0.19.2-1.fc44')" "$d/new-app/"
+  cp "$d/new-app/plug-app-"*.rpm "$d/new-app/plug-contract-"*.rpm "$d/new-app-alone/"
+  expect 0 'until the rest of the pass is released: dnf install plug-app does not resolve' \
+    'rpm (dry run, newest): a noarch app pinning an arch package built on x86_64 only is a note on aarch64' -- \
+    rpm --channel "$d/channel" --fedora 44 --arch x86_64 --arch aarch64 --reposdir "$d/empty" --new-dir "$d/new-app" --unbuilt-arch-pass
+  expect 1 'RED rpm: fedora/44 x86_64 newest: dnf install plug-app does not resolve' \
+    'rpm (dry run, newest): ... and red where no plug of the release was built at all' -- \
+    rpm --channel "$d/channel" --fedora 44 --arch x86_64 --arch aarch64 --reposdir "$d/empty" --new-dir "$d/new-app-alone" --unbuilt-arch-pass
   # a consumer on the built architecture that the release does not rebuild is still red
   # (a channel of its own: dnf keeps what it read of a repository by its address)
   cp -a "$d/channel" "$d/channel-other"
