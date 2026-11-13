@@ -52,6 +52,7 @@ jobs:
       - run: tests/release-matrix.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/catch-up-plan.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
         run: |
@@ -73,7 +74,7 @@ jobs:
         include:
           - kind: rpm
             image: fedora:44
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
           - kind: deb
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev
@@ -111,6 +112,10 @@ jobs:
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
+
+      - name: A catch-up publishes the missing cell and rewrites no served file
+        shell: bash
+        run: tests/catch-up-publish.sh ${{ matrix.kind }}
 
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})

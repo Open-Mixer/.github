@@ -146,6 +146,10 @@ on:
         type: boolean
         default: true
         description: 'Attach the DEBs, named by Debian release, to the GitHub release of the tag'
+      catch-up:
+        type: boolean
+        default: false
+        description: 'With source-ref (or on the tag): build and publish only the cells of the set that the version, already served, lacks in the channel''s cells.tsv; nothing missing builds nothing. Refuses a version the channel does not serve, a cell some of its packages serve and others lack, and republish. The publish drops the arch-independent packages the channel serves and refuses to write any other file it holds (docs/release-operations.md, "Catching a served version up")'
       republish:
         type: boolean
         default: false
@@ -189,6 +193,7 @@ jobs:
       set: ${{ steps.matrix.outputs.set }}
       cells: ${{ steps.matrix.outputs.cells }}
       first-arch: ${{ steps.matrix.outputs.first-arch }}
+      count: ${{ steps.matrix.outputs.count }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
@@ -201,6 +206,11 @@ jobs:
           source-ref: ${{ inputs.source-ref }}
           releases: ${{ inputs.suite-matrix }}
           arches: ${{ inputs.arch-matrix }}
+          # a catch-up builds only the cells the version of the tag lacks in the channel
+          catch-up: ${{ inputs.catch-up }}
+          names: ${{ inputs.binary-names || inputs.package-name }}
+          channel: ${{ inputs.target-repo }}
+          token: ${{ secrets.PAGES_TOKEN }}
 
       # what is staged is never a release: a tag, source-ref or publish builds the release, against the real channel only;
       # a staged run publishes to the staging channel alone, the commit it runs on, of the calling repository
@@ -252,6 +262,7 @@ jobs:
           target: ${{ inputs.target-repo }}
           packages: ${{ inputs.binary-names || inputs.package-name }}
           republish: ${{ inputs.republish }}
+          catch-up: ${{ inputs.catch-up }}
           kind: deb
           # the already-served check reads the releases this run publishes into, no others
           releases: ${{ steps.matrix.outputs.releases }}
@@ -261,7 +272,8 @@ jobs:
   build:
     name: Build (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: preflight
-    if: inputs.stage != 'publish'
+    # a catch-up of a version served in every cell plans nothing: no build, no publish, and the first job said so
+    if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0'
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
@@ -371,7 +383,7 @@ jobs:
     needs: [preflight, build]
     # the publish stage takes the packages a build stage of this run left; channel-installability inside the
     # publish action refuses a release that would leave a package of the channel uninstallable
-    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) }}
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
@@ -411,7 +423,9 @@ jobs:
           requires: ${{ inputs.requires }}
           changelogs-url: ${{ inputs.base-url }}/${{ inputs.staged && 'staging/deb' || 'deb' }}/changelogs
           staging: ${{ inputs.staged }}
-          matrix-set: ${{ needs.preflight.outputs.set }}
+          # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
+          matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
+          catch-up: ${{ inputs.catch-up }}
           suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
 
       - uses: actions/upload-artifact@v4

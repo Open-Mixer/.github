@@ -66,6 +66,9 @@ inputs:
   releases:
     description: with staging, the Fedora releases (space separated) whose staging directories get metadata even when empty
     default: ''
+  catch-up:
+    description: "'true' for a catch-up run: arch-independent packages the channel serves are dropped from the publish, any other file it serves refuses the run before anything is signed, and only what received a package is indexed again (publish-tree.sh CATCH_UP)"
+    default: 'false'
   matrix-set:
     description: "'quick' or 'full': the set of the release matrix this run built, recorded for its packages in cells.tsv of the tree; empty records none"
     default: ''
@@ -88,11 +91,14 @@ runs:
         RPM_DIR: ${{ inputs.rpm-dir }}
         STAGING: ${{ inputs.staging }}
         MATRIX_SET: ${{ inputs.matrix-set }}
+        CATCH_UP: ${{ inputs.catch-up }}
         RELEASES: ${{ inputs.releases }}
       run: |
         set -o pipefail
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
+        # a catch-up, for the tree script and the lost-race rebuild alike
+        echo "CATCH_UP=$CATCH_UP" >> "$GITHUB_ENV"
         # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton
         if [ "$STAGING" = true ]; then
           { echo "RPM_TREE=staging/rpm"; echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../packaging/staging/openmixer-staging.repo"
@@ -116,7 +122,8 @@ runs:
         publish-token: ${{ inputs.publish-token }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
-        strip: ${{ inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
+        # a catch-up keeps the served metadata of every directory it places nothing into
+        strip: ${{ inputs.catch-up == 'true' && 'none' || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
 
     - name: Check the signing key is one the channel serves
       if: inputs.sign == 'true'

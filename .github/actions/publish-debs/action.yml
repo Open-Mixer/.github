@@ -68,6 +68,9 @@ inputs:
   suites:
     description: with staging, the Debian releases (space separated) whose staging index exists even when empty
     default: ''
+  catch-up:
+    description: "'true' for a catch-up run: arch-independent packages the channel serves are dropped from the publish, any other file it serves refuses the run before anything is signed, and only what received a package is indexed again (publish-tree.sh CATCH_UP)"
+    default: 'false'
   matrix-set:
     description: "'quick' or 'full': the set of the release matrix this run built, recorded for its packages in cells.tsv of the tree; empty records none"
     default: ''
@@ -90,11 +93,14 @@ runs:
         DEB_DIR: ${{ inputs.deb-dir }}
         STAGING: ${{ inputs.staging }}
         MATRIX_SET: ${{ inputs.matrix-set }}
+        CATCH_UP: ${{ inputs.catch-up }}
         SUITES: ${{ inputs.suites }}
       run: |
         set -o pipefail
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
+        # a catch-up, for the tree script and the lost-race rebuild alike
+        echo "CATCH_UP=$CATCH_UP" >> "$GITHUB_ENV"
         # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/
         if [ "$STAGING" = true ]; then
           { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
