@@ -158,6 +158,15 @@ if [ "${1:-}" = --self-test ]; then
     if ( cd "$scratch/t" && messages base..HEAD >/dev/null 2>&1 ); then echo "SABOTAGE message [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE message: red"; fi
     g reset -q --hard HEAD~1
   done
+  # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
+  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n' > "$scratch/msg-clean"
+  if ( bash "$0" --msg-file "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
+  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight'; do
+    printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
+    if ( bash "$0" --msg-file "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
+  done
+  rc=0; bash "$0" --msg-file "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" = 2 ]; then echo "SABOTAGE msg-file unreadable: red (2)"; else echo "SABOTAGE msg-file unreadable: exit $rc, not 2"; fail=1; fi
   mk; git -C "$scratch/t" add -A
   if ( EXTRA_PATHSPEC=(":(bogus)x"); check "$scratch/t" >/dev/null 2>&1 ); then echo "SABOTAGE git-grep-error: STAYED GREEN"; fail=1; else echo "SABOTAGE git-grep-error: red"; fi
   # nothing is exempt: a file that lists exemptions exempts nothing, and is itself no reason to look away

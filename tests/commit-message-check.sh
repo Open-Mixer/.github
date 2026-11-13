@@ -67,7 +67,9 @@ $G add -A; $G commit -qm one; $G tag v1
 git clone -q --bare "$tmp/o" "$tmp/o.git"
 mkdir -p "$tmp/home" "$tmp/s/r"; git -C "$tmp/s/r" init -q
 echo "clean change" > "$tmp/msg"; printf 'change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/bad"
-hook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
+# the house identity: the commit-msg mode judges who commits as well as what the message says
+HOUSE=(GIT_AUTHOR_NAME="Pau Aliagas" GIT_AUTHOR_EMAIL=linuxnow@gmail.com GIT_COMMITTER_NAME="Pau Aliagas" GIT_COMMITTER_EMAIL=commits@openmixer.org)
+hook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
 rc=0; out=$(hook "$tmp/none.git" "$tmp/msg" 2>&1) || rc=$?
 [ "$rc" = 1 ] || fail "with no checker anywhere the stub gave $rc, not 1"
 grep -q 'no commit-message checker at' <<<"$out" || fail "with no checker anywhere the stub did not say why: $out"
@@ -103,5 +105,23 @@ envhook FREEMIXER_DOTGITHUB_URL="$tmp/o.git" >/dev/null || fail "the old FREEMIX
 grep -q 'FREEMIXER_DOTGITHUB_URL is deprecated, use OPENMIXER_DOTGITHUB_URL' "$tmp/err" || fail "the old URL name was read without a notice"
 rm -rf "$tmp/home/.cache"
 envhook OPENMIXER_DOTGITHUB_URL="$tmp/o.git" FREEMIXER_DOTGITHUB_URL="$tmp/none.git" >/dev/null || fail "both URL names set: the new did not win"
+
+# the commit-msg mode judges a message before the commit exists, so a repository whose lanes push from post-commit never
+# publishes one it refuses: the message is also read by private-refs-check (no private repository, issue, machine or path),
+# and the commit's author and committer must be the house's (author Pau Aliagas <linuxnow@gmail.com>, committer email
+# commits@openmixer.org), the rule each repository's own author hook used to carry
+cd "$tmp/r"
+printf 'a change\n\nthe pins check: every declared pin still resolves\n' > "$tmp/m-clean"
+env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null || fail "a clean message from the house identity was refused"
+for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on ms''i overnight'; do
+  printf 'a change\n\n%s\n' "$line" > "$tmp/m-bad"
+  if env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>&1; then fail "a message naming [$line] passed the commit-msg mode"; fi
+done
+if env "${HOUSE[@]}" GIT_AUTHOR_NAME=Someone GIT_AUTHOR_EMAIL=someone@example.invalid "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then
+  fail "a commit authored by someone other than the house's passed the commit-msg mode"; fi
+if env "${HOUSE[@]}" GIT_COMMITTER_EMAIL=linuxnow@gmail.com "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then
+  fail "a committer email other than commits@openmixer.org passed the commit-msg mode"; fi
+rc=0; env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 1 ] && grep -q 'private' "$tmp/m-err" || fail "a refused message did not say why on stderr (rc $rc): $(cat "$tmp/m-err")"
 
 echo "commit-message-check: ok"
