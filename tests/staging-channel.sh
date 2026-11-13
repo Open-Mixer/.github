@@ -6,8 +6,8 @@
 #     staged-v prerelease. For this wave only, staged-deps stays an accepted, ignored input (a caller that passes it
 #     renders the same jobs as one that does not) and install-staged a no-op action that takes the old inputs, says
 #     it is retired and installs nothing; both go in the wave's release pass;
-#   - build-rpm.yml and build-deb.yml, rendered: a staged run builds the matrix of a release (every Fedora release
-#     and Debian suite on both architectures, eight build jobs and eight install checks between the two), with the
+#   - build-rpm.yml and build-deb.yml, rendered: a staged run builds the cells the first job names (the quick set
+#     unless told full: tests/release-matrix.sh), never narrowed by staged anywhere else, with the
 #     staging channel added, and publishes through publish-rpms / publish-debs with staging on, into the live publish group; a tag release and a
 #     dry run publish into rpm/ and deb/ with the staging channel never added; staging alone adds the channel to the
 #     build and publishes nothing; the install check of a staged run adds the staging channel, a release's does not;
@@ -120,14 +120,11 @@ def check(path, kind):
     dry = dict(caller)
     ok_build = O(build=O(result="success"))
 
-    # the build: the matrix of a release, with the staging channel added before the build when staged or staging
+    # the build: the cells the first job names (the quick set or the full matrix: tests/release-matrix.sh renders
+    # both), with the staging channel added before the build when staged or staging
     build = jobs["build"]
     m = build["strategy"]["matrix"]
-    first = "fedora" if kind == "rpm" else "suite"
-    want = (["44", "45"], ["x86_64", "aarch64"]) if kind == "rpm" else (["bookworm", "trixie"], ["amd64", "arm64"])
-    assert (ev(m[first], tag), ev(m["arch"], tag)) == want, f"{path}: the release matrix is not {want}"
-    got = (ev(m[first], staged), ev(m["arch"], staged))
-    assert got == want, f"{path}: a staged run builds {len(got[0]) * len(got[1])} of the {len(want[0]) * len(want[1])} jobs of a release: {got}"
+    assert m == {"include": "${{ fromJSON(needs.preflight.outputs.cells) }}"}, f"{path}: the build matrix is {m}, not the cells of the first job"
     # what ships once per release (source and noarch packages) ships from the same architecture, staged or not
     text = open(path).read()
     assert "inputs.staged &&" not in "".join(l for l in text.splitlines(True) if "matrix" in l.lower() or "FIRST_ARCH" in l), \
@@ -174,10 +171,8 @@ def check(path, kind):
     assert ev(v["if"], tag, needs=ok_pub, ref_type="tag"), f"{path}: no install check after a release"
     assert not ev(v["if"], dry, needs=ok_pub), f"{path}: an install check on a dry run"
     assert not ev(v["if"], dict(staged, **{"verify-install": False}), needs=ok_pub), f"{path}: verify-install false ignored"
-    vm = v["strategy"]["matrix"]
-    got = (ev(vm[first], staged), ev(vm["arch"], staged))
-    assert got == want, f"{path}: a staged run checks the install on {len(got[0]) * len(got[1])} of the {len(want[0]) * len(want[1])} targets of a release: {got}"
-    assert (ev(vm[first], tag, ref_type="tag"), ev(vm["arch"], tag, ref_type="tag")) == want, f"{path}: the release install check is not on {want}"
+    # the install check runs for the built cells, no others
+    assert v["strategy"]["matrix"] == m, f"{path}: the install check has a matrix of its own: {v['strategy']['matrix']}"
     a = [x for x in v["steps"] if "/actions/add-openmixer@" in x.get("uses", "")]
     assert len(a) == 1, f"{path}: the install check adds the channel once"
     assert truthy(ev(a[0]["with"].get("staging", "false"), staged)), f"{path}: the staged install check does not add staging"

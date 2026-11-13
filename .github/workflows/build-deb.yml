@@ -16,8 +16,9 @@ name: Build DEB (reusable)
 # target Pages repository. Anything that is not a tag is a dry run: it builds, lints and assembles an UNSIGNED
 # tree as an artifact.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the matrix of a release (every suite of
-# suite-matrix on every architecture of arch-matrix), against the staging channel, and publishes it to the staging channel of the release wave:
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the quick set (trixie on arm64) or, told
+# full, every suite of suite-matrix on every architecture of arch-matrix, against the staging channel, and
+# publishes it to the staging channel of the release wave:
 # staging/deb of the same target repository, signed with the same key, by the same tree script and channel-push as a
 # release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
 # priority than the real one (staging: true here, add-openmixer staging: true elsewhere) and resolve to the staged
@@ -25,6 +26,13 @@ name: Build DEB (reusable)
 # the whole set there once, from the v<version> tags, and the purge-staging workflow then empties the staging channel.
 # staging: true on a run that is not staged (a dry run on a branch) builds against the staging channel and publishes
 # nothing. Neither runs on a tag or with source-ref, and a staged run builds the calling repository's own commit.
+#
+# WHICH CELLS A RUN BUILDS (docs/release-operations.md, "The quick set and the full matrix"): the matrix input,
+# quick or full, when the caller passes it. Without it a release (a tag, source-ref) builds what the organisation
+# variable OMX_RELEASE_MATRIX says, and the FULL matrix when it is unset: a caller that changes nothing publishes
+# every cell on a tag, as before, unless a release wave is open. A staged run and a workflow_dispatch build what the
+# variable says and the QUICK set when it is unset; a pull request always builds the full matrix. The install checks
+# run for the built cells, no others.
 #
 # The packaging is the debian/ directory of the calling repository; its changelog version is the version and
 # must equal the packaging/*.spec Version when there is one, and the tag must be v<version>. What Debian does
@@ -73,6 +81,10 @@ on:
         type: boolean
         default: false
         description: 'With staged or staging: a staging channel never published (its index and key both 404) is skipped with a notice instead of failing the build. Only for the first layer of a wave, whose build runs before anything was staged.'
+      matrix:
+        type: string
+        default: ''
+        description: "'quick' builds the quick set alone (fc44 and fc45 x86_64 rpm, trixie arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -165,7 +177,23 @@ jobs:
     name: Check the release can publish
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
+    outputs:
+      set: ${{ steps.matrix.outputs.set }}
+      cells: ${{ steps.matrix.outputs.cells }}
+      first-arch: ${{ steps.matrix.outputs.first-arch }}
     steps:
+      # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
+      - id: matrix
+        uses: Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1
+        with:
+          kind: deb
+          matrix: ${{ inputs.matrix }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          staged: ${{ inputs.staged }}
+          source-ref: ${{ inputs.source-ref }}
+          releases: ${{ inputs.suite-matrix }}
+          arches: ${{ inputs.arch-matrix }}
+
       # what is staged is never a release: a tag, source-ref or publish builds the release, against the real channel only;
       # a staged run publishes to the staging channel alone, the commit it runs on, of the calling repository
       - name: A staged run publishes to staging only, and staging never builds a release
@@ -211,7 +239,8 @@ jobs:
           packages: ${{ inputs.binary-names || inputs.package-name }}
           republish: ${{ inputs.republish }}
           kind: deb
-          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          # the already-served check reads the releases this run publishes into, no others
+          releases: ${{ steps.matrix.outputs.releases }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
@@ -231,8 +260,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
@@ -454,7 +482,7 @@ jobs:
   # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
-    needs: [publish, release, live]
+    needs: [preflight, publish, release, live]
     if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
@@ -463,8 +491,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     steps:
       # the real channel alone for a release; with the staging channel for a staged run
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1

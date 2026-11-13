@@ -45,6 +45,7 @@ jobs:
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
+      - run: tests/release-matrix.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/bookworm-asan.sh
