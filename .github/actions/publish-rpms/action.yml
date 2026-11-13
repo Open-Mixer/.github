@@ -148,8 +148,10 @@ runs:
       run: |
         set -o pipefail
         # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
-        # release builds every architecture), and every architecture is still checked
+        # release builds every architecture), and every architecture is still checked. A release of the quick set is
+        # the same on the cells it does not build: the wave's full release builds them (tests/quick-unbuilt-pass.sh)
         if [ "$SIGN" = true ]; then channel=$PWD/build/channel/$RPM_TREE; else channel=$SERVED; export UNBUILT_ARCH_PASS=true; fi
+        if [ "${MATRIX_SET:-}" = quick ]; then export UNBUILT_ARCH_PASS=true; fi
         "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree

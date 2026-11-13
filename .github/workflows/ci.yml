@@ -42,6 +42,7 @@ jobs:
       - run: tests/channel-keep-list.sh
       - run: tests/pinned-keys.sh
       - run: tests/install-clean-retry.sh
+      - run: tests/quick-unbuilt-pass.sh
       - run: tests/reusable-workflows.sh
       - run: tests/runner-selection.sh
       - run: tests/release-checks.sh
