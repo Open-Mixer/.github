@@ -9,7 +9,7 @@ name: ci
 # (tests/pinned-keys.sh). The changelog generator (from git), and
 # what the channel publish adds from them: an updateinfo.xml for dnf and a Changelogs URL for apt
 # (docs/packaging-changelog.md). The language packs of an owner and the openmixer meta packs build and install, and a
-# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
+# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md); the fill of a catalog's missing entries through a fixture router, and its refusals (tests/langpacks-fill.sh). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
 # taken out again fails its check, and the RPMs and DEBs pass the installed-library checks and upgrade the
 # channel's earlier builds (docs/mod-host.md).
 
@@ -239,6 +239,23 @@ jobs:
       - run: ${{ matrix.tools }}
       - uses: actions/checkout@v4
       - run: tests/channel-installability.sh ${{ matrix.arm }}
+
+  langpacks-fill:
+    name: language packs fill (fixture router)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:44
+    steps:
+      - name: The tools
+        run: dnf install -y --setopt=install_weak_deps=False git nodejs python3 gnupg2 diffutils findutils
+      - uses: actions/checkout@v4
+      - name: omx-contract from the channel (3.16.0, translate and the language list)
+        uses: ./.github/actions/add-openmixer
+        with:
+          staging: 'true'
+      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract < 4'
+      - run: tests/langpacks-fill.sh
 
   changelog:
     name: changelog generator from git
