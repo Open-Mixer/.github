@@ -50,6 +50,7 @@ jobs:
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
       - run: tests/release-matrix.sh
+      - run: tests/check-matrix.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
