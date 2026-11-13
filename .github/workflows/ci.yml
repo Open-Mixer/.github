@@ -51,6 +51,7 @@ jobs:
       - run: tests/release-matrix.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/catch-up-plan.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
         run: |
@@ -110,6 +111,10 @@ jobs:
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
+
+      - name: A catch-up publishes the missing cell and rewrites no served file
+        shell: bash
+        run: tests/catch-up-publish.sh ${{ matrix.kind }}
 
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})

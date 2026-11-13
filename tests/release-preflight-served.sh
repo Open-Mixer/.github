@@ -9,7 +9,10 @@
 # same the other way round. Per release: an rpm release for fc45 passes over the same version served for fc44 only and
 # is refused once fc45 holds it, a release for fc44 and fc45 is refused by the fc44 file, a deb release for bookworm
 # passes over the trixie deb and one for trixie is refused; and with the per-release filter taken out of
-# already-served.sh, the fc45 arm goes red.
+# already-served.sh, the fc45 arm goes red. A catch-up (catch-up: true) is not refused by the version it catches up: its
+# plan holds only cells the channel lacks and its publish refuses to write any file the channel holds; catch-up with
+# republish is refused, since one never rewrites a served file and the other does; a dry-run catch-up never reads the
+# tree.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 act=$here/.github/actions/release-preflight
@@ -47,7 +50,7 @@ J
 export TREE_DIR=$tmp
 run() { # run <publish> <ref-type> <tag> <packages> [republish] [kind] [releases]
   PATH=$tmp/bin:$PATH PUBLISH=$1 TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/tags/$3 \
-    REF_TYPE=$2 REQUIRE_TAG=true TAG=$3 PACKAGES=$4 REPUBLISH=${5:-false} KIND=${6:-} RELEASES=${7:-} \
+    REF_TYPE=$2 REQUIRE_TAG=true TAG=$3 PACKAGES=$4 REPUBLISH=${5:-false} KIND=${6:-} RELEASES=${7:-} CATCH_UP=${CATCH_UP:-false} \
     GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1
 }
 run true tag v1.2.4 foo || { cat "$tmp/out"; fail "a new version was refused"; }
@@ -75,6 +78,12 @@ run true tag v1.2.3 foo false rpm '44 45' && fail "a release for fc44 and fc45 p
 grep -q 'rpm/fedora/44/x86_64/foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || fail "the fc44+fc45 refusal does not name the fc44 rpm"
 run true tag v2.0.0 bar false deb bookworm || { cat "$tmp/out"; fail "a bookworm release was refused by the trixie deb"; }
 run true tag v2.0.0 bar false deb 'bookworm trixie' && fail "a release for trixie passed over the trixie deb"
+CATCH_UP=true run true tag v1.2.3 foo false rpm 44 || { cat "$tmp/out"; fail "a catch-up was refused by the version it catches up"; }
+grep -q 'catch-up of v1.2.3' "$tmp/out" || { cat "$tmp/out"; fail "a catch-up does not say why the already-served check is not run"; }
+CATCH_UP=true run true tag v1.2.3 foo true rpm 44 && fail "catch-up with republish passed"
+grep -q 'catch-up and republish' "$tmp/out" || { cat "$tmp/out"; fail "catch-up with republish is not refused by name"; }
+: > "$tmp/asked"; CATCH_UP=true run false tag v1.2.3 foo || fail "a dry-run catch-up was refused"
+! grep -q git/trees "$tmp/asked" || fail "a dry-run catch-up read the tree"
 # sabotage: already-served.sh without the per-release filter refuses the fc45 release again
 mkdir -p "$tmp/sab"
 sed '/^  if \[ -n "\${RELEASES:-}" \]; then$/,/^  fi$/d' "$act/already-served.sh" > "$tmp/sab/already-served.sh"
@@ -83,4 +92,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 22 arms"
+echo "ok   release-preflight-served: 26 arms"
