@@ -67,13 +67,13 @@ $G add -A; $G commit -qm one; $G tag v1
 git clone -q --bare "$tmp/o" "$tmp/o.git"
 mkdir -p "$tmp/home" "$tmp/s/r"; git -C "$tmp/s/r" init -q
 echo "clean change" > "$tmp/msg"; printf 'change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/bad"
-hook() { (cd "$tmp/s/r" && env -u FREEMIXER_DOTGITHUB HOME=$tmp/home FREEMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
+hook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
 rc=0; out=$(hook "$tmp/none.git" "$tmp/msg" 2>&1) || rc=$?
 [ "$rc" = 1 ] || fail "with no checker anywhere the stub gave $rc, not 1"
 grep -q 'no commit-message checker at' <<<"$out" || fail "with no checker anywhere the stub did not say why: $out"
-[ ! -e "$tmp/home/.cache/omx/freemixer-dotgithub" ] || fail "a failed clone left a cache behind"
+[ ! -e "$tmp/home/.cache/omx/openmixer-dotgithub" ] || fail "a failed clone left a cache behind"
 hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the stub did not clone v1 and pass a clean message"
-cache=$tmp/home/.cache/omx/freemixer-dotgithub
+cache=$tmp/home/.cache/omx/openmixer-dotgithub
 [ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse v1)" ] || fail "the first use did not clone v1"
 if hook "$tmp/o.git" "$tmp/bad" >/dev/null 2>&1; then fail "the stub passed an attributed message"; fi
 touch "$tmp/o/moved"; $G add -A; $G commit -qm two; $G tag -f v1 >/dev/null; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/tags/v1
@@ -83,5 +83,25 @@ hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the refreshed stub refused
 mv "$tmp/o.git" "$tmp/o.away"; touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
 rc=0; hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>"$tmp/err" || rc=$?
 [ "$rc" = 0 ] && grep -q 'could not fetch v1' "$tmp/err" || fail "an unreachable remote did not fall back to the cached checker and say so (rc $rc)"
+
+# the env var moved to the openmixer name; for one transitional pass the stub also reads the old FREEMIXER_ names, the
+# new name winning, the old one read with a one-line notice (the old names are removed in a later pass)
+mv "$tmp/o.away" "$tmp/o.git"
+for w in new old; do mkdir -p "$tmp/dg$w/.github/actions/commit-message-check"
+  printf '#!/bin/sh\necho "checker=%s"\n' "$w" > "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"
+  chmod +x "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"; done
+envhook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u OPENMIXER_DOTGITHUB_URL -u FREEMIXER_DOTGITHUB_URL HOME=$tmp/home "$@" sh "$stub" "$tmp/msg" 2>"$tmp/err"); }
+out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew") || fail "the new OPENMIXER_DOTGITHUB was not read"
+[ "$out" = "checker=new" ] && [ ! -s "$tmp/err" ] || fail "the new name gave '$out' / '$(cat "$tmp/err")'"
+out=$(envhook FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "the old FREEMIXER_DOTGITHUB was not read"
+[ "$out" = "checker=old" ] || fail "the old name gave '$out'"
+grep -q 'FREEMIXER_DOTGITHUB is deprecated, use OPENMIXER_DOTGITHUB' "$tmp/err" || fail "the old name was read without a notice"
+out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew" FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "both names set: stub failed"
+[ "$out" = "checker=new" ] || fail "both names set: the new did not win ('$out')"
+rm -rf "$tmp/home/.cache"
+envhook FREEMIXER_DOTGITHUB_URL="$tmp/o.git" >/dev/null || fail "the old FREEMIXER_DOTGITHUB_URL was not read"
+grep -q 'FREEMIXER_DOTGITHUB_URL is deprecated, use OPENMIXER_DOTGITHUB_URL' "$tmp/err" || fail "the old URL name was read without a notice"
+rm -rf "$tmp/home/.cache"
+envhook OPENMIXER_DOTGITHUB_URL="$tmp/o.git" FREEMIXER_DOTGITHUB_URL="$tmp/none.git" >/dev/null || fail "both URL names set: the new did not win"
 
 echo "commit-message-check: ok"
