@@ -129,6 +129,11 @@ jobs:
         shell: bash
         run: tests/arch-all-served-pin.sh
 
+      - name: A noarch package pinned by its source is never published ahead of an architecture the run did not build
+        if: matrix.kind == 'rpm'
+        shell: bash
+        run: tests/noarch-pin.sh
+
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
     runs-on: ubuntu-latest

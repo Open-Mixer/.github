@@ -462,9 +462,18 @@ left behind. The pinners are those of the run and also those the suite already s
 the same source whose `Depends` holds the all package's current version exactly (read from the pulled tree's `.deb`
 files) is left behind on every architecture the run builds no such package for, so an all package published alone is
 refused too (Open-Mixer/.github#61, `tests/arch-all-served-pin.sh`). Build them too (the full matrix, or a quick set that covers them). A catch-up is never refused by it: it
-drops the served `all` package, so the missing architecture of such a release is filled as above. Rpm needs no such
-rule: dnf takes an older `noarch` build to meet an exact dependency. `tests/arch-all-pin.sh` reproduces the case on a
-fixture channel, with the passing arms (every architecture built, an older `all`, the catch-up) and a sabotage.
+drops the served `all` package, so the missing architecture of such a release is filled as above. The rpm
+publish has the same refusal for a `noarch` package (Open-Mixer/.github#62; omx-clap-core 0.32.4 on fc44, where
+aarch64 serves 0.32.3 binaries that require `omx-clap-core-contract = 0.32.3-1.fc44` and the quick set built x86_64
+alone): it is judged against the Fedora release (`fedora/<release>/noarch`), the pin is `Requires: name =
+%{version}-%{release}` of a package of the same source rpm in the run, and the refusal names the `noarch` package, the
+release, the pinning package and the architectures built and left behind, and ends `nothing was placed or signed`.
+dnf itself still meets the exact pin with the older `noarch` build (measured on fedora:44, dnf5, aarch64 view of a
+tree holding 0.32.3 and 0.32.4 of the contract: it installs omx-clap-core 0.32.3 with contract 0.32.3), so the
+refusal does not guard against an uninstallable binary: it keeps the channel's newest `noarch` build from being
+one no served architecture's binary matches, which the release gate's newest-only check reads as red. `tests/arch-all-pin.sh`
+(deb), `tests/arch-all-served-pin.sh` (deb, served pinners) and `tests/noarch-pin.sh` (rpm) reproduce the case on a fixture channel, with the passing arms (every
+architecture built, an older package, the catch-up, a package nothing pins exactly) and a sabotage.
 
 ### Tests
 
