@@ -63,7 +63,10 @@ It runs before anything is signed: inside `publish-debs` and `publish-rpms` (on 
 channel in a dry run), and in `release-c-lib.yml` between the build of both kinds (`stage: build`) and the publish
 of either (`stage: publish`). A package released by another repository in the same pass is named in `same-pass`; a
 breakage it causes or suffers is then reported, not red, and its own release is checked when it publishes. A package
-already uninstallable before the release is reported as a warning. A staged publish (`staging: true`) lands in the staging channel, which no client installs from by default, and is not checked. Exit 2 means the measurement could not be taken,
+already uninstallable before the release is reported as a warning. An architecture the run built no binary for (a
+dry run, or a release of the quick set on the cells outside it) takes the binaries built on another architecture as
+released in the same pass (`--unbuilt-arch-pass`): the full release builds them; the architectures the run built
+are judged strictly (`tests/quick-unbuilt-pass.sh`). A staged publish (`staging: true`) lands in the staging channel, which no client installs from by default, and is not checked. Exit 2 means the measurement could not be taken,
 and is not a pass.
 
 `tests/channel-installability.sh ceiling|deb|rpm` proves each arm on a throwaway channel, offline. To check a
