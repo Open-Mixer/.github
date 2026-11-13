@@ -34,6 +34,8 @@
 #                   SKELETON_ARCHES, default "amd64 arm64"): a machine that adds the staging channel must find an
 #                   index for its release, never a 404
 #   EMPTY_OK        'true' lets <deb dir> hold no package (the purge, which only regenerates the indexes)
+#   MATRIX_SET      quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty
+#                   records none
 #   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
 #                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
 #                   beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -205,3 +207,7 @@ if [ -n "$key" ]; then
     # shellcheck disable=SC2086 # cosign is one key id or empty
     "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$tree/openmixer.asc" "$key" $cosign
 fi
+
+# which cells every package and version of the tree has, and the set (quick or full) this run published: the channel
+# page and a final release's dependency check read it (release-matrix/cells.sh)
+"$(dirname "$(readlink -f "$0")")/../release-matrix/cells.sh" deb "$tree" "$src"

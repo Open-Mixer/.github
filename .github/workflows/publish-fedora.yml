@@ -156,6 +156,8 @@ jobs:
       channel-deps: ${{ needs.resolve.outputs.channel-deps == 'true' }}
       arch-matrix: ${{ needs.resolve.outputs.arch-matrix }}
       fedora-versions: ${{ needs.resolve.outputs.fedora-versions }}
+      # a Fedora release is filled whole, whatever a release wave is building meanwhile
+      matrix: full
       source-repository: ${{ inputs.repository }}
       source-ref: ${{ inputs.tag }}
       source-sha: ${{ needs.resolve.outputs.commit }}

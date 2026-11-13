@@ -23,6 +23,7 @@
 #   SKELETON    Fedora releases, space separated, whose fedora/<release>/ directories get metadata even with nothing in
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
+#   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -160,3 +161,7 @@ if [ -n "$key" ]; then
     "$here/../import-gpg-key/channel-keys.sh" serve "$tree/RPM-GPG-KEY-openmixer" "$key"
     install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
 fi
+
+# which cells every package and version of the tree has, and the set (quick or full) this run published: the channel
+# page and a final release's dependency check read it (release-matrix/cells.sh)
+"$here/../release-matrix/cells.sh" rpm "$tree" "$src"

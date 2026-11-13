@@ -158,8 +158,8 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the matrix of a release (every Fedora release and Debian suite, on both
-  architectures) against the staging channel,
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc44 and fc45 on x86_64, trixie on arm64), or the whole
+  matrix when told full ("The quick set and the full matrix" below), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
   a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and
@@ -190,6 +190,8 @@ holds builds of more than one commit of that version, the `commit`.
 1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
    architecture of the matrix, with its source package, and must cover every release the channel root serves the
    package for. The commit must be on the default branch, and `v<version>` must be free or already on that commit.
+   A staged build of the quick set does not hold every cell, so it is refused here by name: a version is promoted
+   from a staged run of the full matrix, or released from its tag.
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
    the signed staging index of its suite. Nothing is signed by a promotion.
 3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
@@ -229,6 +231,77 @@ any other status, or an index whose signature does not verify still fails the st
 After a purge the empty index is served, so the channel is added and loaded as usual. Each job refuses a checkout changed outside `staging/<kind>`, so `rpm/`, `deb/`
 and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
 pulled copy and pushes nothing.
+
+## The quick set and the full matrix
+
+A release builds eight cells: Fedora 44 and 45 on x86_64 and aarch64, Debian bookworm and trixie on amd64 and arm64.
+While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
+set** instead:
+
+| kind | cells |
+|------|-------|
+| rpm  | fc44 x86_64, fc45 x86_64 |
+| deb  | trixie arm64 |
+
+The set is written once, in `.github/actions/release-matrix/quick.txt`. `build-rpm.yml` and `build-deb.yml` ask the
+`release-matrix` action in their first job, and the build jobs and the install checks both run for the cells it
+names, no others. The run says which set it builds, and why, in a notice.
+
+### Which set a run builds
+
+| run | `matrix` input | `OMX_RELEASE_MATRIX` unset | `quick` | `full` |
+|-----|----------------|----------------------------|---------|--------|
+| any | `quick` or `full` | the input | the input | the input |
+| a tag, or `source-ref` | empty | **full** | quick | full |
+| `staged: true` | empty | **quick** | quick | full |
+| `workflow_dispatch`, not a tag | empty | **quick** | quick | full |
+| a pull request, a push to a branch | empty | full | full | full |
+
+- **A caller that changes nothing** passes no `matrix`. Its tag push builds the full matrix, as it always did,
+  unless the organisation variable `OMX_RELEASE_MATRIX` is `quick`. The default is full on purpose: a tag pushed by
+  hand with no wave open must never publish three cells of eight because nobody said otherwise.
+- **`OMX_RELEASE_MATRIX`** is the one thing the release chain sets: `quick` when it opens a wave, `full` (or
+  removed) before the final release of each repository. It is an organisation variable because a tag push carries no
+  inputs, and the callers' workflow files stay as they are.
+- **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
+  `publish-fedora.yml` always passes `full`: a new Fedora release is filled whole.
+- The quick set is cut down to the caller's own matrix and never adds to it. A library built for x86_64 alone has no
+  trixie arm64 cell: its deb half builds its own full matrix and says so.
+
+### What the channel records
+
+The tree scripts write `cells.tsv` at the top of each tree (`rpm/cells.tsv`, `deb/cells.tsv`, and the same under
+`staging/`), one line per package and version, tab separated:
+
+```
+# package	version	set	cells
+omx-contract-devel	3.13.0	full	fc44/aarch64 fc44/x86_64 fc45/aarch64 fc45/x86_64
+omx-contract-devel	3.14.0	quick	fc44/x86_64 fc45/x86_64
+```
+
+The cells are read from the files in the tree at every publish. The set is that of the run that published the
+version; `-` marks a version published before sets were recorded. The file is page data, not signed, and nothing
+installs from it: the channel page reads it to show which cells a version has.
+
+### The final release
+
+A version the channel has for the quick set alone is not a release: five cells cannot install it. Two things hold
+the line.
+
+- A release of the full matrix reads `cells.tsv` after its build has installed its dependencies, in every build job,
+  and **refuses** when one of them is a version marked `quick`, naming it and its cells. The dependency is released
+  for the full matrix first. A channel that serves no `cells.tsv` yet records no quick version and the check says so;
+  a channel that cannot be read fails the run.
+- A quick version becomes a full one by going out again for the full matrix: a new tag, or the same tag run again
+  with `republish: true`, which keeps the files already published and adds the missing cells. Its line in `cells.tsv`
+  then reads `full`.
+
+The check sees what the build installed, so it covers build dependencies and whatever they pull in. A package that
+is only a run-time dependency, never installed by the build, is not seen by it; the install check of the release is
+what meets it.
+
+`tests/release-matrix.sh` renders every row of the table above from the workflows as written, and runs `cells.sh`
+and `quick-deps.sh` on trees of its own.
 
 ### Tests
 

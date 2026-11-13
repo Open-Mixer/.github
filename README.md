@@ -12,6 +12,10 @@ package's `packaging/*.spec`, and the RPMs are built for x86_64 and aarch64, sig
 `rpm/` tree of the organisation's Pages repository and attached to the GitHub release. Without a tag
 the same workflow is a dry run that publishes nothing.
 
+While a release wave is open a run can build the quick set (fc44 and fc45 x86_64, trixie arm64) instead of the whole
+matrix; a tag builds the whole matrix unless the wave says otherwise. `docs/release-operations.md`, "The quick set
+and the full matrix", has the rule.
+
 ## Adding the repository
 
 A machine adds the channel by installing `openmixer-release` (`packaging/openmixer-release`, released by
