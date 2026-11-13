@@ -5,12 +5,16 @@
 #
 # An OpenMixer repository runs the shared checks from Open-Mixer/.github and keeps no copy of them: no commit message
 # checker, no pattern list, no private-refs engine, no SPDX check, no allow list (the engine reads none, and one left
-# lying in a tree is refused), and a commit-msg hook that is the shared stub byte for byte: a missing hook is as red as
+# lying in a tree is refused), and a commit-msg hook that is the shared stub byte for byte (or, for one pass, the previous stub: commit-msg.previous): a missing hook is as red as
 # a different one. A copy is found by its name and by its content, so a renamed copy is red too. A release workflow
 # is judged here as well (release-order.py): a DEB job skips no gate the RPM job waits for.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STUB=$HERE/commit-message-check/commit-msg
+# GRACE: the stub as it was before the OPENMIXER_DOTGITHUB change, held as one committed file (never re-derived from
+# history at run time). A hook equal to it is accepted as well as one equal to the current stub. The grace ends in the
+# old-names removal pass: delete commit-msg.previous and its use below.
+PREVIOUS_STUB=$HERE/commit-message-check/commit-msg.previous
 SIGNS=(
   'commit-message-check.sh: fail when a commit message'
   'private-refs-check.sh: a public repository'
@@ -38,7 +42,7 @@ check() { # <root>
   done
   if [ ! -e "$root/.githooks/commit-msg" ]; then
     echo "no-local-copies: .githooks/commit-msg is missing (it is the shared stub, .github/actions/commit-message-check/commit-msg)" >&2; bad=1
-  elif ! cmp -s "$root/.githooks/commit-msg" "$STUB"; then
+  elif ! cmp -s "$root/.githooks/commit-msg" "$STUB" && ! cmp -s "$root/.githooks/commit-msg" "$PREVIOUS_STUB"; then
     echo "no-local-copies: .githooks/commit-msg is not the shared stub (.github/actions/commit-message-check/commit-msg)" >&2; bad=1
   fi
   local wf
@@ -153,6 +157,11 @@ jobs:
   sed -e "s|^HERE=.*|HERE=$HERE|" -e "s/^NAMES=.*/NAMES='^\$'/" -e "s/^  '.*'\$/  '^\$NEVER'/" "${BASH_SOURCE[0]}" > "$t/sab.sh"
   rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/tools" "$t/s/.githooks"; cp "$STUB" "$t/s/.githooks/commit-msg"; echo '{"markers": []}' > "$t/s/tools/commit-message-patterns.json"; git -C "$t/s" add -A
   if (cd "$HERE/no-local-copies" && bash "$t/sab.sh" "$t/s" >/dev/null 2>&1); then echo "ok   sabotage: without its rules the check passes a copy"; else echo "FAIL sabotage: the rules are not what catches a copy"; fail=1; fi
+  # sabotage: with the previous-stub acceptance gone, the previous stub is red, so the grace arm is what lets it pass
+  sed -e "s|^HERE=.*|HERE=$HERE|" -e 's| \&\& ! cmp -s "\$root/.githooks/commit-msg" "\$PREVIOUS_STUB"||' "${BASH_SOURCE[0]}" > "$t/sab3.sh"
+  cmp -s "$t/sab3.sh" "${BASH_SOURCE[0]}" && { echo "FAIL sabotage: no previous-stub acceptance to drop"; fail=1; }
+  rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks"; cp "$HERE/commit-message-check/commit-msg.previous" "$t/s/.githooks/commit-msg"; git -C "$t/s" add -A
+  if (cd "$HERE/no-local-copies" && bash "$t/sab3.sh" "$t/s" >/dev/null 2>&1); then echo "FAIL sabotage: the grace is not what passes the previous stub"; fail=1; else echo "ok   sabotage: without the grace the previous stub is red"; fi
   sed -e "s|^HERE=.*|HERE=$HERE|" -e 's|^  wf=\$(grep.*|  wf=|' "${BASH_SOURCE[0]}" > "$t/sab2.sh"
   rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks" "$t/s/.github/workflows"; cp "$STUB" "$t/s/.githooks/commit-msg"; printf '%s\n' "$REL_CANCELLED" > "$t/s/.github/workflows/release.yml"; git -C "$t/s" add -A
   if (cd "$HERE/no-local-copies" && bash "$t/sab2.sh" "$t/s" >/dev/null 2>&1); then echo "ok   sabotage: without the release-order rule a deb after a red rpm passes"; else echo "FAIL sabotage: the release-order rule is not what catches it"; fail=1; fi
