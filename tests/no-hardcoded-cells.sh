@@ -4,7 +4,8 @@
 # No workflow writes its own cell list (ruling D25, Open-Mixer/.github#59), offline. Every check or build matrix takes
 # its cells from release-matrix (a build, a publish) or check-matrix (a check), which read quick.txt, the one list.
 # Proves, over every file of .github/workflows:
-#   A. a literal cell (debian:<suite>, fedora:<n>, fc<n>, a bare Debian suite) is one the quick set builds; bookworm
+#   A. a literal cell (debian:<suite>, fedora:<n>, fc<n>, a bare Debian suite) is one the quick set builds, except as the
+#      releases / arches a plan step is handed (the whole matrix, declared once); bookworm
 #      written into a workflow is red, because while the wave is quick nothing may build or check it;
 #   B. a strategy.matrix dimension (suite, fedora, arch, image, include rows naming an image) is never a literal list:
 #      it is fromJSON of a plan job's output;
@@ -50,7 +51,7 @@ ALLOW = [
     ("build-rpm.yml", r"default: '\[\"44\", \"45\"\]'", "declares the caller's whole Fedora releases, fed to release-matrix"),
     ("ci.yml", r"tests/bookworm-asan\.sh", "the name of a test script of this repository, not a cell"),
     ("publish-fedora.yml", r"\[\"45\"\]", "the Fedora releases the dispatcher asks for: the caller's whole matrix, passed to build-rpm.yml"),
-    ("promote-staged.yml", r"default: '\[\"(x86_64|bookworm|amd64|44)\"", "declares the caller's whole matrix, fed to check-matrix"),
+    ("promote-staged.yml", r"default: '\[\"(x86_64|bookworm|amd64|44)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
     ("purge-staging.yml", r"default: '\[\"(bookworm|44)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
     ("publish-freereac.yml", r"deb_suites='\[\"(bookworm|trixie)\"", "each repository's own whole matrix, passed to build-deb.yml, which runs release-matrix"),
     ("publish-fedora.yml", r"arm='\[\"x86_64\"", "each repository's own whole matrix, passed to build-rpm.yml, which runs release-matrix"),
@@ -93,19 +94,20 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
         code = re.sub(r"\s#\s.*$", "", raw)
         if allowed(f, code):
             continue
-        for m in suite_re.finditer(code):
-            if m.group(1) not in quick_deb:
-                errs.append(f"{f}:{n}: A: '{m.group(1)}' is written into the workflow and the quick set does not build it: {s}")
-        for m in img_re.finditer(code):
-            k, v = m.groups()
-            if v.isdigit() or v in ("trixie", "bookworm", "bullseye", "forky"):
-                if v not in (quick_rpm if k == "fedora" else quick_deb):
-                    errs.append(f"{f}:{n}: A: image {k}:{v} is written into the workflow and the quick set does not build it: {s}")
-        for m in fc_re.finditer(code):
-            if m.group(1) not in quick_rpm:
-                errs.append(f"{f}:{n}: A: fc{m.group(1)} is written into the workflow and the quick set does not build it: {s}")
         key = re.match(r"\s*([\w-]+):", code)
         key = key.group(1) if key else ""
+        if key not in plan_keys:  # the whole matrix a plan step is handed is the one place a cell is written
+            for m in suite_re.finditer(code):
+                if m.group(1) not in quick_deb:
+                    errs.append(f"{f}:{n}: A: '{m.group(1)}' is written into the workflow and the quick set does not build it: {s}")
+            for m in img_re.finditer(code):
+                k, v = m.groups()
+                if v.isdigit() or v in ("trixie", "bookworm", "bullseye", "forky"):
+                    if v not in (quick_rpm if k == "fedora" else quick_deb):
+                        errs.append(f"{f}:{n}: A: image {k}:{v} is written into the workflow and the quick set does not build it: {s}")
+            for m in fc_re.finditer(code):
+                if m.group(1) not in quick_rpm:
+                    errs.append(f"{f}:{n}: A: fc{m.group(1)} is written into the workflow and the quick set does not build it: {s}")
         for m in arr_re.finditer(code):
             items = [x.strip().strip("\"'") for x in m.group(0)[1:-1].split(",")]
             if items and all(vocab.search(x) for x in items) and key not in plan_keys:
@@ -165,20 +167,32 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
             mm = re.search(r"/actions/(release-matrix|check-matrix)(@|$)", u)
             if mm:
                 w = {k: sub(v) for k, v in (s.get("with") or {}).items()}
-                print(json.dumps({"file": f, "job": job, "action": mm.group(1), "with": w}))
+                print(json.dumps({"file": f, "job": job, "action": mm.group(1), "with": w,
+                                  "wave": str((s.get("with") or {}).get("wave", ""))}))
 PY
 python3 -I "$t/plans.py" "$wf" > "$t/plans.jsonl"
+
+# every plan step reads the organisation variable, or its quick/full could never follow the wave
+bad=$(python3 -I -c '
+import json, sys
+for l in open(sys.argv[1]):
+    p = json.loads(l)
+    if "vars.OMX_RELEASE_MATRIX" not in p["wave"]:
+        print(p["file"] + " job " + p["job"])' "$t/plans.jsonl")
+if [ -z "$bad" ] && [ -s "$t/plans.jsonl" ]; then yes "every plan step reads OMX_RELEASE_MATRIX"; else no "a plan step does not read OMX_RELEASE_MATRIX: ${bad:-none found}"; fi
 
 field() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1])["with"].get(sys.argv[2], ""))' "$1" "$2"; }
 plan_of() { grep -F "\"file\": \"$1\"" "$t/plans.jsonl" | grep -F "\"job\": \"$2\""; }
 # <file> <job>: run the plan step's action as a run of this kind would, for the wave quick and full
 render_plan() { # <file> <job> <wave> <event> <ref type>: key=value lines in $t/out, the notice in $t/log
-    local p; p=$(plan_of "$1" "$2" | head -1)
+    local p m=''; p=$(plan_of "$1" "$2" | head -1)
+    # clap-rpm.yml is also a pull-request check: its matrix input is the variable there
+    [ "$4" != pull_request ] || m=$3
     [ -n "$p" ] || { no "$1 job $2 has no release-matrix or check-matrix step"; return 1; }
     : > "$t/out"
     case $(python3 -I -c 'import json,sys; print(json.loads(sys.argv[1])["action"])' "$p") in
     release-matrix)
-        KIND=$(field "$p" kind) RELEASES=$(field "$p" releases) ARCHES=$(field "$p" arches) MATRIX='' WAVE=$3 STAGED='' \
+        KIND=$(field "$p" kind) RELEASES=$(field "$p" releases) ARCHES=$(field "$p" arches) MATRIX=$m WAVE=$3 STAGED='' \
             SOURCE_REF='' CATCH_UP='' EVENT=$4 REF_TYPE=$5 GITHUB_OUTPUT=$t/out "$actions/release-matrix/matrix.sh" > "$t/log" 2>&1 ;;
     check-matrix)
         GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$actions/check-matrix WAVE=$3 MATRIX='' RPM_RELEASES=$(field "$p" rpm-releases) \
@@ -207,13 +221,13 @@ check_plan() {
 D=workflow_dispatch
 DEB2='bookworm amd64, bookworm arm64, trixie amd64, trixie arm64'
 check_plan "pugl-nanovg deb" pugl-nanovg-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
-check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' '44 aarch64'
+check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
 check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie amd64' 'bookworm amd64, trixie amd64' 'bookworm amd64'
 check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
-check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' '44 aarch64, 45 aarch64'
+check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
-check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' '44 aarch64'
-check_plan "clap rpm" clap-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' '44 aarch64, 45 aarch64'
+check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
+check_plan "clap rpm" clap-rpm.yml plan pull_request '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 # the release package: an Architecture: all deb, built and laid out for the suites of the set; its install check after the publish
 check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie amd64' 'bookworm amd64, trixie amd64' 'bookworm amd64'
 render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
@@ -227,14 +241,8 @@ render_plan ci.yml plan quick push '' && [ "$(sed -n 's/^images=//p' "$t/out")" 
 grep -q 'skipped while quick: bookworm amd64' "$t/log" && yes "ci langpacks: the notice names bookworm as skipped" || no "ci langpacks: the notice does not name bookworm"
 render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:bookworm","debian:trixie"]' ] \
     && yes "ci langpacks, full: all four images" || { no "ci langpacks, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-# the promote's install checks: the caller's whole matrix (its input defaults), cut to the set while quick
-render_plan promote-staged.yml plan quick workflow_call '' \
-    && [ "$(sed -n 's/^cells=//p' "$t/out" | grep -o '"image"' | wc -l)" = 4 ] && [ "$(sed -n 's/^set=//p' "$t/out")" = quick ] \
-    && yes "promote-staged install checks, quick: 4 cells (fc44, fc45 x86_64; trixie amd64, arm64)" || { no "promote-staged install checks, quick"; cat "$t/log"; }
-grep -q 'skipped while quick: bookworm amd64' "$t/log" && grep -q 'skipped while quick: fc44 aarch64, fc45 aarch64' "$t/log" \
-    && yes "promote-staged: the notice names what it skipped" || { no "promote-staged: the notice does not name the skipped cells"; cat "$t/log"; }
-render_plan promote-staged.yml plan full workflow_call '' && [ "$(sed -n 's/^count=//p' "$t/out")" = 8 ] \
-    && yes "promote-staged install checks, full: 8 cells" || { no "promote-staged install checks, full"; cat "$t/log"; }
+# promote-staged.yml stays as it is, by design: it promotes the whole matrix (collect.py refuses a staged tree that lacks
+# any release or architecture), so its install checks cover what it promotes; its lists are inputs, never literals in a job.
 
 # ---- sabotage: a literal bookworm put back, and a literal matrix list, each go red
 mkdir "$t/sab"; cp "$wf"/*.yml "$t/sab/"
@@ -249,5 +257,13 @@ assert s2 != s, "no include matrix to sabotage"
 open(p, "w").write(s2)
 PY2
 if scan "$t/sab" > /dev/null 2>&1; then no "sabotage: a literal matrix list passes"; else yes "sabotage: a literal matrix list is red"; fi
+
+# sabotage: a plan step that does not read the variable
+cp "$wf"/*.yml "$t/sab/"
+sed -i '/wave: \${{ vars.OMX_RELEASE_MATRIX }}/d' "$t/sab/surge-xt-rpm.yml"
+python3 -I "$t/plans.py" "$t/sab" | python3 -I -c '
+import json, sys
+sys.exit(0 if any("vars.OMX_RELEASE_MATRIX" not in json.loads(l)["wave"] for l in sys.stdin) else 1)' \
+    && yes "sabotage: a plan step that ignores the variable is seen" || no "sabotage: a plan step that ignores the variable passes"
 
 [ "$fail" = 0 ] && echo "no-hardcoded-cells: all passed" || exit 1

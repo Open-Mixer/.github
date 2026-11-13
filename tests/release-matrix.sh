@@ -338,4 +338,16 @@ out=$(web deb https://channel.test/deb/cells.tsv "$t/inst-quick") || fail "a cha
 echo "$out" | grep -q 'not served yet' || fail "the 404 is not said: $out"
 if out=$(web rpm https://channel.test/down/rpm/cells.tsv "$t/inst-full"); then fail "a channel that answers 503 is a pass: $out"; fi
 ok "quick-deps.sh: a quick-only version is refused by name and cells; full, older, and a channel with no record pass; an unreadable record fails"
+# a quick run names the cells it skipped, a full run has none to name (Open-Mixer/.github#59)
+note() { KIND=$1 RELEASES=$2 ARCHES=$3 MATRIX=$4 WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=workflow_dispatch REF_TYPE='' \
+    GITHUB_OUTPUT=$t/note.out "$act/matrix.sh" 2>&1 | grep '^::notice::[a-z]* matrix'; }
+out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' quick)
+echo "$out" | grep -q '(skipped while quick: bookworm amd64, bookworm arm64)$' || fail "a quick deb run does not name what it skipped: $out"
+out=$(note rpm '["44", "45"]' '["x86_64", "aarch64"]' quick)
+echo "$out" | grep -q '(skipped while quick: fc44 aarch64, fc45 aarch64)$' || fail "a quick rpm run does not name what it skipped: $out"
+out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' full)
+echo "$out" | grep -q 'skipped' && fail "a full run names a skipped cell: $out"
+out=$(note deb '["bookworm"]' '["amd64"]' quick)
+echo "$out" | grep -q 'skipped' && fail "a run that fell back to the full matrix names a skipped cell: $out"
+ok "matrix.sh: a quick run names the cells it skipped; full, and the fallback to full, name none"
 echo "release-matrix: all passed"

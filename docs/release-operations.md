@@ -355,6 +355,31 @@ full for plugin-hostd's checks and for a CI image list, with two sabotages.
 
 The install checks of `build-rpm.yml` and `build-deb.yml` already take their cells from the release's own first job.
 
+#### Every workflow takes its cells from the one list
+
+No workflow of this repository writes a cell list of its own; `tests/no-hardcoded-cells.sh` fails when one does. Each
+declares its whole matrix once, as the `releases` and `arches` it hands to a plan job, and every job below takes its
+cells from that job's output. A build and a publish use `release-matrix` (its `cells` feed `strategy.matrix.include`);
+a check uses `check-matrix` (its `images`, or `cells`). Both name what they skipped while the wave is quick.
+
+| Workflow | Primitive | Quick | Full |
+| --- | --- | --- | --- |
+| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie amd64, arm64 | bookworm and trixie, amd64 and arm64 |
+| `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc44 x86_64 | fc44, x86_64 and aarch64 |
+| `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc44 and fc45 x86_64 | fc44 and fc45, x86_64 and aarch64 |
+| `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | bookworm and trixie |
+| `release-package.yml` build, install check, layout | `release-matrix`, `Architecture: all` as above; the oldest release of the set builds it | trixie | bookworm and trixie |
+| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
+| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
+
+A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the quick
+set without it); `clap-rpm.yml`'s pull request follows the variable too. The one-cell jobs of `ci.yml` (key transition,
+staging, channel installability) are toolchain arms on an image the quick set always builds, and the test holds each to
+the set. What stays literal, each with its reason, is the `ALLOW` list of the test: the whole matrices the reusable
+workflows declare as input defaults, and the tables of `publish-fedora.yml` and `publish-freereac.yml`, all handed to
+`release-matrix`. `promote-staged.yml` is left whole on purpose: it promotes the whole matrix (its collect step refuses
+a staged tree that lacks any cell), so its install checks cover what it promotes.
+
 ### What the channel records
 
 The tree scripts write `cells.tsv` at the top of each tree (`rpm/cells.tsv`, `deb/cells.tsv`, and the same under

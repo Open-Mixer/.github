@@ -100,6 +100,15 @@ if [ "$set" = full ]; then
     for rel in "${releases[@]}"; do for arch in "${arches[@]}"; do cells+=("$rel $arch"); done; done
 fi
 
+# what the quick set left out of the caller's matrix, for the notice: a run says what it skipped
+left=
+if [ "$set" = quick ]; then
+    for rel in "${releases[@]}"; do for arch in "${arches[@]}"; do
+        printf '%s\n' "${cells[@]}" | grep -qxF -- "$rel $arch" && continue
+        if [ "$kind" = rpm ]; then left+="${left:+, }fc$rel $arch"; else left+="${left:+, }$rel $arch"; fi
+    done; done
+fi
+
 if [ "${CATCH_UP:-}" = true ]; then
     no() { echo "::error::catch-up: $*" >&2; exit 1; }
     [ "${STAGED:-}" != true ] || no "a staged run is not a catch-up: a catch-up fills a released version's cells in the real channel"
@@ -197,4 +206,4 @@ shown=
 for c in "${cells[@]}"; do
     if [ "$kind" = rpm ]; then shown+="${shown:+, }fc${c% *} ${c#* }"; else shown+="${shown:+, }${c% *} ${c#* }"; fi
 done
-echo "::notice::$kind matrix: $set ($source), ${#cells[@]} cell(s): $shown"
+echo "::notice::$kind matrix: $set ($source), ${#cells[@]} cell(s): $shown${left:+ (skipped while quick: $left)}"

@@ -51,6 +51,7 @@ jobs:
       - run: tests/staging-channel.sh
       - run: tests/release-matrix.sh
       - run: tests/check-matrix.sh
+      - run: tests/no-hardcoded-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
@@ -201,8 +202,31 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           tests/staging-installability.sh
 
+  # The images the language packs are checked in: the cells the release set builds, no others while OMX_RELEASE_MATRIX
+  # is quick (ruling D25); the whole list, bookworm among it, with full. check-matrix names what it skips.
+  plan:
+    name: plan the matrix checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.matrix.outputs.images }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/check-matrix
+        with:
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          rpm-releases: '["44", "45"]'
+          rpm-arches: '["x86_64"]'
+          deb-releases: '["bookworm", "trixie"]'
+          deb-arches: '["amd64"]'
+
   langpacks:
     name: language packs (${{ matrix.image }})
+    needs: plan
+    if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -210,23 +234,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: fedora:44
-            kind: rpm
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
-          - image: fedora:45
-            kind: rpm
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
-          - image: debian:bookworm
-            kind: deb
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
-          - image: debian:trixie
-            kind: deb
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
     steps:
-      - run: ${{ matrix.tools }}
+      - name: Install the tools
+        run: |
+          if command -v dnf >/dev/null; then
+            echo KIND=rpm >> "$GITHUB_ENV"
+            dnf install -y --setopt=install_weak_deps=False rpm-build python3
+          else
+            echo KIND=deb >> "$GITHUB_ENV"
+            apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+          fi
       - uses: actions/checkout@v4
-      - run: tests/langpacks.sh ${{ matrix.kind }}
+      - run: tests/langpacks.sh "$KIND"
 
   channel-installability:
     name: channel installability (${{ matrix.arm }})
