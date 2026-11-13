@@ -55,7 +55,7 @@ m = json.load(open(sys.argv[1]))["messages"]
 print(" ".join(sorted(k for k, v in m.items() if isinstance(v, dict) and v.get("by") == sys.argv[2])))
 PY
 }
-human_line() { grep '"fix.human"' "$1/catalogs/$2.json"; }
+human_line() { grep "\"fix.human\"" "$1/catalogs/$2.json" | sed "s/,$//"; }  # the entry, not the separator after it
 
 # ---- the check is red, naming both, in each language
 fresh red
@@ -136,7 +136,14 @@ cat > "$work/lazy.sh" <<'EOS'
 #!/bin/bash
 # the real translate, then one made key dropped again
 "$@" || exit $?
-sed -i '/"fix.new"/d' catalogs/es.json
+case "$*" in *"--lang es"*) ;; *) exit 0 ;; esac
+python3 -I - <<'PY'
+import json
+p = "catalogs/es.json"
+c = json.load(open(p))
+del c["messages"]["fix.new"]
+open(p, "w").write(json.dumps(c, indent=2, ensure_ascii=False) + "\n")
+PY
 EOS
 chmod +x "$work/evil.sh" "$work/lazy.sh"
 fresh evil; cp -r "$work/evil/catalogs" "$work/evil.before"
@@ -164,7 +171,7 @@ PY
 cp -r "$work/stale/catalogs" "$work/stale.before"
 run_fill "$work/stale" -- --no-push >"$work/stale.out" 2>&1
 rc=$?
-[ "$rc" -eq 1 ] && grep -q 'catalogs/ca.json: fix.human' "$work/stale.out" && grep -qi 'person' "$work/stale.out" &&
+[ "$rc" -eq 1 ] && grep -q "catalogs/ca.json: fix.human: stale, a person's entry" "$work/stale.out" &&
     [ "$(grep '"fix.human"' "$work/stale/catalogs/ca.json")" = "$(grep '"fix.human"' "$work/stale.before/ca.json")" ]
 step $? "a person's stale entry is named for a person and left as written (rc=$rc)"
 
@@ -194,6 +201,24 @@ if command -v gpg >/dev/null; then
     step $? "the new head's check is green"
     msg=$(git --git-dir="$work/remote.git" log -1 --format=%B "$new") && [ -n "$msg" ] && ! grep -qi 'claude\|co-authored' <<<"$msg"
     step $? "the commit message carries no attribution"
+    # the armored key of the secret, imported by the fill into a keyring of its own, signs the same way
+    gpg --batch --armor --export-secret-keys "$kid" >"$work/ci.asc" 2>/dev/null
+    git init -q -b feature "$work/push2" && cp -r "$fix/catalogs" "$fix/source.json" "$fix/languages.json" "$work/push2/"
+    git -C "$work/push2" add -A && git -C "$work/push2" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -m start
+    git init -q --bare "$work/remote2.git" && git -C "$work/push2" push -q "$work/remote2.git" HEAD:refs/heads/feature
+    start2=$(git -C "$work/push2" rev-parse HEAD)
+    run_fill "$work/push2" GITHUB_HEAD_REF=feature SIGNING_KEY="$(cat "$work/ci.asc")" GNUPGHOME="$work/gnupg2" COMMITTER_EMAIL=ci-fixture@example.invalid \
+        -- --remote "$work/remote2.git" --expect-head "$start2" >"$work/push2.out" 2>&1
+    rc=$?
+    new2=$(git --git-dir="$work/remote2.git" rev-parse refs/heads/feature)
+    [ "$rc" -eq 1 ] && [ "$new2" != "$start2" ] && GNUPGHOME="$work/gnupg" git --git-dir="$work/remote2.git" verify-commit "$new2" >/dev/null 2>&1
+    step $? "the secret's armored key is imported by the fill and signs the pushed commit (rc=$rc)"
+    # a checkout that is not the pull request's head is never pushed from
+    fresh wronghead
+    run_fill "$work/wronghead" GITHUB_HEAD_REF=feature SIGNING_KEY_ID="$kid" -- --remote "$work/remote.git" --expect-head 0000000000000000000000000000000000000000 >"$work/wronghead.out" 2>&1
+    rc=$?
+    [ "$rc" -eq 1 ] && grep -q "pull request's head" "$work/wronghead.out" && [ "$(git --git-dir="$work/remote.git" rev-parse refs/heads/feature)" = "$new" ]
+    step $? "a checkout that is not the pull request's head is not pushed from (rc=$rc)"
     # no signing key: nothing pushed, the failing path
     fresh nosign
     git init -q -b feature "$work/nosign.git"
@@ -205,8 +230,43 @@ else
     echo "skip the push arm: no gpg"
 fi
 
+# ---- the action's own step: what reaches fill.py by the event (the step read out of action.yml, from the fill on)
+python3 -I - "$root/.github/actions/langpacks/action.yml" "$work/step.sh" <<'PY'
+import sys
+body = open(sys.argv[1]).read().split("      run: |\n", 1)[1]
+body = "".join(l[8:] if l.startswith("        ") else l for l in body.splitlines(True))
+open(sys.argv[2], "w").write("set -euo pipefail\n" + body[body.index('if [ "$FILL" != true ]'):])
+PY
+step_run() {  # step_run <dir> <env...>: the step's fill half on the fixture, in <dir>, as the event says
+    local d=$1; shift
+    (cd "$d" && env GITHUB_ACTION_PATH="$root/.github/actions/langpacks" GITHUB_WORKSPACE="$d" FILL=true \
+        FILL_COMMAND="$FILL" MODEL=draft-prose LANGUAGES=languages.json GATE="$GATE" OMX_TRANSLATE_URL="$URL" \
+        OMX_TRANSLATE_KEY="$KEY" SIGNING_KEY=not-a-key SIGNING_PASSPHRASE= PUSH_TOKEN= COMMITTER_NAME=CI COMMITTER_EMAIL=ci@example.invalid \
+        GITHUB_SERVER_URL=https://github.example.invalid GITHUB_REPOSITORY=o/r EXPECT_HEAD= HEAD_REF=feature \
+        FILL_FORK=false SAME_REPO=true GITHUB_EVENT_NAME=pull_request RUNNER_ENVIRONMENT=self-hosted "$@" bash "$work/step.sh")
+}
+calls_before=$(grep -c '^router: ' "$work/router.log")
+fresh evfork
+step_run "$work/evfork" SAME_REPO=false FILL_FORK=true >"$work/evfork.out" 2>&1
+rc=$?
+[ "$rc" -eq 1 ] && grep -q 'fork' "$work/evfork.out" && grep -q 'no router key' "$work/evfork.out" && ! grep -v '^::add-mask::' "$work/evfork.out" | grep -q "$KEY"
+step $? "a fork's pull request never gets the key: the gaps are named (rc=$rc)"
+fresh evpush
+step_run "$work/evpush" GITHUB_EVENT_NAME=push SAME_REPO= >"$work/evpush.out" 2>&1
+rc=$?
+[ "$rc" -eq 1 ] && grep -q "not a pull request" "$work/evpush.out" && grep -q 'catalogs/ca.json: fix.new' "$work/evpush.out"
+step $? "a push event is no pull request to push to: the gaps are named (rc=$rc)"
+fresh evhosted
+step_run "$work/evhosted" RUNNER_ENVIRONMENT=github-hosted >"$work/evhosted.out" 2>&1
+rc=$?
+[ "$rc" -eq 1 ] && grep -q 'GitHub-hosted' "$work/evhosted.out" && diff -r "$fix/catalogs" "$work/evhosted/catalogs" >/dev/null
+step $? "a GitHub-hosted runner is refused through the step (rc=$rc)"
+[ "$(grep -c '^router: ' "$work/router.log")" -eq "$calls_before" ]
+step $? "none of the three reached the router"
+
 if [ "$failures" -ne 0 ]; then
     echo "--- router.log"; tail -5 "$work/router.log"
+    for f in evfork evpush evhosted; do echo "--- $f.out"; head -3 "$work/$f.out" 2>/dev/null; done
     echo "langpacks-fill: $failures failed"
     exit 1
 fi
