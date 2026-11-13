@@ -92,7 +92,7 @@ mv "$tmp/o.away" "$tmp/o.git"
 for w in new old; do mkdir -p "$tmp/dg$w/.github/actions/commit-message-check"
   printf '#!/bin/sh\necho "checker=%s"\n' "$w" > "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"
   chmod +x "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"; done
-envhook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u OPENMIXER_DOTGITHUB_URL -u FREEMIXER_DOTGITHUB_URL HOME=$tmp/home "$@" sh "$stub" "$tmp/msg" 2>"$tmp/err"); }
+envhook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u OPENMIXER_DOTGITHUB_URL -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home "$@" sh "$stub" "$tmp/msg" 2>"$tmp/err"); }
 out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew") || fail "the new OPENMIXER_DOTGITHUB was not read"
 [ "$out" = "checker=new" ] && [ ! -s "$tmp/err" ] || fail "the new name gave '$out' / '$(cat "$tmp/err")'"
 out=$(envhook FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "the old FREEMIXER_DOTGITHUB was not read"

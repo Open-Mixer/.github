@@ -10,6 +10,8 @@
 #
 #   check.sh [ROOT]               the check, over every file ROOT (default: the current directory) tracks
 #   check.sh --messages RANGE     the same patterns, over the message of every commit in RANGE
+#   check.sh --msg-file FILE      the same patterns, over one message before its commit exists (the commit-msg hook,
+#                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
 #
 # Nothing is exempt, this script included: it builds every shape it looks for and plants from parts, so that no line
@@ -87,6 +89,19 @@ messages() { # <range>, in the current directory
   done <<<"$shas"
   [ "$bad" = 0 ] || return 1
   echo "private-refs-check: $n commit messages read, none points into a private repository"
+}
+
+msg_file() { # <file>: one commit message as the commit-msg hook hands it over
+  local f="$1" args=() hargs=() p text
+  [ -f "$f" ] && [ -r "$f" ] || { echo "private-refs-check: cannot read the message $f, so nothing was judged" >&2; return 2; }
+  for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
+  for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
+  text=$(grep -v '^#' "$f" || true)
+  if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
+    echo "private-refs-check: the commit message points into a private repository; the lines above. State the fact instead." >&2
+    return 1
+  fi
+  echo "private-refs-check: the commit message points into no private repository"
 }
 
 if [ "${1:-}" = --self-test ]; then
@@ -185,6 +200,11 @@ if [ "${1:-}" = --self-test ]; then
   [ "$fail" = 0 ] || exit 1
   echo "private-refs-check self-test: every sabotage red"
   exit 0
+fi
+if [ "${1:-}" = --msg-file ]; then
+  [ -n "${2:-}" ] || { echo "usage: check.sh --msg-file FILE" >&2; exit 2; }
+  rc=0; msg_file "$2" || rc=$?
+  exit "$rc"
 fi
 if [ "${1:-}" = --messages ]; then
   [ -n "${2:-}" ] || { echo "usage: check.sh --messages RANGE" >&2; exit 2; }
