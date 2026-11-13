@@ -20,6 +20,10 @@ on:
         description: 'Sign and publish; only a run on the main branch publishes'
         type: boolean
         default: false
+      matrix:
+        description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -44,9 +48,32 @@ jobs:
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
+  # The cells this run builds, and what it skips: the quick set while OMX_RELEASE_MATRIX is quick, the whole matrix with
+  # full (ruling D25, docs/release-operations.md). The build set, so release-matrix. The package is Architecture: all, so
+  # one build per Debian release serves every architecture and amd64 stands for them all.
+  plan:
+    name: Plan the cells
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.matrix.outputs.cells }}
+      releases: ${{ steps.matrix.outputs.releases }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: deb
+          matrix: ${{ inputs.matrix }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["bookworm", "trixie"]'
+          arches: '["amd64"]'
+
   build:
     name: Build (${{ matrix.suite }})
-    needs: preflight
+    needs: [preflight, plan]
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -54,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [bookworm, trixie]
+        include: ${{ fromJSON(needs.plan.outputs.cells) }}
     defaults:
       run:
         shell: bash
@@ -86,7 +113,7 @@ jobs:
 
   publish:
     name: Sign and publish
-    needs: build
+    needs: [plan, build]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -126,11 +153,13 @@ jobs:
 
       - name: Prove the channel serves the new package
         if: env.DO_PUBLISH == 'true'
+        env:
+          SUITES: ${{ needs.plan.outputs.releases }}
         run: |
-          # The index of each suite must name clap-headers at the version built here, once Pages has caught up.
+          # The index of each suite built here must name clap-headers at the version built here, once Pages has caught up.
           # A green publish is not proof: a dry run is green too (2026-10-08).
           ok=0
-          for suite in bookworm trixie; do
+          for suite in $SUITES; do
             url="https://www.openmixer.org/deb/debian/$suite/Packages"
             for try in $(seq 1 30); do
               if curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -L "$url" | awk -v RS= '/(^|\n)Package: clap-headers(\n|$)/ && /(^|\n)Version: 1\.2\.10-1(\n|$)/ {f=1} END {exit !f}'; then
@@ -139,7 +168,7 @@ jobs:
               sleep 10
             done
           done
-          [ "$ok" -eq 2 ] || { echo "::error::the channel does not serve clap-headers 1.2.10-1 on both suites"; exit 1; }
+          [ "$ok" -eq "$(wc -w <<< "$SUITES")" ] || { echo "::error::the channel does not serve clap-headers 1.2.10-1 on every suite built here ($SUITES)"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         if: env.DO_PUBLISH != 'true'
