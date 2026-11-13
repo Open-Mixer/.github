@@ -15,6 +15,9 @@ STUB=$HERE/commit-message-check/commit-msg
 # history at run time). A hook equal to it is accepted as well as one equal to the current stub. The grace ends in the
 # old-names removal pass: delete commit-msg.previous and its use below.
 PREVIOUS_STUB=$HERE/commit-message-check/commit-msg.previous
+# GRACE, the same pass: the stub as it was before it read openmixer-v1 (it read the tag v1, which never moves). It goes
+# with commit-msg.previous in the old-names removal pass.
+PREVIOUS_STUB_V1=$HERE/commit-message-check/commit-msg.previous-v1
 SIGNS=(
   'commit-message-check.sh: fail when a commit message'
   'private-refs-check.sh: a public repository'
@@ -42,7 +45,8 @@ check() { # <root>
   done
   if [ ! -e "$root/.githooks/commit-msg" ]; then
     echo "no-local-copies: .githooks/commit-msg is missing (it is the shared stub, .github/actions/commit-message-check/commit-msg)" >&2; bad=1
-  elif ! cmp -s "$root/.githooks/commit-msg" "$STUB" && ! cmp -s "$root/.githooks/commit-msg" "$PREVIOUS_STUB"; then
+  elif ! cmp -s "$root/.githooks/commit-msg" "$STUB" && ! cmp -s "$root/.githooks/commit-msg" "$PREVIOUS_STUB" \
+      && ! cmp -s "$root/.githooks/commit-msg" "$PREVIOUS_STUB_V1"; then
     echo "no-local-copies: .githooks/commit-msg is not the shared stub (.github/actions/commit-message-check/commit-msg)" >&2; bad=1
   fi
   local wf
@@ -152,6 +156,10 @@ jobs:
   hook "a hook that is neither the stub nor the previous stub is red" red "$t/third"
   { cat "$HERE/commit-message-check/commit-msg.previous"; echo '# edited'; } > "$t/third2"
   hook "a hook that is an edited previous stub is red" red "$t/third2"
+  # the stub before it read openmixer-v1 (it read the frozen tag v1): a second previous stub, accepted for the same pass
+  hook "a hook that is the stub before openmixer-v1 is green (grace)" green "$HERE/commit-message-check/commit-msg.previous-v1"
+  { cat "$HERE/commit-message-check/commit-msg.previous-v1"; echo '# edited'; } > "$t/third3"
+  hook "a hook that is an edited stub-before-openmixer-v1 is red" red "$t/third3"
   plant "a hook that is not the stub is red" .githooks/commit-msg 'exec tools/commit-message-check.sh --msg-file "$1"'
   # sabotage: with the name and content rules gone, a planted copy passes, so the arms above are what catch it
   sed -e "s|^HERE=.*|HERE=$HERE|" -e "s/^NAMES=.*/NAMES='^\$'/" -e "s/^  '.*'\$/  '^\$NEVER'/" "${BASH_SOURCE[0]}" > "$t/sab.sh"
@@ -162,6 +170,11 @@ jobs:
   cmp -s "$t/sab3.sh" "${BASH_SOURCE[0]}" && { echo "FAIL sabotage: no previous-stub acceptance to drop"; fail=1; }
   rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks"; cp "$HERE/commit-message-check/commit-msg.previous" "$t/s/.githooks/commit-msg"; git -C "$t/s" add -A
   if (cd "$HERE/no-local-copies" && bash "$t/sab3.sh" "$t/s" >/dev/null 2>&1); then echo "FAIL sabotage: the grace is not what passes the previous stub"; fail=1; else echo "ok   sabotage: without the grace the previous stub is red"; fi
+  # sabotage: with the second grace gone, the stub before openmixer-v1 is red, so that arm is what lets it pass
+  sed -e "s|^HERE=.*|HERE=$HERE|" -e 's|^      \&\& ! cmp -s "\$root/.githooks/commit-msg" "\$PREVIOUS_STUB_V1"; then|      ; then|' "${BASH_SOURCE[0]}" > "$t/sab4.sh"
+  cmp -s "$t/sab4.sh" "${BASH_SOURCE[0]}" && { echo "FAIL sabotage: no second-grace acceptance to drop"; fail=1; }
+  rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks"; cp "$HERE/commit-message-check/commit-msg.previous-v1" "$t/s/.githooks/commit-msg"; git -C "$t/s" add -A
+  if (cd "$HERE/no-local-copies" && bash "$t/sab4.sh" "$t/s" >/dev/null 2>&1); then echo "FAIL sabotage: the second grace is not what passes the stub before openmixer-v1"; fail=1; else echo "ok   sabotage: without the second grace the stub before openmixer-v1 is red"; fi
   sed -e "s|^HERE=.*|HERE=$HERE|" -e 's|^  wf=\$(grep.*|  wf=|' "${BASH_SOURCE[0]}" > "$t/sab2.sh"
   rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks" "$t/s/.github/workflows"; cp "$STUB" "$t/s/.githooks/commit-msg"; printf '%s\n' "$REL_CANCELLED" > "$t/s/.github/workflows/release.yml"; git -C "$t/s" add -A
   if (cd "$HERE/no-local-copies" && bash "$t/sab2.sh" "$t/s" >/dev/null 2>&1); then echo "ok   sabotage: without the release-order rule a deb after a red rpm passes"; else echo "FAIL sabotage: the release-order rule is not what catches it"; fail=1; fi

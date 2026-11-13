@@ -63,7 +63,8 @@ head -4 "$act/commit-msg" | grep -q '^# Copyright (C) ' || fail "the stub has no
 stub=$act/commit-msg
 git init -q "$tmp/o"; cp -r "$here/.github" "$tmp/o/"
 G="git -C $tmp/o -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false -c tag.gpgsign=false"
-$G add -A; $G commit -qm one; $G tag v1
+# the tag v1 the old stubs read stays on a frozen commit; the release line openmixer-v1 is a branch that moves ahead of it
+$G add -A; $G commit -qm frozen; $G tag v1; $G commit -q --allow-empty -m one; $G branch -f openmixer-v1
 git clone -q --bare "$tmp/o" "$tmp/o.git"
 mkdir -p "$tmp/home" "$tmp/s/r"; git -C "$tmp/s/r" init -q
 echo "clean change" > "$tmp/msg"; printf 'change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/bad"
@@ -74,17 +75,17 @@ rc=0; out=$(hook "$tmp/none.git" "$tmp/msg" 2>&1) || rc=$?
 [ "$rc" = 1 ] || fail "with no checker anywhere the stub gave $rc, not 1"
 grep -q 'no commit-message checker at' <<<"$out" || fail "with no checker anywhere the stub did not say why: $out"
 [ ! -e "$tmp/home/.cache/omx/openmixer-dotgithub" ] || fail "a failed clone left a cache behind"
-hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the stub did not clone v1 and pass a clean message"
+hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the stub did not clone openmixer-v1 and pass a clean message"
 cache=$tmp/home/.cache/omx/openmixer-dotgithub
-[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse v1)" ] || fail "the first use did not clone v1"
+[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "the first use did not clone openmixer-v1 (it read the frozen tag v1?)"
 if hook "$tmp/o.git" "$tmp/bad" >/dev/null 2>&1; then fail "the stub passed an attributed message"; fi
-touch "$tmp/o/moved"; $G add -A; $G commit -qm two; $G tag -f v1 >/dev/null; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/tags/v1
+touch "$tmp/o/moved"; $G add -A; $G commit -qm two; $G branch -f openmixer-v1; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/heads/openmixer-v1
 touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
 hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the refreshed stub refused a clean message"
-[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse v1)" ] || fail "a stale cache was not fetched at the moved v1"
+[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "a stale cache was not fetched at the moved openmixer-v1"
 mv "$tmp/o.git" "$tmp/o.away"; touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
 rc=0; hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>"$tmp/err" || rc=$?
-[ "$rc" = 0 ] && grep -q 'could not fetch v1' "$tmp/err" || fail "an unreachable remote did not fall back to the cached checker and say so (rc $rc)"
+[ "$rc" = 0 ] && grep -q 'could not fetch openmixer-v1' "$tmp/err" || fail "an unreachable remote did not fall back to the cached checker and say so (rc $rc)"
 
 # the env var moved to the openmixer name; for one transitional pass the stub also reads the old FREEMIXER_ names, the
 # new name winning, the old one read with a one-line notice (the old names are removed in a later pass)
