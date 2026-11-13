@@ -18,7 +18,7 @@ set -euo pipefail
 
 # Extended regexps, matched case-insensitively. A new kind of pointer is one line here.
 PATTERNS=(
-  'FreeMixer/''openmixer([^A-Za-z0-9_-]|$)'             # the private repository
+  '(FreeMixer|Open-Mixer)/''openmixer([^A-Za-z0-9_-]|$)' # the private repository, under either organisation
   'openmixer''-ops'                                     # the private operations repository
   'openmixer ?#[0-9]'                                 # one of its issues or pull requests
   '[A-Za-z0-9_.]-dev#[0-9]'                           # an issue of a private *-dev repository
@@ -104,7 +104,8 @@ if [ "${1:-}" = --self-test ]; then
     if check "$scratch/t" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
   mk; git -C "$scratch/t" add -A
   check "$scratch/t" >/dev/null || { echo "self-test: the clean tree is not green" >&2; exit 1; }
-  sab repo-in-header src/x.h                         '/* as FreeMixer/''openmixer draws it */'
+  sab repo-in-header src/x.h                         '/* as Open-Mixer/''openmixer draws it */'
+  sab repo-old-org   src/y.h                         '/* as FreeMixer/''openmixer drew it */'
   sab branch-in-sh   tools/x.sh                      '# drawn on integration''/lean-engine'
   sab issue-in-md    docs/a.md                       'see openmixer''#1580'
   sab path-in-md     docs/a.md                       'packages''/web-ui/Foo.v''ue'
@@ -114,7 +115,7 @@ if [ "${1:-}" = --self-test ]; then
   sab spec-in-mjs    tools/gen.mjs                   "// openmixer's"" sp""ec 20""26-10-09-plugin-from-contract"".md"
   sab dated-filename tools/gen.mjs                   '// the layout in 2026-10-09-plugin-from-contract''.md'
   sab dated-citation tools/gen.mjs                   '// as laid out in spec ''2026-10-09'
-  sab ttl            src/x.ttl       'rdfs:comment "see FreeMixer/''openmixer''#12" ;'
+  sab ttl            src/x.ttl       'rdfs:comment "see Open-Mixer/''openmixer''#12" ;'
   sab header         src/x.h         '/* packages''/core/src/x.ts */'
   sab path-quoted    docs/a.md                       'the server in `packages''/server/src/x`'
   sab path-in-path   tools/x.sh                      'ls ../packages''/server/src/x'

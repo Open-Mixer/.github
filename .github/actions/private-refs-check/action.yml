@@ -3,7 +3,7 @@
 name: private-refs-check
 description: Fail when a tracked file of a public repository points into a private repository
 
-# One engine for every FreeMixer repository, and no file is exempt. The caller has checked the repository out.
+# One engine for every OpenMixer repository, and no file is exempt. The caller has checked the repository out.
 # The action first proves the engine goes red on each kind of pointer, then reads the tree.
 
 runs:

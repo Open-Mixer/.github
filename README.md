@@ -65,7 +65,7 @@ version name. A version name does not say which bytes you have; a commit does. S
 - Every package we publish can be traced back to the exact upstream commit it was built from.
 - CI, the build machines and a developer's desk all build the same thing; nothing drifts when upstream moves.
 - A change of dependency is one reviewed line here, with its changelog entry, so you can see when and why it moved.
-- mod-host is built from the FreeMixer fork at the commit `pins.txt` names, by the fork's own spec and `debian/`;
+- mod-host is built from the OpenMixer fork at the commit `pins.txt` names, by the fork's own spec and `debian/`;
   nothing is patched here (`docs/mod-host.md`).
 
 - pugl and nanovg, which neither Fedora nor Debian package, are pinned here and built by `packaging/pugl`,

@@ -2,7 +2,7 @@
      Copyright (C) 2026 Pau Aliagas -->
 # Security policy
 
-This policy covers every repository of the FreeMixer organisation that has no `SECURITY.md` of its own.
+This policy covers every repository of the OpenMixer organisation that has no `SECURITY.md` of its own.
 
 ## Supported versions
 

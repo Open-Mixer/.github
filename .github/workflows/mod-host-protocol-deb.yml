@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: mod-host-protocol DEBs
 
-# Builds mod-host, libmod-host-protocol0 and libmod-host-protocol-dev from the FreeMixer fork of mod-host at the
+# Builds mod-host, libmod-host-protocol0 and libmod-host-protocol-dev from the OpenMixer fork of mod-host at the
 # commit .github/pins.txt names, by the fork's own debian/, the same source as the RPMs, for every Debian release and
 # architecture and publishes them into deb/ of the Pages repository, where omx-clap-host and plugin-hostd Depend on
 # them. Move the pin to the fork's release tag, then run this by hand: the packages carry the version of the fork's
