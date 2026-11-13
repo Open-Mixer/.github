@@ -15,6 +15,11 @@ description: Sign RPMs and publish them into the rpm/ tree of a FreeMixer Pages 
 #
 # Machines add the repository by installing openmixer-release (packaging/openmixer-release, workflow
 # release-package); the tree's rpm/openmixer.repo is the file that package installs, written by publish-tree.sh.
+#
+# staging: true publishes into staging/rpm of the same channel instead (the staging channel of a release wave,
+# docs/release-operations.md): the same tree script, the same key and its check against the keys the real rpm/ tree
+# serves, the same channel-push. The tree serves openmixer-staging.repo, and every Fedora release of `releases` gets
+# metadata even with nothing staged for it. rpm/ is never written.
 
 inputs:
   rpm-dir:
@@ -55,6 +60,15 @@ inputs:
   signed-dir:
     description: directory receiving the signed copies of the published packages
     default: signed
+  staging:
+    description: "'true' publishes into the staging channel, staging/rpm of the channel, and never touches rpm/"
+    default: 'false'
+  releases:
+    description: with staging, the Fedora releases (space separated) whose staging directories get metadata even when empty
+    default: ''
+  matrix-set:
+    description: "'quick' or 'full': the set of the release matrix this run built, recorded for its packages in cells.tsv of the tree; empty records none"
+    default: ''
 
 outputs:
   commit:
@@ -72,24 +86,37 @@ runs:
       shell: bash
       env:
         RPM_DIR: ${{ inputs.rpm-dir }}
+        STAGING: ${{ inputs.staging }}
+        MATRIX_SET: ${{ inputs.matrix-set }}
+        RELEASES: ${{ inputs.releases }}
       run: |
         set -o pipefail
+        # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
+        echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
+        # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton
+        if [ "$STAGING" = true ]; then
+          { echo "RPM_TREE=staging/rpm"; echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../packaging/staging/openmixer-staging.repo"
+            echo "SKELETON=$RELEASES"; echo "NEWEST_ONLY=true"; } >> "$GITHUB_ENV"
+        else
+          echo "RPM_TREE=rpm" >> "$GITHUB_ENV"
+        fi
         find "$RPM_DIR" -name '*.rpm' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no RPM under $RPM_DIR"; exit 1; }
 
-    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@main
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true'
       with:
         gpg-key: ${{ inputs.gpg-key }}
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: Open-Mixer/.github/.github/actions/channel-pull@main
+    - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
+        strip: ${{ inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
 
     - name: Check the signing key is one the channel serves
       if: inputs.sign == 'true'
@@ -109,7 +136,9 @@ runs:
     # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
     # reads the tree it pulled, a dry run the served channel.
     - name: Check no package of the channel becomes uninstallable
-      if: inputs.installability != 'false'
+      # a staged run publishes to the staging channel, which no client installs from by default: the check judges the
+      # channel a release lands in, so it runs for a release and a dry run, not for a staged publish
+      if: inputs.installability != 'false' && inputs.staging != 'true'
       shell: bash
       env:
         PKG_DIR: ${{ inputs.rpm-dir }}
@@ -120,7 +149,7 @@ runs:
         set -o pipefail
         # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
         # release builds every architecture), and every architecture is still checked
-        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/rpm; else channel=$SERVED; export UNBUILT_ARCH_PASS=true; fi
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/$RPM_TREE; else channel=$SERVED; export UNBUILT_ARCH_PASS=true; fi
         "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
@@ -131,9 +160,9 @@ runs:
       run: |
         set -o pipefail
         if [ "$SIGN" = true ]; then
-          "$GITHUB_ACTION_PATH/publish-tree.sh" build/channel/rpm "$RPM_DIR" "$OPENMIXER_GPG_KEY_ID"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$RPM_TREE" "$RPM_DIR" "$OPENMIXER_GPG_KEY_ID"
         else
-          "$GITHUB_ACTION_PATH/publish-tree.sh" build/repo/rpm "$RPM_DIR"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/repo/$RPM_TREE" "$RPM_DIR"
         fi
 
     - name: Prove the tree holds packages and metadata
@@ -142,7 +171,7 @@ runs:
         SIGN: ${{ inputs.sign }}
       run: |
         set -o pipefail
-        if [ "$SIGN" = true ]; then tree=build/channel/rpm; else tree=build/repo/rpm; fi
+        if [ "$SIGN" = true ]; then tree=build/channel/$RPM_TREE; else tree=build/repo/$RPM_TREE; fi
         find "$tree" -name '*.rpm' | sort
         test -n "$(find "$tree" -name '*.rpm' -print -quit)" || { echo "::error::the tree holds no package"; exit 1; }
         test -n "$(find "$tree" -name repomd.xml -print -quit)" || { echo "::error::no repodata in the tree"; exit 1; }
@@ -158,7 +187,7 @@ runs:
       run: echo "PUBLISH_RPMS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
     - id: push
-      uses: Open-Mixer/.github/.github/actions/channel-push@main
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
@@ -166,8 +195,9 @@ runs:
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.tag }}
-        what: rpm
-        rebuild: '"$PUBLISH_RPMS_ACTION/publish-tree.sh" build/channel/rpm "${{ inputs.rpm-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+        what: ${{ inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
+        # REPO_FILE and SKELETON are in the job's environment (the first step), empty for the real tree
+        rebuild: '"$PUBLISH_RPMS_ACTION/publish-tree.sh" "build/channel/$RPM_TREE" "${{ inputs.rpm-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 
     # After the push: a push that lost a race rebuilds and re-signs the tree, and the copies must be the bytes
     # the channel serves, not those of the first attempt.
@@ -181,7 +211,7 @@ runs:
         set -euo pipefail
         mkdir -p "$SIGNED_DIR"
         while IFS= read -r f; do
-          found=$(find build/channel/rpm -name "$(basename "$f")" -print -quit)
+          found=$(find "build/channel/$RPM_TREE" -name "$(basename "$f")" -print -quit)
           test -n "$found" || { echo "::error::$(basename "$f") is not in the tree"; exit 1; }
           cp "$found" "$SIGNED_DIR/"
         done < <(find "$RPM_DIR" -name '*.rpm' | sort)

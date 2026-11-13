@@ -1,0 +1,5 @@
+openmixer-langpacks (1-1) unstable; urgency=medium
+
+  * The meta language packs, one per shipped language (Open-Mixer/.github#37).
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Thu, 12 Nov 2026 13:00:00 +0000

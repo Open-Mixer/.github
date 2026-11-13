@@ -24,6 +24,21 @@
 # did not place must be listed, with the same SHA256, in its suite's previous Packages, whose InRelease
 # verifies against the keys the channel serves or this run signs with. Anything else makes the run refuse
 # before anything is signed, naming the file.
+#
+# The environment, for the staging channel (docs/release-operations.md) and its purge:
+#   LABEL           the Origin and Label of every Release file; default OpenMixer (staging: OpenMixer-Staging, which
+#                   the staging pin names)
+#   REQUIRES_TREE   another apt tree a REQUIRES package may be served from: the real deb/ tree, for a staging publish
+#                   whose packages depend on what only the real channel carries
+#   SKELETON        Debian releases, space separated, that get an index even with nothing in them (with
+#                   SKELETON_ARCHES, default "amd64 arm64"): a machine that adds the staging channel must find an
+#                   index for its release, never a 404
+#   EMPTY_OK        'true' lets <deb dir> hold no package (the purge, which only regenerates the indexes)
+#   MATRIX_SET      quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty
+#                   records none
+#   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
+#                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
+#                   beside this one. The real tree never sets it: nothing published there is ever removed.
 set -euo pipefail
 
 tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}")
@@ -62,12 +77,20 @@ place_changelog() {
     echo "changelog $source $srcver"
 }
 
+label=${LABEL:-OpenMixer}
+[[ $label =~ ^[A-Za-z0-9.+-]+$ ]] || { echo "LABEL '$label' is not one word an apt pin can name" >&2; exit 1; }
+
 mapfile -t found < <(find "$src" -name '*.deb' | sort)
-[ "${#found[@]}" -gt 0 ] || { echo "no deb under $src" >&2; exit 1; }
+[ "${#found[@]}" -gt 0 ] || [ "${EMPTY_OK:-}" = true ] || { echo "no deb under $src" >&2; exit 1; }
+mkdir -p "$tree/debian"
+for suite in ${SKELETON:-}; do
+    [[ $suite =~ ^[a-z]+$ ]] || { echo "SKELETON names '$suite', not a Debian release" >&2; exit 1; }
+    for arch in ${SKELETON_ARCHES:-amd64 arm64}; do mkdir -p "$tree/debian/$suite/$arch"; done
+done
 
 declare -A cells=()
 declare -A mine=()
-for f in "${found[@]}"; do
+for f in ${found[@]+"${found[@]}"}; do
     [ "$(dirname "$(dirname "$f")")" = "${src%/}" ] || { echo "$f is not laid out <suite>/<package>.deb under $src" >&2; exit 1; }
     suite=$(basename "$(dirname "$f")")
     arch=$(dpkg-deb -f "$f" Architecture)
@@ -81,6 +104,15 @@ for f in "${found[@]}"; do
         mine[$dest/$(basename "$f")]=1
         echo "placed $(basename "$f") in debian/$suite/$arch"
     fi
+    [ "${NEWEST_ONLY:-}" = true ] || continue
+    pkg=$(dpkg-deb -f "$f" Package)
+    ver=$(dpkg-deb -f "$f" Version)
+    case $ver in *+git*) ;; *) continue ;; esac
+    for old in "$dest/${pkg}_${ver%%+git*}+git"*.deb; do
+        [ -f "$old" ] && [ "$(basename "$old")" != "$(basename "$f")" ] || continue
+        rm -f "$old"
+        echo "dropped $(basename "$old") from debian/$suite/$arch (an earlier staged build of ${ver%%+git*})"
+    done
 done
 
 # The previous index of <suite dir>, as "<sha256> ./<arch>/<file>" lines, when its InRelease carries a good
@@ -137,6 +169,7 @@ for cell in "${!cells[@]}"; do
     [ "${cell##*/}" = all ] && continue
     for pkg in $requires; do
         compgen -G "$tree/debian/$cell/${pkg}_*.deb" >/dev/null ||
+            { [ -n "${REQUIRES_TREE:-}" ] && compgen -G "$REQUIRES_TREE/debian/$cell/${pkg}_*.deb" >/dev/null; } ||
             { echo "debian/$cell holds no $pkg: publish it first (workflow mod-host-protocol-deb of Open-Mixer/.github)" >&2; exit 1; }
     done
 done
@@ -151,7 +184,7 @@ for suitedir in "$tree"/debian/*/; do
         gzip -9nk Packages
         release=$(mktemp)
         apt-ftparchive \
-            -o APT::FTPArchive::Release::Origin=OpenMixer -o APT::FTPArchive::Release::Label=OpenMixer \
+            -o APT::FTPArchive::Release::Origin="$label" -o APT::FTPArchive::Release::Label="$label" \
             -o APT::FTPArchive::Release::Suite="$suite" -o APT::FTPArchive::Release::Codename="$suite" \
             -o APT::FTPArchive::Release::Architectures="${archs% }" \
             release . > "$release"
@@ -174,3 +207,7 @@ if [ -n "$key" ]; then
     # shellcheck disable=SC2086 # cosign is one key id or empty
     "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$tree/openmixer.asc" "$key" $cosign
 fi
+
+# which cells every package and version of the tree has, and the set (quick or full) this run published: the channel
+# page and a final release's dependency check read it (release-matrix/cells.sh)
+"$(dirname "$(readlink -f "$0")")/../release-matrix/cells.sh" deb "$tree" "$src"

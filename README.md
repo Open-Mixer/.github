@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
-# FreeMixer/.github
+# Open-Mixer/.github
 
 Organisation defaults and the reusable package release workflows. `SECURITY.md` is the security policy of
 every repository that has none of its own.
@@ -12,6 +12,10 @@ repository, `.github/workflows/build-rpm.yml`: push a tag `vX.Y.Z` that matches 
 package's `packaging/*.spec`, and the RPMs are built for x86_64 and aarch64, signed, published into the
 `rpm/` tree of the organisation's Pages repository and attached to the GitHub release. Without a tag
 the same workflow is a dry run that publishes nothing.
+
+While a release wave is open a run can build the quick set (fc44 and fc45 x86_64, trixie amd64 and arm64) instead of the whole
+matrix; a tag builds the whole matrix unless the wave says otherwise. `docs/release-operations.md`, "The quick set
+and the full matrix", has the rule.
 
 ## Adding the repository
 
@@ -37,7 +41,7 @@ rule is the format of the file, a format with no comment syntax carries no heade
 
 Call the shared workflows and actions by the `v1` tag, never by `main`:
 
-    uses: FreeMixer/.github/.github/workflows/build-rpm.yml@v1
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
 
 `v1` moves on compatible releases, so a repository on `v1` picks up fixes and additions without an edit.
 `v1.0.0` and every other full version tag never move. A breaking change gets a new major tag, `v2`.

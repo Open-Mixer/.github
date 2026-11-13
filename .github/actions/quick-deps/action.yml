@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: quick-deps
+description: Refuse a full release built on a dependency the channel has for the quick set alone
+
+# Used by the build jobs of build-rpm.yml and build-deb.yml on a release of the full matrix, after the build has
+# installed its dependencies. release-matrix/quick-deps.sh says what is refused; docs/release-operations.md, "The
+# quick set and the full matrix", says why.
+
+inputs:
+  kind:
+    description: "'rpm' or 'deb'"
+    required: true
+  base-url:
+    description: where the channel is served; <base-url>/<kind>/cells.tsv is read
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        BASE_URL: ${{ inputs.base-url }}
+      run: |
+        "$GITHUB_ACTION_PATH/../release-matrix/quick-deps.sh" "$KIND" "${BASE_URL%/}/$KIND/cells.tsv"

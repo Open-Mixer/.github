@@ -8,8 +8,9 @@
 # The version is the top entry of the tree's debian/changelog, whose body is regenerated from git (commit
 # subjects since the previous tag, .github/actions/changelog/changelog.sh); when the tree also carries a packaging/*.spec its Version
 # must be the same, one release cannot be two versions. With -t the tag must be v<version> and the tree
-# must be that tag's commit; without it the build is a snapshot: the top changelog entry becomes <version>~git<short sha>,
-# which sorts below the release. Lintian warnings fail the build; a tag that is deliberate carries an
+# must be that tag's commit; without it the build is a snapshot: the top changelog entry becomes
+# <version>~git<commit time>.<short sha>, which sorts below the release; the commit's own time in seconds comes first so
+# that the build of a later commit sorts above the build of an earlier one (a short sha alone sorts by chance). Lintian warnings fail the build; a tag that is deliberate carries an
 # override with its reason in debian/. -s replaces the snapshot's ~git: +git sorts above the release, so a sibling built
 # for another repository's tests (wave-deps) meets a (>= <version>) range; -L skips lintian for such a build, whose own CI
 # lints it.
@@ -45,12 +46,13 @@ for spec in packaging/*.spec; do
 done
 
 short=$(git rev-parse --short HEAD)
+stamp=$(git log -1 --format=%ct HEAD).$short
 "$here/../changelog/changelog.sh" deb -C . "${tag:-HEAD}"
 if [ -n "$tag" ]; then
     [ "$tag" = "v$version" ] || { echo "tag $tag is not v$version, the debian/changelog version" >&2; exit 1; }
     [ "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)" ] || { echo "the tree is not at $tag" >&2; exit 1; }
 else
-    sed -i "1s/^\\(\\S\\+\\) (\\([^)]*\\))/\\1 ($version$sep$short)/" debian/changelog
+    sed -i "1s/^\\(\\S\\+\\) (\\([^)]*\\))/\\1 ($version$sep$stamp)/" debian/changelog
 fi
 
 apt-get build-dep -y --no-install-recommends ./

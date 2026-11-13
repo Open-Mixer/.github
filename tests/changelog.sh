@@ -81,8 +81,8 @@ COMMIT_MESSAGE_PATTERNS=$work/none.json "$tool" notes -C . v1.2.0 2>/dev/null | 
 if COMMIT_MESSAGE_PATTERNS=$work/missing.json "$tool" notes -C . v1.2.0 >/dev/null 2>&1; then fail "unreadable pattern list passed"; fi
 ok "sabotage: no patterns lets it through, unreadable list refuses"
 
-# a staged prerelease tag (staged-v<version>, install-staged) on an earlier commit is not a release: the notes of the
-# real tag still reach back to the previous v<version>
+# a staged prerelease tag (staged-v<version>, left in some repositories by the earlier prerelease staging) on an
+# earlier commit is not a release: the notes of the real tag still reach back to the previous v<version>
 commit "Stage the meter colours" "2026-10-06T12:00:00Z"
 git tag staged-v1.3.0
 commit "Meter colours from the contract" "2026-10-07T12:00:00Z"

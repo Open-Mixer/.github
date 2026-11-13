@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: install-staged
+description: Retired; does nothing. The staging channel replaces it (add-openmixer with staging, or staging on the reusable workflows)
+
+# Kept as a no-op for this wave only, so the release workflows that still call it validate: it takes the inputs it
+# used to, installs nothing and says so in one line. It is removed in the wave's release pass once omx-panel,
+# plugin-hostd and omx-clap-core have switched to staging (docs/release-operations.md, "The staging channel").
+
+inputs:
+  packages:
+    description: 'Ignored. Was: [owner/]repo@version[:package,package] to install from staged-v prereleases'
+    required: true
+  tree:
+    description: Ignored
+    default: .
+  token:
+    description: Ignored
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "::notice::install-staged is retired and installs nothing; the staging channel replaces it (staging: true, or add-openmixer with staging)"

@@ -7,7 +7,7 @@ name: release-npm
 #   on: {push: {tags: ['v*']}, workflow_dispatch: {}}
 #   jobs:
 #     publish:
-#       uses: Open-Mixer/.github/.github/workflows/release-npm.yml@main
+#       uses: Open-Mixer/.github/.github/workflows/release-npm.yml@openmixer-v1
 #       with:
 #         prove: npm test
 #       permissions: {contents: read, id-token: write}
@@ -53,10 +53,10 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: Open-Mixer/.github/.github/actions/npm-publish-setup@main
+      - uses: Open-Mixer/.github/.github/actions/npm-publish-setup@openmixer-v1
         with:
           node-version: ${{ inputs.node-version }}
-      - uses: Open-Mixer/.github/.github/actions/tag-names-version@main
+      - uses: Open-Mixer/.github/.github/actions/tag-names-version@openmixer-v1
         with:
           version-command: node -p "require('./${{ inputs.working-directory }}/package.json').version"
       - name: Install
