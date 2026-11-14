@@ -225,6 +225,7 @@ check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '44 x86_64' '44 x86_
 check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie amd64' 'bookworm amd64, trixie amd64' 'bookworm amd64'
 check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
 check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
+check_plan "rncbc-v1 rpm" rncbc-v1-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
 check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
 check_plan "clap rpm" clap-rpm.yml plan pull_request '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
