@@ -125,7 +125,7 @@ jobs:
           name: surge-xt-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
 
   publish:
     name: Sign and publish
@@ -168,4 +168,4 @@ jobs:
           name: surge-xt-unsigned-rpm-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}

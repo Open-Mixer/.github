@@ -139,7 +139,7 @@ jobs:
           name: openmixer-release-rpm
           path: rpms/*.rpm
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   deb:
     name: Build the DEB
@@ -169,7 +169,7 @@ jobs:
           name: openmixer-release-deb
           path: debs/*.deb
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   deb-install:
     name: Install the DEB (${{ matrix.suite }})
@@ -306,7 +306,7 @@ jobs:
           name: openmixer-release-unsigned-rpm-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   publish-deb:
     name: Sign and publish the DEB
@@ -373,7 +373,7 @@ jobs:
           name: openmixer-release-unsigned-apt-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
       - name: Report a dry run honestly
         if: env.DO_PUBLISH != 'true'
