@@ -1,0 +1,20 @@
+{
+  "fix.kept": {
+    "text": "The fixture keeps this.",
+    "args": []
+  },
+  "fix.changed": {
+    "text": "The fixture refuses {what} now.",
+    "args": [
+      "what"
+    ]
+  },
+  "fix.new": {
+    "text": "The fixture says something new.",
+    "args": []
+  },
+  "fix.human": {
+    "text": "A person wrote this one.",
+    "args": []
+  }
+}

@@ -10,6 +10,8 @@
 #
 #   check.sh [ROOT]               the check, over every file ROOT (default: the current directory) tracks
 #   check.sh --messages RANGE     the same patterns, over the message of every commit in RANGE
+#   check.sh --msg-file FILE      the same patterns, over one message before its commit exists (the commit-msg hook,
+#                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
 #
 # Nothing is exempt, this script included: it builds every shape it looks for and plants from parts, so that no line
@@ -18,7 +20,7 @@ set -euo pipefail
 
 # Extended regexps, matched case-insensitively. A new kind of pointer is one line here.
 PATTERNS=(
-  'FreeMixer/''openmixer([^A-Za-z0-9_-]|$)'             # the private repository
+  '(FreeMixer|Open-Mixer)/''openmixer([^A-Za-z0-9_-]|$)' # the private repository, under either organisation
   'openmixer''-ops'                                     # the private operations repository
   'openmixer ?#[0-9]'                                 # one of its issues or pull requests
   '[A-Za-z0-9_.]-dev#[0-9]'                           # an issue of a private *-dev repository
@@ -89,6 +91,19 @@ messages() { # <range>, in the current directory
   echo "private-refs-check: $n commit messages read, none points into a private repository"
 }
 
+msg_file() { # <file>: one commit message as the commit-msg hook hands it over
+  local f="$1" args=() hargs=() p text
+  [ -f "$f" ] && [ -r "$f" ] || { echo "private-refs-check: cannot read the message $f, so nothing was judged" >&2; return 2; }
+  for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
+  for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
+  text=$(grep -v '^#' "$f" || true)
+  if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
+    echo "private-refs-check: the commit message points into a private repository; the lines above. State the fact instead." >&2
+    return 1
+  fi
+  echo "private-refs-check: the commit message points into no private repository"
+}
+
 if [ "${1:-}" = --self-test ]; then
   scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
   fail=0
@@ -104,7 +119,8 @@ if [ "${1:-}" = --self-test ]; then
     if check "$scratch/t" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
   mk; git -C "$scratch/t" add -A
   check "$scratch/t" >/dev/null || { echo "self-test: the clean tree is not green" >&2; exit 1; }
-  sab repo-in-header src/x.h                         '/* as FreeMixer/''openmixer draws it */'
+  sab repo-in-header src/x.h                         '/* as Open-Mixer/''openmixer draws it */'
+  sab repo-old-org   src/y.h                         '/* as FreeMixer/''openmixer drew it */'
   sab branch-in-sh   tools/x.sh                      '# drawn on integration''/lean-engine'
   sab issue-in-md    docs/a.md                       'see openmixer''#1580'
   sab path-in-md     docs/a.md                       'packages''/web-ui/Foo.v''ue'
@@ -114,7 +130,7 @@ if [ "${1:-}" = --self-test ]; then
   sab spec-in-mjs    tools/gen.mjs                   "// openmixer's"" sp""ec 20""26-10-09-plugin-from-contract"".md"
   sab dated-filename tools/gen.mjs                   '// the layout in 2026-10-09-plugin-from-contract''.md'
   sab dated-citation tools/gen.mjs                   '// as laid out in spec ''2026-10-09'
-  sab ttl            src/x.ttl       'rdfs:comment "see FreeMixer/''openmixer''#12" ;'
+  sab ttl            src/x.ttl       'rdfs:comment "see Open-Mixer/''openmixer''#12" ;'
   sab header         src/x.h         '/* packages''/core/src/x.ts */'
   sab path-quoted    docs/a.md                       'the server in `packages''/server/src/x`'
   sab path-in-path   tools/x.sh                      'ls ../packages''/server/src/x'
@@ -157,6 +173,15 @@ if [ "${1:-}" = --self-test ]; then
     if ( cd "$scratch/t" && messages base..HEAD >/dev/null 2>&1 ); then echo "SABOTAGE message [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE message: red"; fi
     g reset -q --hard HEAD~1
   done
+  # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
+  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n' > "$scratch/msg-clean"
+  if ( bash "$0" --msg-file "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
+  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight'; do
+    printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
+    if ( bash "$0" --msg-file "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
+  done
+  rc=0; bash "$0" --msg-file "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" = 2 ]; then echo "SABOTAGE msg-file unreadable: red (2)"; else echo "SABOTAGE msg-file unreadable: exit $rc, not 2"; fail=1; fi
   mk; git -C "$scratch/t" add -A
   if ( EXTRA_PATHSPEC=(":(bogus)x"); check "$scratch/t" >/dev/null 2>&1 ); then echo "SABOTAGE git-grep-error: STAYED GREEN"; fail=1; else echo "SABOTAGE git-grep-error: red"; fi
   # nothing is exempt: a file that lists exemptions exempts nothing, and is itself no reason to look away
@@ -175,6 +200,11 @@ if [ "${1:-}" = --self-test ]; then
   [ "$fail" = 0 ] || exit 1
   echo "private-refs-check self-test: every sabotage red"
   exit 0
+fi
+if [ "${1:-}" = --msg-file ]; then
+  [ -n "${2:-}" ] || { echo "usage: check.sh --msg-file FILE" >&2; exit 2; }
+  rc=0; msg_file "$2" || rc=$?
+  exit "$rc"
 fi
 if [ "${1:-}" = --messages ]; then
   [ -n "${2:-}" ] || { echo "usage: check.sh --messages RANGE" >&2; exit 2; }

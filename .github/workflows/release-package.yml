@@ -18,11 +18,6 @@ name: openmixer-release
 on:
   push:
     tags: ['openmixer-release-*']
-  pull_request:
-    paths:
-      - 'packaging/openmixer-release/**'
-      - '.github/workflows/release-package.yml'
-      - '.github/actions/add-openmixer/**'
   workflow_dispatch: {}
 
 permissions:
@@ -73,6 +68,47 @@ jobs:
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
+  # The Debian releases this run builds and publishes, and what it skips (ruling D25, docs/release-operations.md): the
+  # quick set while OMX_RELEASE_MATRIX is quick, the whole matrix with full. The package is Architecture: all, so one
+  # deb per release serves every architecture and amd64 stands for them all. A build and a publish: release-matrix.
+  plan:
+    name: Plan the Debian releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.matrix.outputs.cells }}
+      releases: ${{ steps.matrix.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: deb
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["bookworm", "trixie"]'
+          arches: '["amd64"]'
+
+  # The install check after the publish is a check: the cells the set builds, no others (check-matrix).
+  verify-plan:
+    name: Plan the install checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.matrix.outputs.images }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/check-matrix
+        with:
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          rpm-releases: '["44", "45"]'
+          rpm-arches: '["x86_64"]'
+          deb-releases: '["bookworm", "trixie"]'
+          deb-arches: '["amd64"]'
+
   rpm:
     name: Build the RPM (fc44) and install it
     needs: preflight
@@ -107,11 +143,12 @@ jobs:
 
   deb:
     name: Build the DEB
-    needs: preflight
+    needs: [preflight, plan]
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     container:
-      image: debian:bookworm
+      # the oldest release of the set builds it: bookworm with the whole matrix, trixie while the wave is quick
+      image: debian:${{ fromJSON(needs.plan.outputs.cells)[0].suite }}
     steps:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian gnupg curl ca-certificates
 
@@ -136,7 +173,7 @@ jobs:
 
   deb-install:
     name: Install the DEB (${{ matrix.suite }})
-    needs: deb
+    needs: [plan, deb]
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
@@ -144,7 +181,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [bookworm, trixie]
+        include: ${{ fromJSON(needs.plan.outputs.cells) }}
     steps:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends gnupg curl ca-certificates
 
@@ -160,9 +197,64 @@ jobs:
           chmod 755 debs && chmod 644 debs/*.deb
           packaging/openmixer-release/install-check.sh debs/openmixer-release_*_all.deb "$DEB_PROBE"
 
+  # Before anything is published: the channel with this release in it still installs everything that installed
+  # before, on every Debian and Fedora release and architecture it serves (channel-installability).
+  installability-rpm:
+    name: Installability (rpm)
+    needs: [preflight, rpm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:44
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openmixer-release-rpm
+          path: collected
+
+      - uses: ./.github/actions/channel-installability
+        with:
+          kind: rpm
+          packages: collected
+          base-url: ${{ env.BASE_URL }}
+
+  installability-deb:
+    name: Installability (deb)
+    needs: [preflight, plan, deb]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openmixer-release-deb
+          path: built
+
+      # the layout publish-deb gives it: the same Architecture: all file in the tree of every Debian release
+      - name: Lay the package out by Debian release
+        env:
+          SUITES: ${{ needs.plan.outputs.releases }}
+        run: |
+          set -euo pipefail
+          for suite in $SUITES; do
+            mkdir -p "collected/$suite"
+            cp built/openmixer-release_*_all.deb "collected/$suite/"
+          done
+
+      - uses: ./.github/actions/channel-installability
+        with:
+          kind: deb
+          packages: collected
+          base-url: ${{ env.BASE_URL }}
+
   publish-rpm:
     name: Sign and publish the RPM
-    needs: [preflight, rpm, deb, deb-install]
+    needs: [preflight, rpm, deb, deb-install, installability-rpm, installability-deb]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -218,7 +310,7 @@ jobs:
 
   publish-deb:
     name: Sign and publish the DEB
-    needs: [preflight, rpm, deb, deb-install]
+    needs: [preflight, plan, rpm, deb, deb-install, installability-rpm, installability-deb]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -236,11 +328,13 @@ jobs:
           name: openmixer-release-deb
           path: built
 
-      # one Architecture: all package, the same file in the tree of every Debian release the source names
+      # one Architecture: all package, the same file in the tree of every Debian release the set builds
       - name: Lay the package out by Debian release
+        env:
+          SUITES: ${{ needs.plan.outputs.releases }}
         run: |
           set -euo pipefail
-          for suite in bookworm trixie; do
+          for suite in $SUITES; do
             mkdir -p "collected/$suite"
             cp built/openmixer-release_*_all.deb "collected/$suite/"
           done
@@ -291,8 +385,8 @@ jobs:
   # push a little late, so the check waits for the stable name to carry the release before it calls it broken.
   verify:
     name: Install check from the channel (${{ matrix.image }})
-    needs: [preflight, publish-rpm, publish-deb]
-    if: needs.preflight.outputs.publish == 'true'
+    needs: [preflight, verify-plan, publish-rpm, publish-deb]
+    if: needs.preflight.outputs.publish == 'true' && needs.verify-plan.outputs.count != '0'
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -300,7 +394,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ['fedora:44', 'fedora:45', 'debian:bookworm', 'debian:trixie']
+        image: ${{ fromJSON(needs.verify-plan.outputs.images) }}
     env:
       EVR: ${{ needs.preflight.outputs.evr }}
     steps:

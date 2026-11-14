@@ -3,9 +3,9 @@
 name: Publish FreeREAC release
 
 # Publishes a FreeREAC release to the OpenMixer channel. The channel is signed by the OpenMixer Release
-# Signing Key, whose secret half is a FreeMixer organisation secret, so the FreeREAC repositories cannot
+# Signing Key, whose secret half is an OpenMixer organisation secret, so the FreeREAC repositories cannot
 # publish to it themselves. This workflow checks the public source out at a tag that already exists and runs
-# the same build-rpm.yml and build-deb.yml jobs the repositories' own release.yml runs, with FreeMixer's
+# the same build-rpm.yml and build-deb.yml jobs the repositories' own release.yml runs, with OpenMixer's
 # secrets. The FreeREAC repositories keep their own CI and tag on their own schedule.
 #
 # publish=false (the default) is a dry run: everything is built and linted and an unsigned tree is attached.

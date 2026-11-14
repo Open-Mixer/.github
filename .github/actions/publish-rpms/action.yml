@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: publish-rpms
-description: Sign RPMs and publish them into the rpm/ tree of a FreeMixer Pages repository
+description: Sign RPMs and publish them into the rpm/ tree of an Open-Mixer Pages repository
 
 # The RPM half of a release, run in a Fedora container by the reusable build-rpm workflow on a release tag
 # only: publishing a package is a release, never a side effect of a branch push. sign=false assembles an
@@ -48,6 +48,15 @@ inputs:
   public-key-url:
     description: where dnf fetches the public key from, when the channel tree does not hold it yet; empty skips that comparison
     default: ''
+  installability:
+    description: 'true (the default) refuses a release that leaves a package of the channel uninstallable (channel-installability), before anything is signed; false only for a package nothing depends on'
+    default: 'true'
+  same-pass:
+    description: packages other repositories release in the same pass, space separated (channel-installability)
+    default: ''
+  served-url:
+    description: where the channel's rpm/ tree is served, read by the installability check of a dry run, which pulls no tree
+    default: https://www.openmixer.org/rpm
   signed-dir:
     description: directory receiving the signed copies of the published packages
     default: signed
@@ -56,6 +65,12 @@ inputs:
     default: 'false'
   releases:
     description: with staging, the Fedora releases (space separated) whose staging directories get metadata even when empty
+    default: ''
+  catch-up:
+    description: "'true' for a catch-up run: arch-independent packages the channel serves are dropped from the publish, any other file it serves refuses the run before anything is signed, and only what received a package is indexed again (publish-tree.sh CATCH_UP)"
+    default: 'false'
+  matrix-set:
+    description: "'quick' or 'full': the set of the release matrix this run built, recorded for its packages in cells.tsv of the tree; empty records none"
     default: ''
 
 outputs:
@@ -75,9 +90,15 @@ runs:
       env:
         RPM_DIR: ${{ inputs.rpm-dir }}
         STAGING: ${{ inputs.staging }}
+        MATRIX_SET: ${{ inputs.matrix-set }}
+        CATCH_UP: ${{ inputs.catch-up }}
         RELEASES: ${{ inputs.releases }}
       run: |
         set -o pipefail
+        # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
+        echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
+        # a catch-up, for the tree script and the lost-race rebuild alike
+        echo "CATCH_UP=$CATCH_UP" >> "$GITHUB_ENV"
         # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton
         if [ "$STAGING" = true ]; then
           { echo "RPM_TREE=staging/rpm"; echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../packaging/staging/openmixer-staging.repo"
@@ -101,7 +122,8 @@ runs:
         publish-token: ${{ inputs.publish-token }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
-        strip: ${{ inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
+        # a catch-up keeps the served metadata of every directory it places nothing into
+        strip: ${{ inputs.catch-up == 'true' && 'none' || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
 
     - name: Check the signing key is one the channel serves
       if: inputs.sign == 'true'
@@ -116,6 +138,28 @@ runs:
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 "$PUBLIC_KEY_URL" > "$keys"
         fi
         "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID"
+
+    # Before the tree is assembled and signed: the channel with this release in it still installs everything that
+    # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
+    # reads the tree it pulled, a dry run the served channel.
+    - name: Check no package of the channel becomes uninstallable
+      # a staged run publishes to the staging channel, which no client installs from by default: the check judges the
+      # channel a release lands in, so it runs for a release and a dry run, not for a staged publish
+      if: inputs.installability != 'false' && inputs.staging != 'true'
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.rpm-dir }}
+        SIGN: ${{ inputs.sign }}
+        SAME_PASS: ${{ inputs.same-pass }}
+        SERVED: ${{ inputs.served-url }}
+      run: |
+        set -o pipefail
+        # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
+        # release builds every architecture), and every architecture is still checked. A release of the quick set is
+        # the same on the cells it does not build: the wave's full release builds them (tests/quick-unbuilt-pass.sh)
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/$RPM_TREE; else channel=$SERVED; export UNBUILT_ARCH_PASS=true; fi
+        if [ "${MATRIX_SET:-}" = quick ]; then export UNBUILT_ARCH_PASS=true; fi
+        "$GITHUB_ACTION_PATH/../channel-installability/run.sh" rpm "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
       shell: bash

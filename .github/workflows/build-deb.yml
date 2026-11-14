@@ -16,8 +16,9 @@ name: Build DEB (reusable)
 # target Pages repository. Anything that is not a tag is a dry run: it builds, lints and assembles an UNSIGNED
 # tree as an artifact.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the matrix of a release (every suite of
-# suite-matrix on every architecture of arch-matrix), against the staging channel, and publishes it to the staging channel of the release wave:
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the quick set (trixie on amd64 and arm64) or, told
+# full, every suite of suite-matrix on every architecture of arch-matrix, against the staging channel, and
+# publishes it to the staging channel of the release wave:
 # staging/deb of the same target repository, signed with the same key, by the same tree script and channel-push as a
 # release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
 # priority than the real one (staging: true here, add-openmixer staging: true elsewhere) and resolve to the staged
@@ -26,9 +27,16 @@ name: Build DEB (reusable)
 # staging: true on a run that is not staged (a dry run on a branch) builds against the staging channel and publishes
 # nothing. Neither runs on a tag or with source-ref, and a staged run builds the calling repository's own commit.
 #
+# WHICH CELLS A RUN BUILDS (docs/release-operations.md, "The quick set and the full matrix"): the matrix input,
+# quick or full, when the caller passes it. Without it a release (a tag, source-ref) builds what the organisation
+# variable OMX_RELEASE_MATRIX says, and the FULL matrix when it is unset: a caller that changes nothing publishes
+# every cell on a tag, as before, unless a release wave is open. A staged run and a workflow_dispatch build what the
+# variable says and the QUICK set when it is unset; a pull request always builds the full matrix. The install checks
+# run for the built cells, no others.
+#
 # The packaging is the debian/ directory of the calling repository; its changelog version is the version and
 # must equal the packaging/*.spec Version when there is one, and the tag must be v<version>. What Debian does
-# not carry, libmod-host-protocol (from the FreeMixer fork of mod-host) and the CLAP headers (from .github/pins.txt), is built first: the
+# not carry, libmod-host-protocol (from the OpenMixer fork of mod-host) and the CLAP headers (from .github/pins.txt), is built first: the
 # protocol library is published once by mod-host-protocol-deb.yml and the packages Depend on it, they never
 # carry a copy; the CLAP headers are a build dependency only. A build dependency the channel already serves
 # (plugin-hostd-dev) comes from the channel's apt source, added inside the build container only.
@@ -43,7 +51,7 @@ on:
       runner:
         type: string
         default: 'ubuntu-latest'
-        description: 'Runner label for the x86 jobs (a private repo passes its own runners, e.g. arc-freemixer; arm builds keep ubuntu-24.04-arm; a pull request from a fork always runs on GitHub-hosted runners)'
+        description: 'Runner label for the x86 jobs (a private repo passes its own runners, e.g. arc-freemixer; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
       package-name:
         required: true
         type: string
@@ -73,6 +81,18 @@ on:
         type: boolean
         default: false
         description: 'With staged or staging: a staging channel never published (its index and key both 404) is skipped with a notice instead of failing the build. Only for the first layer of a wave, whose build runs before anything was staged.'
+      matrix:
+        type: string
+        default: ''
+        description: "'quick' builds the quick set alone (fc44 and fc45 x86_64 rpm, trixie amd64 and arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
+      stage:
+        type: string
+        default: 'all'
+        description: 'all builds and publishes; build stops before the publish, leaving the packages as artifacts of the run; publish publishes the artifacts a build stage of the same run left, without building. release-c-lib.yml builds both kinds, runs channel-installability over them, and only then publishes either'
+      same-pass:
+        type: string
+        default: ''
+        description: 'Packages other repositories release in the same pass, space separated: a breakage of the channel they cause or suffer is reported, not red (channel-installability)'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -126,6 +146,10 @@ on:
         type: boolean
         default: true
         description: 'Attach the DEBs, named by Debian release, to the GitHub release of the tag'
+      catch-up:
+        type: boolean
+        default: false
+        description: 'With source-ref (or on the tag): build and publish only the cells of the set that the version, already served, lacks in the channel''s cells.tsv; nothing missing builds nothing. Refuses a version the channel does not serve, a cell some of its packages serve and others lack, and republish. The publish drops the arch-independent packages the channel serves and refuses to write any other file it holds (docs/release-operations.md, "Catching a served version up")'
       republish:
         type: boolean
         default: false
@@ -163,9 +187,31 @@ defaults:
 jobs:
   preflight:
     name: Check the release can publish
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
+    outputs:
+      set: ${{ steps.matrix.outputs.set }}
+      cells: ${{ steps.matrix.outputs.cells }}
+      first-arch: ${{ steps.matrix.outputs.first-arch }}
+      count: ${{ steps.matrix.outputs.count }}
     steps:
+      # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
+      - id: matrix
+        uses: Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1
+        with:
+          kind: deb
+          matrix: ${{ inputs.matrix }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          staged: ${{ inputs.staged }}
+          source-ref: ${{ inputs.source-ref }}
+          releases: ${{ inputs.suite-matrix }}
+          arches: ${{ inputs.arch-matrix }}
+          # a catch-up builds only the cells the version of the tag lacks in the channel
+          catch-up: ${{ inputs.catch-up }}
+          names: ${{ inputs.binary-names || inputs.package-name }}
+          channel: ${{ inputs.target-repo }}
+          token: ${{ secrets.PAGES_TOKEN }}
+
       # what is staged is never a release: a tag, source-ref or publish builds the release, against the real channel only;
       # a staged run publishes to the staging channel alone, the commit it runs on, of the calling repository
       - name: A staged run publishes to staging only, and staging never builds a release
@@ -183,6 +229,12 @@ jobs:
           [ -z "$SOURCE_REF" ] || no "staged and staging take no source-ref: source-ref builds a release of a tag, against the real channel alone"
           [ "$PUBLISH" != true ] || no "staged and staging exclude publish: a staged run publishes to the staging channel only, and a release never builds against it"
           [ "$STAGED" != true ] || [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
+
+      - name: Read the stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case $STAGE in all|build|publish) ;; *) echo "::error::stage is all, build or publish, not '$STAGE'"; exit 1 ;; esac
 
       # git history is the changelog: nothing here reads a CHANGELOG.md
       - uses: actions/checkout@v4
@@ -210,15 +262,19 @@ jobs:
           target: ${{ inputs.target-repo }}
           packages: ${{ inputs.binary-names || inputs.package-name }}
           republish: ${{ inputs.republish }}
+          catch-up: ${{ inputs.catch-up }}
           kind: deb
-          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          # the already-served check reads the releases this run publishes into, no others
+          releases: ${{ steps.matrix.outputs.releases }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
   build:
     name: Build (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: preflight
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    # a catch-up of a version served in every cell plans nothing: no build, no publish, and the first job said so
+    if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0'
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
     timeout-minutes: 90
@@ -231,8 +287,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
@@ -286,6 +341,14 @@ jobs:
           tag: ${{ env.RELEASE_TAG }}
           separator: ${{ inputs.staged && '+git' || '~git' }}
 
+      # the full matrix never goes out on top of a version the channel has for the quick set alone: the cells the
+      # dependency lacks could not install what this release publishes (docs/release-operations.md)
+      - uses: Open-Mixer/.github/.github/actions/quick-deps@openmixer-v1
+        if: needs.preflight.outputs.set == 'full' && inputs.publish && inputs.channel-deps && env.RELEASE_TAG != ''
+        with:
+          kind: deb
+          base-url: ${{ inputs.base-url }}
+
       - name: Refuse an empty build, and one of another architecture
         env:
           ARCH: ${{ matrix.arch }}
@@ -317,10 +380,13 @@ jobs:
 
   publish:
     name: Sign and publish
-    needs: build
+    needs: [preflight, build]
+    # the publish stage takes the packages a build stage of this run left; channel-installability inside the
+    # publish action refuses a release that would leave a package of the channel uninstallable
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 30
     container:
       image: debian:trixie
@@ -343,6 +409,7 @@ jobs:
       - id: publish
         uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
         with:
+          same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ inputs.staged && format('staged {0}', github.sha) || inputs.source-ref || github.ref_name }}
           sign: ${{ env.DO_PUBLISH }}
@@ -356,6 +423,9 @@ jobs:
           requires: ${{ inputs.requires }}
           changelogs-url: ${{ inputs.base-url }}/${{ inputs.staged && 'staging/deb' || 'deb' }}/changelogs
           staging: ${{ inputs.staged }}
+          # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
+          matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
+          catch-up: ${{ inputs.catch-up }}
           suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
 
       - uses: actions/upload-artifact@v4
@@ -386,7 +456,7 @@ jobs:
     name: GitHub release
     needs: publish
     if: inputs.publish && inputs.create-github-release && github.ref_type == 'tag'
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 10
     permissions:
       contents: write
@@ -440,7 +510,7 @@ jobs:
     name: Pages deployment
     needs: publish
     if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.commit != '' }}
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 40
     steps:
       - uses: Open-Mixer/.github/.github/actions/pages-live@openmixer-v1
@@ -454,17 +524,16 @@ jobs:
   # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
-    needs: [publish, release, live]
+    needs: [preflight, publish, release, live]
     if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: debian:${{ matrix.suite }}
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite-matrix) }}
-        arch: ${{ fromJSON(inputs.arch-matrix) }}
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     steps:
       # the real channel alone for a release; with the staging channel for a staged run
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
@@ -532,7 +601,7 @@ jobs:
     name: Report a failed release
     needs: [preflight, build, publish, release, live, verify]
     if: ${{ always() && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     permissions:
       issues: write
@@ -554,7 +623,7 @@ jobs:
     name: Tell the worker image build
     needs: [publish, verify]
     if: ${{ !cancelled() && needs.publish.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     continue-on-error: true
     steps:

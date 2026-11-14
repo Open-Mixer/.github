@@ -9,7 +9,7 @@ name: ci
 # (tests/pinned-keys.sh). The changelog generator (from git), and
 # what the channel publish adds from them: an updateinfo.xml for dnf and a Changelogs URL for apt
 # (docs/packaging-changelog.md). The language packs of an owner and the openmixer meta packs build and install, and a
-# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md). The mod-host packages from the FreeMixer fork at its pin: its tests pass, each fix
+# listed language with no catalog or an owner with no pack is red (tests/langpacks.sh, docs/language-packs.md); the fill of a catalog's missing entries through a fixture router, and its refusals (tests/langpacks-fill.sh). The mod-host packages from the OpenMixer fork at its pin: its tests pass, each fix
 # taken out again fails its check, and the RPMs and DEBs pass the installed-library checks and upgrade the
 # channel's earlier builds (docs/mod-host.md).
 
@@ -39,14 +39,22 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: tests/commit-message-check.sh
       - run: tests/preamble-actions.sh
+      - run: tests/channel-keep-list.sh
       - run: tests/pinned-keys.sh
       - run: tests/install-clean-retry.sh
+      - run: tests/quick-unbuilt-pass.sh
       - run: tests/reusable-workflows.sh
+      - run: tests/runner-selection.sh
+      - run: tests/release-checks.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
+      - run: tests/release-matrix.sh
+      - run: tests/check-matrix.sh
+      - run: tests/no-hardcoded-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/catch-up-plan.sh
       - run: tests/bookworm-asan.sh
       - name: The layout check proves itself, then reads this repository
         run: |
@@ -68,7 +76,7 @@ jobs:
         include:
           - kind: rpm
             image: fedora:44
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
           - kind: deb
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev
@@ -106,6 +114,25 @@ jobs:
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
+
+      - name: A catch-up publishes the missing cell and rewrites no served file
+        shell: bash
+        run: tests/catch-up-publish.sh ${{ matrix.kind }}
+
+      - name: An all package pinned by its source is never published ahead of an architecture the run did not build
+        if: matrix.kind == 'deb'
+        shell: bash
+        run: tests/arch-all-pin.sh
+
+      - name: An all package pinned by a package the suite already serves is never published over it
+        if: matrix.kind == 'deb'
+        shell: bash
+        run: tests/arch-all-served-pin.sh
+
+      - name: A noarch package pinned by its source is never published ahead of an architecture the run did not build
+        if: matrix.kind == 'rpm'
+        shell: bash
+        run: tests/noarch-pin.sh
 
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
@@ -185,8 +212,31 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           tests/staging-installability.sh
 
+  # The images the language packs are checked in: the cells the release set builds, no others while OMX_RELEASE_MATRIX
+  # is quick (ruling D25); the whole list, bookworm among it, with full. check-matrix names what it skips.
+  plan:
+    name: plan the matrix checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.matrix.outputs.images }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/check-matrix
+        with:
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          rpm-releases: '["44", "45"]'
+          rpm-arches: '["x86_64"]'
+          deb-releases: '["bookworm", "trixie"]'
+          deb-arches: '["amd64"]'
+
   langpacks:
     name: language packs (${{ matrix.image }})
+    needs: plan
+    if: needs.plan.outputs.count != '0'
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     container:
@@ -194,23 +244,59 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    steps:
+      - name: Install the tools
+        run: |
+          if command -v dnf >/dev/null; then
+            echo KIND=rpm >> "$GITHUB_ENV"
+            dnf install -y --setopt=install_weak_deps=False rpm-build python3
+          else
+            echo KIND=deb >> "$GITHUB_ENV"
+            apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+          fi
+      - uses: actions/checkout@v4
+      - run: tests/langpacks.sh "$KIND"
+
+  channel-installability:
+    name: channel installability (${{ matrix.arm }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
         include:
-          - image: fedora:44
-            kind: rpm
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
-          - image: fedora:45
-            kind: rpm
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build python3
-          - image: debian:bookworm
-            kind: deb
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
-          - image: debian:trixie
-            kind: deb
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian python3
+          - arm: ceiling
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends python3
+          - arm: deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
+          - arm: rpm
+            image: fedora:44
+            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 findutils
     steps:
       - run: ${{ matrix.tools }}
       - uses: actions/checkout@v4
-      - run: tests/langpacks.sh ${{ matrix.kind }}
+      - run: tests/channel-installability.sh ${{ matrix.arm }}
+
+  langpacks-fill:
+    name: language packs fill (fixture router)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:44
+    steps:
+      - name: The tools
+        run: dnf install -y --setopt=install_weak_deps=False git nodejs python3 gnupg2 diffutils findutils
+      - uses: actions/checkout@v4
+      # an ordinary run reads the channel: the staging channel is for a run that is itself staged
+      - name: omx-contract from the channel (3.16.0 or later, translate and the language list)
+        uses: ./.github/actions/add-openmixer
+      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract < 4'
+      - run: tests/langpacks-fill.sh
 
   changelog:
     name: changelog generator from git
@@ -305,6 +391,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: tests/surge-xt-package.sh
+
+  rncbc-v1-package:
+    name: the synthv1 and samplv1 packages, their pins, their patch and where they sort
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: fedora:44
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build
+      - uses: actions/checkout@v4
+      - run: tests/rncbc-v1-package.sh
 
   mod-host-rpm:
     name: mod-host RPMs from the fork, and where they sort

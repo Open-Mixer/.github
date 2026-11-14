@@ -1,0 +1,176 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: CLAP RPMs
+# Builds clap-devel, the CLAP plugin API headers, from packaging/clap-headers at the commit of .github/pins.txt (tag
+# 1.2.10), for every Fedora release the channel serves and every architecture, proves it in a clean container (it
+# installs from a clean state, pkg-config and a compile see 1.2.10, and it upgrades the Fedora release's own older
+# clap-devel), then publishes it into rpm/ of the Pages repository. 1.2.10 is the CLAP floor of every package of the
+# channel, and Fedora 44 and 45 ship 1.2.7; clap-headers-deb.yml serves the same pin to Debian. Run by hand, once per
+# change of the spec: a published NEVRA is never rebuilt with new bytes.
+#
+# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Sign and publish; only a run on the main branch publishes'
+        type: boolean
+        default: false
+      matrix:
+        description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - 'packaging/clap-headers/**'
+      - '.github/actions/pinned-rpms/**'
+      - '.github/pins.txt'
+      - '.github/workflows/clap-rpm.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Check the release can publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse to publish from anywhere but main
+        if: inputs.publish && github.ref != 'refs/heads/main'
+        run: echo "::error::publish is only for a run on main"; exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/release-preflight
+        with:
+          publish: ${{ inputs.publish || false }}
+          require-tag: 'false'
+          target: Open-Mixer/open-mixer.github.io
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          pages-token: ${{ secrets.PAGES_TOKEN }}
+
+  # The cells this run builds, and what it skips: the quick set while OMX_RELEASE_MATRIX is quick, the whole matrix with
+  # full (ruling D25, docs/release-operations.md). The build set, so release-matrix; the whole matrix, written once here; quick.txt cuts it while a wave is quick.
+  plan:
+    name: Plan the cells
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.matrix.outputs.cells }}
+      releases: ${{ steps.matrix.outputs.releases }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: rpm
+          matrix: ${{ inputs.matrix || (github.event_name == 'pull_request' && vars.OMX_RELEASE_MATRIX || '') }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["44", "45"]'
+          arches: '["x86_64", "aarch64"]'
+
+  build:
+    name: Build (fc${{ matrix.fedora }}, ${{ matrix.arch }})
+    needs: [preflight, plan]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    container:
+      image: fedora:${{ matrix.fedora }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.cells) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/pinned-rpms
+        with:
+          names: clap-headers
+      - name: Stage the package and check what it carries
+        env:
+          ARCH: ${{ matrix.arch }}
+          FEDORA: ${{ matrix.fedora }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp pinned-rpms/clap-devel-[0-9]*."$ARCH".rpm release/
+          # the source package is the same for both architectures: one build files it
+          if [ "$ARCH" = x86_64 ]; then cp pinned-rpms/SRPMS/*.src.rpm release/; fi
+          for f in release/*.rpm; do
+            evr=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$f")
+            case "$evr" in 1.2.10-*.omx.fc"$FEDORA") ;; *) echo "::error::$f: $evr is not 1.2.10 with .omx.fc$FEDORA"; exit 1 ;; esac
+          done
+          rpm -qpl release/clap-devel-*."$ARCH".rpm | grep -qx /usr/include/clap/version.h \
+            || { echo "::error::clap-devel does not carry /usr/include/clap/version.h"; exit 1; }
+          if rpm -qpl release/*.rpm | grep -q '^/usr/local'; then echo "::error::a package carries /usr/local"; exit 1; fi
+      - name: Install from a clean state, compile against it, and upgrade the Fedora release's own
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          dnf install -y --setopt=install_weak_deps=False gcc pkgconf-pkg-config createrepo_c
+          # the Fedora release's own clap-devel first, older than the floor: the channel's must upgrade it
+          dnf install -y --setopt=install_weak_deps=False clap-devel
+          echo "the release's own: $(rpm -q clap-devel)"
+          mkdir -p /tmp/repo && cp release/clap-devel-*."$ARCH".rpm /tmp/repo/ && createrepo_c -q /tmp/repo
+          printf '[built]\nname=built\nbaseurl=file:///tmp/repo\ngpgcheck=0\n' > /etc/yum.repos.d/built.repo
+          dnf upgrade -y --setopt=install_weak_deps=False clap-devel
+          case "$(rpm -q --qf '%{VERSION}' clap-devel)" in 1.2.10) ;; *) echo "::error::dnf did not upgrade clap-devel to 1.2.10: $(rpm -q clap-devel)"; exit 1 ;; esac
+          [ "$(pkg-config --modversion clap)" = 1.2.10 ] || { echo "::error::pkg-config says $(pkg-config --modversion clap)"; exit 1; }
+          printf '%s\n' '#include <clap/clap.h>' '#if !CLAP_VERSION_GE(1, 2, 10)' '#error CLAP headers older than 1.2.10' '#endif' \
+            'int main(void) { return 0; }' > /tmp/v.c
+          gcc $(pkg-config --cflags clap) -o /tmp/v /tmp/v.c && /tmp/v
+          echo "installed and compiled against: $(rpm -q clap-devel)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clap-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
+          path: release/*.rpm
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    name: Sign and publish
+    needs: [plan, build]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:44
+    concurrency:
+      group: publish-Open-Mixer/open-mixer.github.io
+      cancel-in-progress: false
+    env:
+      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clap-rpms-*
+          merge-multiple: true
+          path: collected
+
+      - name: Read the versions the packages carry
+        run: |
+          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc44.x86_64.rpm)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: ${{ env.TAG }}
+          sign: ${{ env.DO_PUBLISH }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+      - uses: actions/upload-artifact@v4
+        if: env.DO_PUBLISH != 'true'
+        with:
+          name: clap-unsigned-rpm-tree
+          path: build/repo/**
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,18 @@
+commit a0eaf394ad1dc4f402370399a7f4c397178f6bcd
+Author: Steve Harris <steve.harris@aistemos.com>
+Date:   Mon Jan 4 15:41:26 2016 +0000
+
+    Inlcude missing header
+
+diff --git a/plugins/pitch_scale-swh.lv2/plugin.xml b/plugins/pitch_scale-swh.lv2/plugin.xml
+index 3a9589783c2af741..648d3f533b64a575 100644
+--- a/plugins/pitch_scale-swh.lv2/plugin.xml
++++ b/plugins/pitch_scale-swh.lv2/plugin.xml
+@@ -7,6 +7,7 @@
+ 		<meta name="copyright" value="GPL"/>
+ 		<meta name="properties" value="HARD_RT_CAPABLE"/>
+ 		<code>
++			#include "string.h"
+ 			#include "util/pitchscale.h"
+ 
+ 			#define FRAME_LENGTH 4096

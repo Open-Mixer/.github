@@ -2,7 +2,8 @@
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
 # Open-Mixer/.github
 
-Organisation defaults and the reusable package release workflows.
+Organisation defaults and the reusable package release workflows. `SECURITY.md` is the security policy of
+every repository that has none of its own.
 
 ## Releasing a package
 
@@ -11,6 +12,10 @@ repository, `.github/workflows/build-rpm.yml`: push a tag `vX.Y.Z` that matches 
 package's `packaging/*.spec`, and the RPMs are built for x86_64 and aarch64, signed, published into the
 `rpm/` tree of the organisation's Pages repository and attached to the GitHub release. Without a tag
 the same workflow is a dry run that publishes nothing.
+
+While a release wave is open a run can build the quick set (fc44 and fc45 x86_64, trixie amd64 and arm64) instead of the whole
+matrix; a tag builds the whole matrix unless the wave says otherwise. `docs/release-operations.md`, "The quick set
+and the full matrix", has the rule.
 
 ## Adding the repository
 
@@ -28,7 +33,9 @@ The checks and builds every repository runs are reusable workflows here, and a r
 them: `public-sources-check.yml` (commit messages, private references, and no local copy of either, the
 commit-msg hook being `.github/actions/commit-message-check/commit-msg` byte for byte; and, in a public repository,
 no dated document, no dated folder and no folder of evidence or notes), `ci-node.yml`, `ci-c.yml`,
-`fuzz.yml`, `release-c-lib.yml` (RPMs and DEBs side by side) and `release-npm.yml` (trusted publishing). Each documents its
+`fuzz.yml`, `release-c-lib.yml` (both kinds built, then `channel-installability.yml`, then RPMs and DEBs published),
+`channel-installability.yml` (no release leaves a package of the channel uninstallable) and `release-npm.yml`
+(trusted publishing). Each documents its
 inputs at its top. A repository whose every tracked file carries its licence runs `.github/actions/spdx-check`: the
 rule is the format of the file, a format with no comment syntax carries no header, and there is no list of files.
 
@@ -58,7 +65,7 @@ version name. A version name does not say which bytes you have; a commit does. S
 - Every package we publish can be traced back to the exact upstream commit it was built from.
 - CI, the build machines and a developer's desk all build the same thing; nothing drifts when upstream moves.
 - A change of dependency is one reviewed line here, with its changelog entry, so you can see when and why it moved.
-- mod-host is built from the FreeMixer fork at the commit `pins.txt` names, by the fork's own spec and `debian/`;
+- mod-host is built from the OpenMixer fork at the commit `pins.txt` names, by the fork's own spec and `debian/`;
   nothing is patched here (`docs/mod-host.md`).
 
 - pugl and nanovg, which neither Fedora nor Debian package, are pinned here and built by `packaging/pugl`,
@@ -73,5 +80,12 @@ version name. A version name does not say which bytes you have; a commit does. S
   `/usr/lib/lv2` and `/usr/share/surge-xt`; `packaging/surge-xt/load-check.sh` loads the installed package in
   `omx-clap-scan` and `lilv`, and the workflows `surge-xt-rpm.yml` and `surge-xt-deb.yml` run it for fedora 44 and
   bookworm and trixie, on x86_64/amd64 and aarch64/arm64, before they publish.
+
+- The CLAP headers, at 1.2.10, the floor every package of the channel builds against, one number for every
+  distribution: Fedora 44 and 45 ship clap-devel 1.2.7 and Debian none, so the channel serves the pin of `pins.txt`
+  (tag 1.2.10) to all of them. `packaging/clap-headers` builds clap-devel, a newer EVR of Fedora's own package that
+  `dnf upgrade` takes over it, by `clap-rpm.yml` for fedora 44 and 45 on x86_64 and aarch64; `actions/deb-deps/
+  clap-headers` builds clap-headers by `clap-headers-deb.yml` for bookworm and trixie (Architecture: all). Each run
+  installs the package in a clean container and compiles against it before it publishes.
 
 A published version is never rebuilt with new bytes. To change what goes in, move the pin and bump the version.

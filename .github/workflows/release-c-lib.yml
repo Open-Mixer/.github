@@ -4,6 +4,12 @@ name: release-c-lib
 # A C library's release: its RPMs and its DEBs, built side by side, through build-rpm.yml and build-deb.yml. A tag push publishes; any
 # other run is a dry run (publish false), and a pull request's dry run passes arm false.
 #
+# Both kinds are built first (stage build), channel-installability.yml checks the channel with them in it, and only
+# then is either published (stage publish, RPMs and DEBs side by side): no release leaves a package of either channel
+# uninstallable, and none publishes one kind before the other kind is known to fit (plugin-hostd-protocol 0.5.0
+# published alone above its consumers' ceiling). same-pass names the packages other repositories release
+# in the same pass, whose breakage is then reported, not red.
+#
 #   on: {push: {tags: ['v*']}, workflow_dispatch: {}}
 #   jobs:
 #     release:
@@ -49,6 +55,14 @@ on:
       runner:
         type: string
         default: ubuntu-latest
+      matrix:
+        description: "'quick' or 'full'; empty lets build-rpm.yml and build-deb.yml choose (full on a tag unless a wave is open, quick on a manual run)"
+        type: string
+        default: ''
+      same-pass:
+        description: packages other repositories release in the same pass, space separated (channel-installability)
+        type: string
+        default: ''
     secrets:
       DISPATCH_TOKEN:
         required: false
@@ -65,27 +79,74 @@ permissions:
   actions: read
 
 jobs:
-  rpm:
+  rpm-build:
     uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
     with:
       package-name: ${{ inputs.package-name }}
       binary-names: ${{ inputs.rpm-binary-names || inputs.package-name }}
       publish: ${{ github.event_name == 'push' || inputs.publish }}
+      stage: build
       needs-mod-host: ${{ inputs.needs-mod-host }}
       channel-deps: ${{ inputs.channel-deps }}
       runner: ${{ inputs.runner }}
       arch-matrix: ${{ inputs.arm && '["x86_64", "aarch64"]' || '["x86_64"]' }}
+      matrix: ${{ inputs.matrix }}
     secrets: inherit
-  # beside the RPMs: the two publish jobs share one concurrency group per target, so their pushes never race
-  deb:
+  # beside the RPM build: nothing is published by a build stage, so nothing races
+  deb-build:
     uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
     with:
       package-name: ${{ inputs.package-name }}
       binary-names: ${{ inputs.deb-binary-names || inputs.package-name }}
       publish: ${{ github.event_name == 'push' || inputs.publish }}
+      stage: build
       dependencies: ${{ inputs.deb-dependencies }}
       requires: ${{ inputs.deb-requires }}
       channel-deps: ${{ inputs.channel-deps }}
       runner: ${{ inputs.runner }}
       arch-matrix: ${{ inputs.arm && '["amd64", "arm64"]' || '["amd64"]' }}
+      matrix: ${{ inputs.matrix }}
+    secrets: inherit
+  # before anything is published: both channels with this release in them still install what they installed
+  installability:
+    needs: [rpm-build, deb-build]
+    if: ${{ !cancelled() && needs.rpm-build.result == 'success' && needs.deb-build.result == 'success' }}
+    uses: Open-Mixer/.github/.github/workflows/channel-installability.yml@openmixer-v1
+    with:
+      rpm-artifacts: ${{ inputs.package-name }}-rpms-fc*
+      deb-artifacts: ${{ inputs.package-name }}-debs-*-*
+      same-pass: ${{ inputs.same-pass }}
+  rpm:
+    needs: installability
+    if: ${{ !cancelled() && needs.installability.result == 'success' }}
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
+    with:
+      package-name: ${{ inputs.package-name }}
+      binary-names: ${{ inputs.rpm-binary-names || inputs.package-name }}
+      publish: ${{ github.event_name == 'push' || inputs.publish }}
+      stage: publish
+      same-pass: ${{ inputs.same-pass }}
+      needs-mod-host: ${{ inputs.needs-mod-host }}
+      channel-deps: ${{ inputs.channel-deps }}
+      runner: ${{ inputs.runner }}
+      arch-matrix: ${{ inputs.arm && '["x86_64", "aarch64"]' || '["x86_64"]' }}
+      matrix: ${{ inputs.matrix }}
+    secrets: inherit
+  # beside the RPMs: the two publish jobs share one concurrency group per target, so their pushes never race
+  deb:
+    needs: installability
+    if: ${{ !cancelled() && needs.installability.result == 'success' }}
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
+    with:
+      package-name: ${{ inputs.package-name }}
+      binary-names: ${{ inputs.deb-binary-names || inputs.package-name }}
+      publish: ${{ github.event_name == 'push' || inputs.publish }}
+      stage: publish
+      same-pass: ${{ inputs.same-pass }}
+      dependencies: ${{ inputs.deb-dependencies }}
+      requires: ${{ inputs.deb-requires }}
+      channel-deps: ${{ inputs.channel-deps }}
+      runner: ${{ inputs.runner }}
+      arch-matrix: ${{ inputs.arm && '["amd64", "arm64"]' || '["amd64"]' }}
+      matrix: ${{ inputs.matrix }}
     secrets: inherit

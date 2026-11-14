@@ -23,6 +23,16 @@
 #   SKELETON    Fedora releases, space separated, whose fedora/<release>/ directories get metadata even with nothing in
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
+#   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none
+#   CATCH_UP    'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel holds
+#               (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every package of
+#               <rpm dir> whose path the tree already holds is judged: a noarch or source package is dropped from what is
+#               published, by path, and the run says so (the first architecture of every run builds them, and the channel
+#               serves them already); any other is refused, naming the file, and nothing is placed or signed,
+#               byte-identical or not. The tree is pulled with its metadata (channel-pull strip: none), and only the
+#               directories that received a package get their metadata made again, from the packages they hold; every
+#               other directory keeps its metadata and its signature byte for byte, and the repository file is not
+#               rewritten.
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -52,8 +62,97 @@ for rel in ${SKELETON:-}; do
 done
 
 declare -A dirs=()
+declare -A dropped=()
 placed=()
+# a catch-up writes no file the channel holds: noarch and source packages are dropped, any other refuses the run
+if [ "${CATCH_UP:-}" = true ]; then
+    clash=0
+    for f in ${found[@]+"${found[@]}"}; do
+        IFS='|' read -r is_src arch rel < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}\n' "$f")
+        [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
+        releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
+        [ -n "$releasever" ] || { echo "$f has no .fcNN dist tag" >&2; exit 1; }
+        path=fedora/$releasever/$archdir/$(basename "$f")
+        [ -e "$tree/$path" ] || continue
+        if [ "$archdir" = noarch ] || [ "$archdir" = SRPMS ]; then
+            dropped[$f]=1
+            echo "dropped $(basename "$f") (catch-up: the channel serves $path already, and a served file is never rewritten)"
+        else
+            echo "refused $path: the channel serves it, and a catch-up never rewrites a served file" >&2
+            clash=1
+        fi
+    done
+    [ "$clash" = 0 ] || { echo "catch-up: the channel already serves the files above: nothing was placed or signed" >&2; exit 1; }
+fi
+
+# A NOARCH PACKAGE PINNED BY ITS SOURCE IS NEVER PUBLISHED AHEAD OF AN ARCHITECTURE THE RUN DID NOT BUILD
+# (Open-Mixer/.github#62, the rpm face of #59). fedora/<release>/noarch is served to every architecture of the release, and
+# dnf offers the newest noarch build. When a package of the same source pins it exactly (Requires: name =
+# %{version}-%{release}), every architecture of the release that already serves that package must have it at the pinned
+# version: built by this run, or already in the tree. Otherwise the binary left behind there pins an older noarch build
+# than the one the channel now offers (omx-clap-core 0.32.3 on aarch64 against omx-clap-core-contract 0.32.4, published
+# by a quick release built for x86_64 alone). Judged only for a noarch package this run places that becomes the newest of
+# its name in the release, so a catch-up (which drops a served noarch package) and an older noarch package are never
+# refused. Nothing is placed or signed when it refuses.
+rpm_cmp() { # <e> <v> <r> <e> <v> <r>: -1, 0 or 1 by rpm's own ordering
+    python3 -I -c 'import sys, rpm; print(rpm.labelCompare(tuple(sys.argv[1:4]), tuple(sys.argv[4:7])))' "$@"
+}
+pin_refused=0
+for q in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$q]:-}" ] || continue
+    IFS='|' read -r qsrc_is arch qrel qname qver qepoch qsrcrpm < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}|%{EPOCHNUM}|%{SOURCERPM}\n' "$q")
+    [ "$qsrc_is" != 1 ] && [ "$arch" = noarch ] || continue
+    releasever=$(printf '%s\n' "$qrel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
+    [ -n "$releasever" ] || continue
+    [ ! -f "$tree/fedora/$releasever/noarch/$(basename "$q")" ] || continue
+    newest=1
+    for other in "$tree/fedora/$releasever/noarch/"*.rpm; do
+        [ -f "$other" ] || continue
+        IFS='|' read -r oname oe ov or < <(rpm -qp --qf '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}\n' "$other")
+        [ "$oname" = "$qname" ] || continue
+        if [ "$(rpm_cmp "$oe" "$ov" "$or" "$qepoch" "$qver" "$qrel")" = 1 ]; then newest=; break; fi
+    done
+    [ -n "$newest" ] || continue
+    # the packages of this run, of the same source and release, that pin it exactly: the architectures the run builds each for
+    declare -A pinners=()
+    for p in ${found[@]+"${found[@]}"}; do
+        IFS='|' read -r p_is parch prel pname psrcrpm < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{SOURCERPM}\n' "$p")
+        [ "$p_is" != 1 ] && [ "$parch" != noarch ] && [ "$psrcrpm" = "$qsrcrpm" ] || continue
+        case $prel in *".fc$releasever"*) ;; *) continue ;; esac
+        rpm -qp --requires "$p" | grep -qxE "$qname = ($qepoch:)?$qver-$qrel" || continue
+        pinners[$pname]="${pinners[$pname]:-} $parch"
+    done
+    for pname in $(printf '%s\n' "${!pinners[@]}" | LC_ALL=C sort); do
+        left=()
+        for archdir in "$tree/fedora/$releasever"/*/; do
+            a=$(basename "$archdir")
+            [ "$a" != noarch ] && [ "$a" != SRPMS ] || continue
+            # an architecture that never served the pinning package has nothing to leave behind
+            serves=
+            for s in "$archdir"*.rpm; do
+                [ -f "$s" ] && [ "$(rpm -qp --qf '%{NAME}' "$s")" = "$pname" ] && { serves=1; break; }
+            done
+            [ -n "$serves" ] || continue
+            case " ${pinners[$pname]} " in *" $a "*) continue ;; esac
+            # a build of the pinning package at the pinned version already there is not left behind
+            built=
+            for s in "$archdir"*.rpm; do
+                [ -f "$s" ] || continue
+                [ "$(rpm -qp --qf '%{NAME}|%{VERSION}-%{RELEASE}' "$s")" = "$pname|$qver-$qrel" ] && { built=1; break; }
+            done
+            [ -z "$built" ] || continue
+            left+=("$a")
+        done
+        [ "${#left[@]}" -gt 0 ] || continue
+        echo "refused $(basename "$q") in fedora/$releasever: $pname pins it exactly (= $qver-$qrel); this run built $pname $qver-$qrel for${pinners[$pname]} and not built for ${left[*]}, where fedora/$releasever serves $pname, so dnf would offer $qname $qver-$qrel there and no $pname it serves installs with it. Build every architecture of the release that serves $pname (the full matrix, or a quick set that covers them)" >&2
+        pin_refused=1
+    done
+    unset pinners
+done
+[ "$pin_refused" = 0 ] || { echo "a noarch package would be published ahead of an architecture this run did not build: nothing was placed or signed" >&2; exit 1; }
+
 for f in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$f]:-}" ] || continue
     IFS='|' read -r is_src arch rel pkg ver < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}\n' "$f")
     [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
     releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
@@ -78,6 +177,11 @@ for f in ${found[@]+"${found[@]}"}; do
         echo "dropped $(basename "$old") from fedora/$releasever/$archdir (an earlier staged build of $ver)"
     done
 done
+
+if [ "${CATCH_UP:-}" = true ] && [ "${#placed[@]}" = 0 ]; then
+    echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2
+    exit 1
+fi
 
 # A private rpm keystore holding the keys the channel serves, the keys committed here and this run's key: what a package already in the
 # tree must verify against. rpmkeys takes one key per file, so the union is split by fingerprint first.
@@ -125,13 +229,25 @@ fi
 for rel in "$tree"/fedora/*/; do
     [ -d "$rel" ] || continue
     for arch in noarch x86_64 aarch64 SRPMS; do
+        # a catch-up keeps a directory that exists, with its metadata; one the release lacks is made, with metadata
+        [ "${CATCH_UP:-}" = true ] && [ -d "$rel$arch" ] && continue
         mkdir -p "$rel$arch"
         dirs[${rel}$arch]=1
     done
 done
-# every directory that holds packages, not only the ones this run placed into: the metadata of the
-# pulled tree was discarded, and a directory another project filled would be left bare
-while IFS= read -r d; do dirs[$d]=1; done < <(find "$tree" -name '*.rpm' -printf '%h\n' | sort -u)
+if [ "${CATCH_UP:-}" = true ]; then # only what received a package
+    # the directories this run placed into, their metadata made again from the packages they hold (never updated from
+    # the pulled metadata, which this run did not write); every other directory keeps its metadata and signature
+    for f in "${placed[@]}"; do
+        d=$(dirname "$f")
+        dirs[$d]=1
+        rm -rf "$d/repodata"
+    done
+else
+    # every directory that holds packages, not only the ones this run placed into: the metadata of the
+    # pulled tree was discarded, and a directory another project filled would be left bare
+    while IFS= read -r d; do dirs[$d]=1; done < <(find "$tree" -name '*.rpm' -printf '%h\n' | sort -u)
+fi
 for dest in "${!dirs[@]}"; do
     if [ -d "$dest/repodata" ]; then createrepo_c --update --quiet "$dest"; else createrepo_c --quiet "$dest"; fi
     # the advisories of the releases this directory holds, from the packages' own changelogs, so that
@@ -157,6 +273,22 @@ done
 # the key file is what the channel served plus the signing key, never the signing key alone (channel-keys.sh);
 # openmixer.repo is the file openmixer-release installs, the same bytes (REPO_FILE: openmixer-staging.repo for staging)
 if [ -n "$key" ]; then
-    "$here/../import-gpg-key/channel-keys.sh" serve "$tree/RPM-GPG-KEY-openmixer" "$key"
-    install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
+    keyfile="$tree/RPM-GPG-KEY-openmixer"
+    # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
+    [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
+    "$here/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"
+    if [ -f "$keyfile.keep" ]; then
+        if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
+            "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" ]; then
+            mv "$keyfile.keep" "$keyfile"
+        else
+            rm -f "$keyfile.keep"
+        fi
+    fi
+    # a catch-up does not rewrite the repository file the channel serves
+    [ "${CATCH_UP:-}" = true ] && [ -e "$tree/$(basename "$repo_file")" ] || install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
 fi
+
+# which cells every package and version of the tree has, and the set (quick or full) this run published: the channel
+# page and a final release's dependency check read it (release-matrix/cells.sh)
+"$here/../release-matrix/cells.sh" rpm "$tree" "$src"

@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: channel-installability (reusable)
+
+# The gate that no release may leave a package of the channel uninstallable, on the packages a release built and has
+# not published yet (artifacts of the calling run), for both channels at once: the DEBs on every Debian release and
+# architecture the channel serves, the RPMs on every Fedora release and architecture. A package that installed
+# before and does not after is red, named with the dependency that is not met; a library whose new version falls
+# outside a published consumer's ceiling is red unless that consumer's release is in the same pass (R-107). The
+# action channel-installability holds the check; publish-debs and publish-rpms run it again on the tree they pulled.
+#
+# release-c-lib.yml calls it between the build of both kinds and the publish of either:
+#
+#   installability:
+#     needs: [rpm-build, deb-build]
+#     uses: Open-Mixer/.github/.github/workflows/channel-installability.yml@openmixer-v1
+#     with:
+#       rpm-artifacts: omx-dsp-rpms-fc*
+#       deb-artifacts: omx-dsp-debs-*-*
+on:
+  workflow_call:
+    inputs:
+      deb-artifacts:
+        description: 'Pattern of the artifacts of this run holding the DEBs, each laid out <suite>/*.deb; empty checks no DEB'
+        type: string
+        default: ''
+      rpm-artifacts:
+        description: 'Pattern of the artifacts of this run holding the RPMs; empty checks no RPM'
+        type: string
+        default: ''
+      base-url:
+        description: 'Where the channel is served'
+        type: string
+        default: 'https://www.openmixer.org'
+      suites:
+        description: 'Debian releases, space separated; empty is every one the channel serves and the release brings'
+        type: string
+        default: ''
+      fedora-versions:
+        description: 'Fedora releases, space separated; empty is every one the channel serves and the release brings'
+        type: string
+        default: ''
+      same-pass:
+        description: 'Packages other repositories release in the same pass, space separated: a breakage they cause or suffer is reported, not red'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deb:
+    name: Installability (deb)
+    if: inputs.deb-artifacts != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.deb-artifacts }}
+          merge-multiple: true
+          path: collected
+
+      - name: Prove the packages are there
+        env:
+          PATTERN: ${{ inputs.deb-artifacts }}
+        run: |
+          set -o pipefail
+          find collected -name '*.deb' | sort | tee collected.txt
+          test -s collected.txt || { echo "::error::no DEB in the artifacts $PATTERN"; exit 1; }
+
+      - uses: Open-Mixer/.github/.github/actions/channel-installability@openmixer-v1
+        with:
+          kind: deb
+          packages: collected
+          base-url: ${{ inputs.base-url }}
+          suites: ${{ inputs.suites }}
+          same-pass: ${{ inputs.same-pass }}
+
+  rpm:
+    name: Installability (rpm)
+    if: inputs.rpm-artifacts != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:44
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.rpm-artifacts }}
+          merge-multiple: true
+          path: collected
+
+      - name: Prove the packages are there
+        env:
+          PATTERN: ${{ inputs.rpm-artifacts }}
+        run: |
+          set -o pipefail
+          find collected -name '*.rpm' | sort | tee collected.txt
+          test -s collected.txt || { echo "::error::no RPM in the artifacts $PATTERN"; exit 1; }
+
+      - uses: Open-Mixer/.github/.github/actions/channel-installability@openmixer-v1
+        with:
+          kind: rpm
+          packages: collected
+          base-url: ${{ inputs.base-url }}
+          fedora-versions: ${{ inputs.fedora-versions }}
+          same-pass: ${{ inputs.same-pass }}

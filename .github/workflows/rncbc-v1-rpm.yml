@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: synthv1 and samplv1 RPMs
+
+# Builds synthv1 and samplv1 1.5.1 from packaging/synthv1 and packaging/samplv1 at the v1.5.1 commits of
+# .github/pins.txt, with the scheduler teardown fix upstream merged after that tag, for Fedora 44 and 45 on x86_64 and
+# aarch64, and publishes them into rpm/ of the Pages repository. The packages keep Fedora's names and carry .omx in
+# their Release, so they replace Fedora's 0.9.91 (fc44) and 1.4.2 (fc45) in place. Run by hand, once per change of
+# either spec: a published NEVRA is never rebuilt with new bytes. A v* tag builds and checks them too, and never
+# publishes. A pull request runs only tests/rncbc-v1-package.sh (ci.yml).
+#
+# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Sign and publish; only a run on the main branch publishes'
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Check the release can publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse to publish from anywhere but main
+        if: inputs.publish && github.ref != 'refs/heads/main'
+        run: echo "::error::publish is only for a run on main"; exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/release-preflight
+        with:
+          publish: ${{ inputs.publish || false }}
+          require-tag: 'false'
+          target: Open-Mixer/open-mixer.github.io
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          pages-token: ${{ secrets.PAGES_TOKEN }}
+
+  build:
+    name: Build (fc${{ matrix.fedora }}, ${{ matrix.arch }})
+    needs: preflight
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || github.event.pull_request.head.repo.fork && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    container:
+      image: fedora:${{ matrix.fedora }}
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['44', '45']
+        arch: [x86_64, aarch64]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/pinned-rpms
+        with:
+          names: synthv1 samplv1
+
+      - name: Stage the packages and check what they carry
+        env:
+          ARCH: ${{ matrix.arch }}
+          FEDORA: ${{ matrix.fedora }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for n in synthv1 samplv1; do
+            cp pinned-rpms/$n-[0-9]*."$ARCH".rpm pinned-rpms/lv2-$n-[0-9]*."$ARCH".rpm release/
+          done
+          # the source packages are the same for both architectures: one build files them
+          if [ "$ARCH" = x86_64 ]; then cp pinned-rpms/SRPMS/*.src.rpm release/; fi
+          for f in release/*.rpm; do
+            evr=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$f")
+            case "$evr" in *.omx.fc"$FEDORA") ;; *) echo "::error::$f: $evr does not carry .omx.fc$FEDORA"; exit 1 ;; esac
+          done
+          for n in synthv1 samplv1; do
+            rpm -qpl release/lv2-$n-[0-9]*."$ARCH".rpm | grep -q "/lv2/$n.lv2/$n.so$" \
+              || { echo "::error::lv2-$n does not install $n.lv2/$n.so"; exit 1; }
+            # the JACK stand-alone is built only when CMake finds libjack (the spec's JACK_LIBRARY)
+            rpm -qpl release/$n-[0-9]*."$ARCH".rpm | grep -q "/usr/bin/${n}_jack$" \
+              || { echo "::error::$n does not install ${n}_jack"; exit 1; }
+          done
+
+      - name: Replace the distribution's packages in place
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          dnf -y remove synthv1 samplv1 lv2-synthv1 lv2-samplv1 || true
+          dnf -y install --setopt=install_weak_deps=False lv2-synthv1 lv2-samplv1 synthv1 samplv1
+          rpm -q lv2-synthv1 lv2-samplv1
+          dnf -y upgrade --setopt=install_weak_deps=False release/*."$ARCH".rpm
+          for p in lv2-synthv1 lv2-samplv1 synthv1 samplv1; do
+            rpm -q --qf '%{RELEASE}\n' "$p" | grep -q '\.omx\.' || { echo "::error::$p was not replaced: $(rpm -q $p)"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rncbc-v1-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
+          path: release/*.rpm
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Sign and publish
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:44
+    concurrency:
+      group: publish-Open-Mixer/open-mixer.github.io
+      cancel-in-progress: false
+    env:
+      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rncbc-v1-rpms-*
+          merge-multiple: true
+          path: collected
+
+      - name: Read the versions the packages carry
+        run: |
+          echo "TAG=synthv1-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/lv2-synthv1-*.fc44.x86_64.rpm)-samplv1-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/lv2-samplv1-*.fc44.x86_64.rpm)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: ${{ env.TAG }}
+          sign: ${{ env.DO_PUBLISH }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+      - uses: actions/upload-artifact@v4
+        if: env.DO_PUBLISH != 'true'
+        with:
+          name: rncbc-v1-unsigned-rpm-tree
+          path: build/repo/**
+          if-no-files-found: error
+          retention-days: 30

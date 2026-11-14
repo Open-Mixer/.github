@@ -243,6 +243,8 @@ jobs:
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
           staging: false
+          # a promotion holds every release and architecture of the matrix (collect.py refuses less)
+          matrix-set: full
 
       - name: The channel root holds the bytes staging held
         env:
@@ -310,6 +312,8 @@ jobs:
           requires: ${{ inputs.requires }}
           changelogs-url: ${{ inputs.base-url }}/deb/changelogs
           staging: false
+          # a promotion holds every release and architecture of the matrix (collect.py refuses less)
+          matrix-set: full
 
       - name: The channel root holds the bytes staging held
         env:

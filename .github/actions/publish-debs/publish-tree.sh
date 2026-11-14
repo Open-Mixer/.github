@@ -34,6 +34,15 @@
 #                   SKELETON_ARCHES, default "amd64 arm64"): a machine that adds the staging channel must find an
 #                   index for its release, never a 404
 #   EMPTY_OK        'true' lets <deb dir> hold no package (the purge, which only regenerates the indexes)
+#   MATRIX_SET      quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty
+#                   records none
+#   CATCH_UP        'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel
+#                   holds (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every
+#                   package of <deb dir> whose path the tree already holds is judged: an Architecture: all package is
+#                   dropped from what is published, by path, and the run says so (every architecture's build makes it,
+#                   and the channel serves it already); any other is refused, naming the file, and nothing is placed or
+#                   signed, byte-identical or not. Only the indexes of the Debian releases that received a package are
+#                   regenerated and signed again; the others keep their bytes.
 #   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
 #                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
 #                   beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -88,8 +97,136 @@ done
 
 declare -A cells=()
 declare -A mine=()
+declare -A dropped=()
+declare -A touched=()
 for f in ${found[@]+"${found[@]}"}; do
     [ "$(dirname "$(dirname "$f")")" = "${src%/}" ] || { echo "$f is not laid out <suite>/<package>.deb under $src" >&2; exit 1; }
+done
+# a catch-up writes no file the channel holds: arch-independent ones are dropped, any other refuses the run
+if [ "${CATCH_UP:-}" = true ]; then
+    clash=0
+    for f in ${found[@]+"${found[@]}"}; do
+        suite=$(basename "$(dirname "$f")")
+        arch=$(dpkg-deb -f "$f" Architecture)
+        rel=debian/$suite/$arch/$(basename "$f")
+        [ -e "$tree/$rel" ] || continue
+        if [ "$arch" = all ]; then
+            dropped[$f]=1
+            echo "dropped $(basename "$f") (catch-up: the channel serves $rel already, and a served file is never rewritten)"
+        else
+            echo "refused $rel: the channel serves it, and a catch-up never rewrites a served file" >&2
+            clash=1
+        fi
+    done
+    [ "$clash" = 0 ] || { echo "catch-up: the channel already serves the files above: nothing was placed or signed" >&2; exit 1; }
+fi
+
+# AN ALL PACKAGE PINNED BY ITS SOURCE IS NEVER PUBLISHED AHEAD OF AN ARCHITECTURE THE RUN DID NOT BUILD
+# (Open-Mixer/.github#59). A suite is one flat index for every architecture, so an Architecture: all package is served to
+# all of them, and apt takes the newest version as its candidate and never an older one to meet an exact dependency.
+# When a package of the same source pins it exactly (= ${source:Version} or ${binary:Version}), every architecture of the
+# suite that serves that package must have it at the pinned version: placed by this run, or already in the tree.
+# Otherwise the package left behind there no longer installs (plugin-hostd 0.20.4 on amd64 against
+# plugin-hostd-contract 0.20.6, all, published by a quick release built for arm64 alone). Judged only for an all package
+# this run places that becomes the suite's newest, so a catch-up (which drops a served all package) and an older all
+# package are never refused. Nothing is placed or signed when it refuses. The pinners are those of the run and, below, those
+# the suite already serves.
+src_of() { local s; s=$(dpkg-deb -f "$1" Source 2>/dev/null || true); s=${s%% *}; printf '%s' "${s:-$(dpkg-deb -f "$1" Package)}"; }
+pins_exactly() { # <deb> <name> <version>: true when its Depends or Pre-Depends holds "<name> (= <version>)"
+    local item n
+    while IFS= read -r item; do
+        item=$(tr -d ' \t' <<< "$item")
+        n=${item%%(*} n=${n%%:*}
+        [ "$n" = "$2" ] && [ "${item#*(}" = "=$3)" ] && return 0
+    done < <(dpkg-deb -f "$1" Depends Pre-Depends 2>/dev/null | sed 's/^[A-Za-z-]*: //' | tr ',' '\n')
+    return 1
+}
+pin_refused=0
+for q in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$q]:-}" ] || continue
+    [ "$(dpkg-deb -f "$q" Architecture)" = all ] || continue
+    suite=$(basename "$(dirname "$q")")
+    [ ! -f "$tree/debian/$suite/all/$(basename "$q")" ] || continue
+    qname=$(dpkg-deb -f "$q" Package) qver=$(dpkg-deb -f "$q" Version) qsrc=$(src_of "$q")
+    newest=1
+    for other in "$tree/debian/$suite/all/${qname}"_*_all.deb; do
+        [ -f "$other" ] || continue
+        if dpkg --compare-versions "$(dpkg-deb -f "$other" Version)" gt "$qver"; then newest=; break; fi
+    done
+    [ -n "$newest" ] || continue
+    # the packages of this run, of the same source and suite and at the same version, that pin it exactly: the
+    # architectures the run builds each for
+    declare -A pinners=()
+    for p in ${found[@]+"${found[@]}"}; do
+        [ "$(basename "$(dirname "$p")")" = "$suite" ] || continue
+        parch=$(dpkg-deb -f "$p" Architecture)
+        [ "$parch" != all ] && [ "$(dpkg-deb -f "$p" Version)" = "$qver" ] && [ "$(src_of "$p")" = "$qsrc" ] || continue
+        pins_exactly "$p" "$qname" "$qver" || continue
+        pname=$(dpkg-deb -f "$p" Package)
+        pinners[$pname]="${pinners[$pname]:-} $parch"
+    done
+    for pname in $(printf '%s\n' "${!pinners[@]}" | LC_ALL=C sort); do
+        left=()
+        for archdir in "$tree/debian/$suite"/*/; do
+            a=$(basename "$archdir")
+            [ "$a" != all ] || continue
+            # an architecture that never served the pinning package has nothing to leave behind
+            compgen -G "$archdir${pname}_*_$a.deb" >/dev/null || continue
+            case " ${pinners[$pname]} " in *" $a "*) continue ;; esac
+            [ ! -f "$archdir${pname}_${qver#*:}_$a.deb" ] || continue
+            left+=("$a")
+        done
+        [ "${#left[@]}" -gt 0 ] || continue
+        echo "refused $(basename "$q") in debian/$suite: $pname pins it exactly (= $qver); this run built $pname $qver for${pinners[$pname]} and not built for ${left[*]}, where debian/$suite serves $pname, so apt would offer $qname $qver there and no $pname it serves installs with it. Build every architecture of the suite that serves $pname (the full matrix, or a quick set that covers them)" >&2
+        pin_refused=1
+    done
+    # served pinners (Open-Mixer/.github#61): the arch packages the tree already serves for this suite, of the same source,
+    # whose newest build pins the all package's CURRENT version (the newest the suite serves now) exactly. The run may not
+    # carry them at all (an all package published alone), so they are read from the pulled tree's .deb files: the channel
+    # pull of a catch-up keeps metadata, an ordinary one drops it. Where the run builds no such package, apt takes this
+    # all package as candidate and the served pinner no longer installs.
+    # BEGIN served-pinners
+    cur=
+    for other in "$tree/debian/$suite/all/${qname}"_*_all.deb; do
+        [ -f "$other" ] || continue
+        ov=$(dpkg-deb -f "$other" Version)
+        if [ -z "$cur" ] || dpkg --compare-versions "$ov" gt "$cur"; then cur=$ov; fi
+    done
+    if [ -n "$cur" ]; then
+        declare -A sleft=()
+        for archdir in "$tree/debian/$suite"/*/; do
+            a=$(basename "$archdir")
+            [ "$a" != all ] || continue
+            declare -A newest_of=()
+            for s in "$archdir"*_"$a".deb; do
+                [ -f "$s" ] && [ "$(src_of "$s")" = "$qsrc" ] || continue
+                sn=$(dpkg-deb -f "$s" Package)
+                if [ -z "${newest_of[$sn]:-}" ] || dpkg --compare-versions "$(dpkg-deb -f "$s" Version)" gt "$(dpkg-deb -f "${newest_of[$sn]}" Version)"; then
+                    newest_of[$sn]=$s
+                fi
+            done
+            for sn in "${!newest_of[@]}"; do
+                # the run's own pinners were judged above
+                [ -z "${pinners[$sn]:-}" ] || continue
+                pins_exactly "${newest_of[$sn]}" "$qname" "$cur" || continue
+                sleft[$sn]="${sleft[$sn]:-} $a"
+            done
+            unset newest_of
+        done
+        for sn in $(printf '%s\n' "${!sleft[@]}" | LC_ALL=C sort); do
+            [ -n "$sn" ] || continue
+            echo "refused $(basename "$q") in debian/$suite: the suite serves $sn pinning $qname exactly (= $cur) for${sleft[$sn]} and this run builds no $sn for them, so apt would offer $qname $qver there and the served $sn no longer installs. Build every architecture of the suite that serves $sn (the full matrix, or a quick set that covers them)" >&2
+            pin_refused=1
+        done
+        unset sleft
+    fi
+    # END served-pinners
+    unset pinners
+done
+[ "$pin_refused" = 0 ] || { echo "an all package would be published ahead of an architecture this run did not build: nothing was placed or signed" >&2; exit 1; }
+
+for f in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$f]:-}" ] || continue
     suite=$(basename "$(dirname "$f")")
     arch=$(dpkg-deb -f "$f" Architecture)
     dest=$tree/debian/$suite/$arch
@@ -100,6 +237,7 @@ for f in ${found[@]+"${found[@]}"}; do
     else
         install -m 0644 "$f" "$dest/"
         mine[$dest/$(basename "$f")]=1
+        touched[$suite]=1
         echo "placed $(basename "$f") in debian/$suite/$arch"
     fi
     [ "${NEWEST_ONLY:-}" = true ] || continue
@@ -112,6 +250,11 @@ for f in ${found[@]+"${found[@]}"}; do
         echo "dropped $(basename "$old") from debian/$suite/$arch (an earlier staged build of ${ver%%+git*})"
     done
 done
+
+if [ "${CATCH_UP:-}" = true ] && [ "${#mine[@]}" = 0 ]; then
+    echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2
+    exit 1
+fi
 
 # The previous index of <suite dir>, as "<sha256> ./<arch>/<file>" lines, when its InRelease carries a good
 # signature by a key of <keyring> and the Packages beside it is the one that InRelease names. Nothing otherwise.
@@ -174,6 +317,10 @@ done
 
 for suitedir in "$tree"/debian/*/; do
     suite=$(basename "$suitedir")
+    if [ "${CATCH_UP:-}" = true ] && [ -z "${touched[$suite]:-}" ]; then
+        echo "kept index debian/$suite (catch-up: nothing placed there)"
+        continue
+    fi
     (
         cd "$suitedir"
         rm -f Packages Packages.gz Release InRelease Release.gpg
@@ -202,6 +349,21 @@ done
 
 # the key file is what the channel served plus every key that signed the index (channel-keys.sh)
 if [ -n "$key" ]; then
+    keyfile="$tree/openmixer.asc"
+    # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
+    [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
     # shellcheck disable=SC2086 # cosign is one key id or empty
-    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$tree/openmixer.asc" "$key" $cosign
+    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key" $cosign
+    if [ -f "$keyfile.keep" ]; then
+        if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
+            "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" ]; then
+            mv "$keyfile.keep" "$keyfile"
+        else
+            rm -f "$keyfile.keep"
+        fi
+    fi
 fi
+
+# which cells every package and version of the tree has, and the set (quick or full) this run published: the channel
+# page and a final release's dependency check read it (release-matrix/cells.sh)
+"$(dirname "$(readlink -f "$0")")/../release-matrix/cells.sh" deb "$tree" "$src"

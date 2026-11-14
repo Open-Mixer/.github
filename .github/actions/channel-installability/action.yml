@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: channel-installability
+description: Refuse a release that would leave a package of the channel uninstallable, on Debian or on Fedora
+
+# The channel after the release (its published index plus the release's new packages) is handed to the package
+# manager's own solver, on the newest version of every package as apt installs it, for every Debian release and
+# architecture (dose-debcheck, the Debian release as background) or every Fedora release and architecture (dnf
+# repoclosure --newest, the Fedora release as the system repositories) the channel serves or the release brings.
+# A package that installed before and does not after is red, named with the dependency that is not met. And every
+# dependency between our own packages has a floor and a ceiling (R-107); a new version outside the range a published
+# consumer declares is red unless that consumer's new release is in the same pass: "release it in the same pass".
+# Each of our packages installed alone on a clean machine must resolve, with every one of our packages it pulls in, to
+# the newest published version (apt-get -s, dnf install --assumeno): a fallback to an old build is red. A published
+# build without a floor and a ceiling on our own packages is flagged (HYGIENE) to be removed or superseded.
+# gate.py has the details; tests/channel-installability.sh proves each arm.
+#
+# Placed before anything is signed or published, in a Debian (deb) or Fedora (rpm) container:
+#
+#       - uses: Open-Mixer/.github/.github/actions/channel-installability@openmixer-v1
+#         with: { kind: deb, packages: collected }
+#
+# publish-debs and publish-rpms run it themselves, on the channel tree they pulled, before they assemble it.
+
+inputs:
+  kind:
+    description: deb or rpm
+    required: true
+  packages:
+    description: the release's packages; deb laid out <suite>/*.deb (or flat), rpm anywhere below (dist tag .fcNN)
+    required: true
+  channel:
+    description: the channel's deb/ or rpm/ tree, a URL or a pulled directory; empty is base-url's
+    default: ''
+  base-url:
+    description: where the channel is served
+    default: https://www.openmixer.org
+  suites:
+    description: Debian releases to check, space separated; empty is every one the channel serves and the release brings
+    default: ''
+  fedora-versions:
+    description: Fedora releases to check, space separated; empty is every one the channel serves and the release brings
+    default: ''
+  arches:
+    description: architectures, space separated; empty is the channel's (deb) or x86_64 aarch64 (rpm)
+    default: ''
+  same-pass:
+    description: packages other repositories release in the same pass, space separated; a breakage they cause or suffer is reported, not red
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Check no package of the channel becomes uninstallable (${{ inputs.kind }})
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        PACKAGES: ${{ inputs.packages }}
+        CHANNEL: ${{ inputs.channel }}
+        BASE_URL: ${{ inputs.base-url }}
+        SUITES: ${{ inputs.suites }}
+        FEDORA_VERSIONS: ${{ inputs.fedora-versions }}
+        ARCHES: ${{ inputs.arches }}
+        SAME_PASS: ${{ inputs.same-pass }}
+      run: '"$GITHUB_ACTION_PATH/run.sh" "$KIND" "$PACKAGES" "$CHANNEL"'

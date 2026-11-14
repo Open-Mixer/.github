@@ -16,13 +16,10 @@ on:
         description: 'Sign and publish; only a run on the main branch publishes'
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - 'packaging/pugl/**'
-      - 'packaging/nanovg/**'
-      - '.github/actions/pinned-rpms/**'
-      - '.github/pins.txt'
-      - '.github/workflows/pugl-nanovg-rpm.yml'
+      matrix:
+        description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -47,18 +44,39 @@ jobs:
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
+  # The cells this run builds, and what it skips: the quick set while OMX_RELEASE_MATRIX is quick, the whole matrix with
+  # full (ruling D25, docs/release-operations.md). The build set, so release-matrix; the whole matrix, written once here; quick.txt cuts it while a wave is quick.
+  plan:
+    name: Plan the cells
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.matrix.outputs.cells }}
+      releases: ${{ steps.matrix.outputs.releases }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: rpm
+          matrix: ${{ inputs.matrix }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["44"]'
+          arches: '["x86_64", "aarch64"]'
+
   build:
     name: Build (fc${{ matrix.fedora }}, ${{ matrix.arch }})
-    needs: preflight
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || github.event.pull_request.head.repo.fork && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    needs: [preflight, plan]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || github.event.pull_request.head.repo.fork && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     container:
       image: fedora:${{ matrix.fedora }}
     strategy:
       fail-fast: false
       matrix:
-        fedora: ['44']
-        arch: [x86_64, aarch64]
+        include: ${{ fromJSON(needs.plan.outputs.cells) }}
     defaults:
       run:
         shell: bash
@@ -101,7 +119,7 @@ jobs:
 
   publish:
     name: Sign and publish
-    needs: build
+    needs: [plan, build]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30

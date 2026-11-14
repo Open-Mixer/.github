@@ -2,7 +2,7 @@
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
 # Package descriptions and changelogs
 
-Every FreeMixer package has a description that says what it does for a musician or an engineer, and a
+Every OpenMixer package has a description that says what it does for a musician or an engineer, and a
 changelog that the person updating it sees. This page is how that works for every repository that ships an
 RPM or a deb through the workflows of this repository.
 
@@ -62,7 +62,7 @@ and releases published earlier get theirs. The first release of a package is a `
 others `enhancement`.
 
 deb: `debhelper` puts `debian/changelog` into each package, as `changelog.Debian.gz` (`changelog.gz` for a
-native package, which the FreeMixer packages are); that is what `apt-listchanges` and `apt changelog` for
+native package, which the OpenMixer packages are); that is what `apt-listchanges` and `apt changelog` for
 an installed package read, and what lintian requires. `apt changelog` for a version that is not installed
 yet asks the `Changelogs:` field of the Release file, so `publish-debs/publish-tree.sh` also writes each
 package's changelog to `deb/changelogs/<prefix>/<source>/<source>_<version>_changelog` (a flat repository

@@ -6,7 +6,10 @@
 # name or email matches the identity pattern, or when a merge subject names a branch under claude/.
 #
 #   commit-message-check.sh <range>          every commit in the range (e.g. origin/main..HEAD)
-#   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped)
+#   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped), and
+#                                            before the commit exists: the attribution patterns, private-refs-check's
+#                                            message patterns beside this action, and the commit's author and
+#                                            committer against the house identity in the pattern list
 #   commit-message-check.sh --text-file FILE any text, every line judged (PR titles and bodies)
 #   commit-message-check.sh --selftest       fixtures plus a sabotage run
 #
@@ -67,6 +70,33 @@ def report(label, text, markers):
     return len(h)
 
 
+def house_hits():
+    """The commit about to be made: its author and committer, as git var reads them, against the list's house identity."""
+    with open(pfile, encoding="utf-8") as f:
+        house = json.load(f)["house"]
+    out = []
+    for who, var in (("author", "GIT_AUTHOR_IDENT"), ("committer", "GIT_COMMITTER_IDENT")):
+        p = subprocess.run(["git", "var", var], capture_output=True, text=True)
+        m = re.match(r"^(.*) <([^>]*)> \d+ [-+]\d{4}$", p.stdout.strip()) if p.returncode == 0 else None
+        if not m:
+            print(f"commit-message-check: git cannot say who the {who} is ({p.stderr.strip()}), so the commit is not judged", file=sys.stderr)
+            sys.exit(2)
+        if who == "author" and f"{m.group(1)} <{m.group(2)}>" != house["author"]:
+            out.append(f"the author is {m.group(1)} <{m.group(2)}>, not {house['author']}")
+        if who == "committer" and m.group(2) != house["committer-email"]:
+            out.append(f"the committer email is {m.group(2)}, not {house['committer-email']}")
+    return out
+
+
+def private_refs(msg_file):
+    """private-refs-check's message patterns over the same file: 0 clean, 1 a pointer (named on stderr), 2 not judged."""
+    chk = os.path.join(here, "..", "private-refs-check", "check.sh")
+    if not os.path.isfile(chk):
+        print(f"commit-message-check: no private-refs-check beside this action ({chk}), so the message is not judged", file=sys.stderr)
+        return 2
+    return subprocess.run(["bash", chk, "--msg-file", msg_file], stdout=subprocess.DEVNULL).returncode
+
+
 def git(*a):
     p = subprocess.run(["git", *a], capture_output=True, text=True)
     if p.returncode:
@@ -103,7 +133,7 @@ def selftest():
     ifx = [
         ("author", ((nm, "Pau"), (em, "x@example.invalid"), "fix x", 1), True),
         ("committer", (("Pau", nm), ("x@example.invalid", em), "fix x", 1), True),
-        ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from FreeMixer/{cl}/a", 2), True),
+        ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from Open-Mixer/{cl}/a", 2), True),
         ("ordinary", (("Pau Aliagas", "Pau Aliagas"), ("linuxnow@gmail.com", "commits@openmixer.org"), "fix x", 1), False),
         ("github-merge", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, "Merge pull request #1 from Open-Mixer/fix/a", 2), False),
     ]
@@ -141,7 +171,14 @@ def main(a):
             return 2
         # lines git adds as comments are not part of the message
         text = "\n".join(l for l in text.splitlines() if not l.startswith("#"))
-        return 1 if report("commit message", text, markers) else 0
+        bad = report("commit message", text, markers)
+        refs = private_refs(a[1])
+        if refs not in (0, 1):
+            return 2
+        for line in house_hits():
+            print(f"commit message: [house] {line}", file=sys.stderr)
+            bad += 1
+        return 1 if bad or refs else 0
     if len(a) == 2 and a[0] == "--text-file":
         try:
             text = open(a[1], encoding="utf-8", errors="replace").read()

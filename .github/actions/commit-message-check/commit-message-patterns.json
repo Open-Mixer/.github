@@ -45,5 +45,10 @@
  "merge-branch": {
   "comment": "Matched against the subject of a merge commit: a branch or pull request head under claude/.",
   "pattern": "(?:^|[\\s'\"/])claude/"
+ },
+ "house": {
+  "$comment": "who commits in every OpenMixer repository, judged by the commit-msg hook before the commit exists: the author, name and email, and the committer's email (the cluster's signer and the desk commit as it)",
+  "author": "Pau Aliagas <linuxnow@gmail.com>",
+  "committer-email": "commits@openmixer.org"
  }
 }
