@@ -4,14 +4,14 @@
 
 plugin-hostd and omx-clap-host link `libmod-host-protocol.so.0`, the socket and protocol library of mod-host. Every
 mod-host package OpenMixer ships, and every source build of the library in CI, comes from one place: the
-[OpenMixer fork of mod-host](https://github.com/Open-Mixer/mod-host), branch `freemixer`, which carries each change
+[OpenMixer fork of mod-host](https://github.com/Open-Mixer/mod-host), branch `openmixer`, which carries each change
 as a commit and offers each one upstream. No patch is applied here.
 
 ## The fixes, and where they live
 
 This repository used to carry the audinux spec of mod-host with one patch file per pull request
 (`packaging/mod-host`). Each of those patches is a commit of the fork; with all of them applied to upstream
-`f14a230` plus upstream's later #114, the tree equals the fork's `freemixer` branch, apart from the fork's own
+`f14a230` plus upstream's later #114, the tree equals the fork's `openmixer` branch, apart from the fork's own
 additions (packaging, CI, fuzz harnesses, a test for #116).
 
 | patch | upstream pull request | fork commit (subject) |
