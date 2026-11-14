@@ -12,7 +12,11 @@
 #   rpm      dnf repoclosure --newest, the same three cases on rpms built here.
 #            And a dry run that built x86_64 only: a noarch contract bumped with aarch64 not built is red alone, green with
 #            --unbuilt-arch-pass (aarch64 still checked), and a break on the built architecture stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb|rpm]...   (no argument: ceiling, then each arm whose tools exist)
+#            And a quick release (MATRIX_SET=quick, the omx-dsp 0.32.1 replay, rpm_quick): its noarch contract is
+#            published into the quick set's architecture trees alone (fc44 and fc45 x86_64), the aarch64 and noarch trees
+#            keep the packages they served, the aarch64 view still installs, and the check judges the quick cells alone,
+#            naming each cell it leaves out.
+# Usage: tests/channel-installability.sh [ceiling|deb|rpm|rpm_quick]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -202,6 +206,71 @@ arm_rpm() {
   expect 2 'could not take the measurement' 'rpm: a repository that cannot be read is not a pass' -- \
     rpm --channel "$d/nowhere" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new-patch"
   arm_rpm_unbuilt "$d"
+  arm_rpm_quick
+}
+
+# A QUICK RELEASE NEVER REACHES A TREE OUTSIDE THE QUICK SET (omx-dsp 0.32.1, 2026-11-14). The quick set builds fc44 and
+# fc45 x86_64; its noarch omx-dsp-contract 0.32.1 needs omx-dsp-devel 0.32.1, which no aarch64 tree serves. Placed in
+# fedora/<release>/noarch, which dnf reads on every architecture, it made the aarch64 cells uninstallable and the check
+# refused them. Under MATRIX_SET=quick the publish places a noarch package in the quick set's architecture trees of its
+# release (release-matrix/quick.txt) and the check judges only the quick cells: the other trees stay as served.
+arm_rpm_quick() {
+  for tool in rpmbuild createrepo_c dnf; do command -v $tool >/dev/null || { bad "rpm_quick: $tool is not installed"; return; }; done
+  local d=$t/quick rel arch out rc; mkdir -p "$d/top" "$d/new" "$d/empty"
+  local pub=$here/.github/actions/publish-rpms/publish-tree.sh run=$here/.github/actions/channel-installability/run.sh
+  mkq() { # name version arch release requires...
+    local n=$1 v=$2 arch=$3 r=$4; shift 4
+    { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\n' "$n" "$v"
+      [ "$arch" != noarch ] || printf 'BuildArch: noarch\n'
+      for q in "$@"; do printf 'Requires: %s\n' "$q"; done
+      printf '%%description\nt\n%%changelog\n* Sat Nov 14 2026 t <t@t> - %s-1\n- t\n%%files\n' "$v"; } > "$d/top/$n-$v-$arch-$r.spec"
+    rpmbuild -bb --target "$arch" -D "_topdir $d/top" -D "dist .fc$r" -D 'debug_package %{nil}' "$d/top/$n-$v-$arch-$r.spec" >/dev/null 2>&1 \
+      || { echo "rpmbuild $n $v $arch fc$r failed" >&2; return 1; }
+    find "$d/top/RPMS" -name "$n-$v-1.fc$r.$arch.rpm"
+  }
+  for rel in 44 45; do
+    local c=$d/channel/fedora/$rel
+    mkdir -p "$c/x86_64" "$c/aarch64" "$c/noarch" "$c/SRPMS"
+    mv "$(mkq omx-dsp-contract 0.32.0 noarch $rel '(omx-dsp-devel >= 0.32.0 with omx-dsp-devel < 0.33)')" "$c/noarch/"
+    mv "$(mkq omx-dsp-devel 0.32.0 x86_64 $rel)" "$c/x86_64/"
+    mv "$(mkq omx-dsp-devel 0.32.0 aarch64 $rel)" "$c/aarch64/"
+    mv "$(mkq omx-dsp-contract 0.32.1 noarch $rel '(omx-dsp-devel >= 0.32.1 with omx-dsp-devel < 0.33)')" "$d/new/"
+    mv "$(mkq omx-dsp-devel 0.32.1 x86_64 $rel)" "$d/new/"
+    for arch in x86_64 aarch64 noarch SRPMS; do createrepo_c -q "$c/$arch"; done
+  done
+  # the check, as a release run of the quick set runs it: the quick cells judged, every other one named and left out
+  rc=0; MATRIX_SET=quick REPOSDIR=$d/empty "$run" rpm "$d/new" "$d/channel" > "$t/out" 2>&1 || rc=$?
+  if [ "$rc" = 0 ]; then ok 'rpm_quick: the check of a quick release is green'
+  else bad "rpm_quick: the check of a quick release exits $rc"; sed 's/^/     /' "$t/out" | tail -15; fi
+  for rel in 44 45; do
+    grep -qF "fedora/$rel aarch64: outside the cells of the set, not judged" "$t/out" && ! grep -q "fedora/$rel aarch64: [0-9]* new" "$t/out" \
+      && ok "rpm_quick: ... fedora/$rel aarch64 is named and not judged" || bad "rpm_quick: fedora/$rel aarch64 was judged or not named"
+    grep -q "^fedora/$rel x86_64: 2 new" "$t/out" && ok "rpm_quick: ... fedora/$rel x86_64 is judged" || bad "rpm_quick: fedora/$rel x86_64 was not judged"
+  done
+  # the publish of the quick release, unsigned, on a copy of the channel
+  cp -a "$d/channel" "$d/tree"
+  (cd "$d/tree" && find fedora -name '*.rpm' ! -path '*/x86_64/*' | sort) > "$d/frozen.before"
+  rc=0; MATRIX_SET=quick "$pub" "$d/tree" "$d/new" > "$t/out" 2>&1 || rc=$?
+  [ "$rc" = 0 ] && ok 'rpm_quick: the publish of a quick release places its packages' || { bad "rpm_quick: the publish exits $rc"; sed 's/^/     /' "$t/out" | tail -15; return; }
+  for rel in 44 45; do
+    [ -f "$d/tree/fedora/$rel/x86_64/omx-dsp-contract-0.32.1-1.fc$rel.noarch.rpm" ] && [ ! -e "$d/tree/fedora/$rel/noarch/omx-dsp-contract-0.32.1-1.fc$rel.noarch.rpm" ] \
+      && ok "rpm_quick: ... the noarch contract lands in fedora/$rel/x86_64 alone, never in fedora/$rel/noarch" \
+      || bad "rpm_quick: the noarch contract of fc$rel is at $(cd "$d/tree" && find fedora -name "omx-dsp-contract-0.32.1-*fc$rel*")"
+  done
+  (cd "$d/tree" && find fedora -name '*.rpm' ! -path '*/x86_64/*' | sort) > "$d/frozen.after"
+  cmp -s "$d/frozen.before" "$d/frozen.after" && ok 'rpm_quick: ... the aarch64 and noarch trees hold what they served' \
+    || bad "rpm_quick: the trees outside the quick set changed: $(diff "$d/frozen.before" "$d/frozen.after" | grep '^[<>]' | tr '\n' ' ')"
+  # what a machine of each architecture sees after the publish: every package installs, the newest contract on x86_64
+  for rel in 44 45; do
+    for arch in aarch64 x86_64; do
+      rc=0
+      dnf --setopt=reposdir="$d/empty" --releasever=$rel --forcearch=$arch --setopt='*.gpgcheck=0' \
+        --repofrompath=a,"$d/tree/fedora/$rel/$arch" --repofrompath=n,"$d/tree/fedora/$rel/noarch" \
+        repoclosure --newest --check=a,n --arch=$arch --arch=noarch > "$t/out" 2>&1 || rc=$?
+      [ "$rc" = 0 ] && ok "rpm_quick: ... a fedora $rel $arch machine installs every package the channel serves it" \
+        || { bad "rpm_quick: fedora $rel $arch does not install after the quick publish"; sed 's/^/     /' "$t/out" | tail -8; }
+    done
+  done
 }
 
 # A dry run builds x86_64 only (omx-plugins 0.19.2): its noarch contract 0.19.2 replaces 0.19.1 on aarch64 too, where the

@@ -82,6 +82,8 @@ jobs:
           base-url: ${{ inputs.base-url }}
           suites: ${{ inputs.suites }}
           same-pass: ${{ inputs.same-pass }}
+          # while a release wave is open (quick), the quick set's cells alone: nothing reaches the other trees
+          matrix-set: ${{ vars.OMX_RELEASE_MATRIX }}
 
   rpm:
     name: Installability (rpm)
@@ -112,3 +114,5 @@ jobs:
           base-url: ${{ inputs.base-url }}
           fedora-versions: ${{ inputs.fedora-versions }}
           same-pass: ${{ inputs.same-pass }}
+          # while a release wave is open (quick), the quick set's cells alone: nothing reaches the other trees
+          matrix-set: ${{ vars.OMX_RELEASE_MATRIX }}

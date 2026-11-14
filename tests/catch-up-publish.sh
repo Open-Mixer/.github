@@ -80,7 +80,10 @@ rpm)
     mkrpm plugin-qualify aarch64 44 catchup "$work/catchup" a
     mkrpm plugin-qualify-langpack-ca noarch 44 rebuilt "$work/catchup"
     new=fedora/44/aarch64/plugin-qualify-0.20.4-1.fc44.aarch64.rpm
-    indep=fedora/44/noarch/plugin-qualify-langpack-ca-0.20.4-1.fc44.noarch.rpm
+    # the first publish is a quick release: its noarch language pack is served from the quick tree, fc44 x86_64, alone
+    indep=fedora/44/x86_64/plugin-qualify-langpack-ca-0.20.4-1.fc44.noarch.rpm
+    # and the catch-up hands the served file, the same bytes, to the cell it fills
+    handed=fedora/44/aarch64/plugin-qualify-langpack-ca-0.20.4-1.fc44.noarch.rpm
     srpm=fedora/44/SRPMS/plugin-qualify-0.20.4-1.fc44.src.rpm
     [ -f "$tree/$srpm" ] && [ -f "$work/catchup/$(basename "$srpm")" ] || fail "the fixture has no source rpm on both sides"
     cmp -s "$work/catchup/$(basename "$srpm")" "$tree/$srpm" && fail "the fixture's rebuilt source rpm has the served bytes"
@@ -117,12 +120,20 @@ if [ "$kind" = rpm ]; then
     grep -q "^dropped $(basename "$srpm") " "$work/log" || { cat "$work/log"; fail "the rebuilt source rpm was not dropped"; }
 fi
 ch=$(changed "$work/before" "$work/after")
-unexpected=$(grep -vxE "$new|cells\.tsv|$index" <<< "$ch" || true)
+unexpected=$(grep -vxE "$new|${handed:-$new}|cells\.tsv|$index" <<< "$ch" || true)
 [ -z "$unexpected" ] || { cat "$work/log"; fail "the catch-up changed served files: $unexpected"; }
 grep -qxF "$new" <<< "$ch" || fail "the snapshot does not see the new file: $ch"
+if [ -n "${handed:-}" ]; then
+    cmp -s "$tree/$handed" "$tree/$indep" || fail "the cell the catch-up filled did not get the served $(basename "$indep"), byte for byte"
+    [ ! -e "$tree/fedora/44/noarch/$(basename "$indep")" ] || fail "the catch-up wrote $(basename "$indep") into fedora/44/noarch"
+    ok "$kind: the filled cell gets the noarch file the quick tree serves, the same bytes, and fedora/44/noarch is untouched"
+fi
 ok "$kind: the missing cell placed and indexed; the rebuilt arch-independent package dropped; every other file byte-identical"
 [ "$(row plugin-qualify 0.20.4)" = "quick|$served_cells" ] || fail "cells.tsv records $(row plugin-qualify 0.20.4) for 0.20.4, not quick|$served_cells"
-diff <(grep -v '^plugin-qualify	0.20.4	' "$work/cells.before") <(grep -v '^plugin-qualify	0.20.4	' "$tree/cells.tsv") > /dev/null ||
+if [ -n "${handed:-}" ]; then
+    [ "$(row plugin-qualify-langpack-ca 0.20.4)" = "quick|$served_cells" ] || fail "cells.tsv records $(row plugin-qualify-langpack-ca 0.20.4) for the handed language pack, not quick|$served_cells"
+fi
+diff <(grep -vE '^plugin-qualify(-langpack-ca)?	0.20.4	' "$work/cells.before") <(grep -vE '^plugin-qualify(-langpack-ca)?	0.20.4	' "$tree/cells.tsv") > /dev/null ||
     fail "cells.tsv changed other lines: $(diff "$work/cells.before" "$tree/cells.tsv")"
 ok "$kind: cells.tsv records the new cell beside the served one, keeps the version's set and every other line"
 
