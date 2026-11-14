@@ -62,6 +62,10 @@ on:
         type: string
         default: ''
         description: 'Binary RPMs the build must produce, space separated names or globs (e.g. omx-plugins-clap omx-plugins-lv2). Empty means package-name.'
+      arch-binary-names:
+        type: string
+        default: '{}'
+        description: 'JSON object of architecture to space separated binary names, for a package whose binaries differ by architecture (each built for its own one: {"x86_64": "a", "aarch64": "b"}). The build and install-check jobs of an architecture it names take its names in place of binary-names; an architecture it does not name takes binary-names. binary-names stays the whole list (the preflight reads it).'
       publish:
         type: boolean
         default: false
@@ -338,7 +342,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
           FIRST_ARCH: ${{ needs.preflight.outputs.first-arch }}
           NAME: ${{ inputs.package-name }}
-          BINARIES: ${{ inputs.binary-names }}
+          BINARIES: ${{ fromJSON(inputs.arch-binary-names)[matrix.arch] || inputs.binary-names }}
         run: |
           find rpms -name '*.rpm' | sort | tee built.txt
           test -s built.txt || { echo "::error::no RPM was produced"; exit 1; }
@@ -540,7 +544,7 @@ jobs:
         env:
           TAG: ${{ inputs.source-ref || github.ref_name }}
           NAME: ${{ inputs.package-name }}
-          BINARIES: ${{ inputs.binary-names }}
+          BINARIES: ${{ fromJSON(inputs.arch-binary-names)[matrix.arch] || inputs.binary-names }}
           BASE_URL: ${{ inputs.base-url }}
         run: |
           set -o pipefail
