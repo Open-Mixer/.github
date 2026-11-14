@@ -473,3 +473,4 @@ jobs:
       - run: .github/actions/deps-render/render.sh --self-test
       - uses: ./.github/actions/private-refs-check
       - uses: ./.github/actions/spdx-check
+      - run: tests/trigger-gate.sh
