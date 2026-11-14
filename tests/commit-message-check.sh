@@ -141,9 +141,9 @@ rc=0; env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/h
 git remote add origin https://github.com/someone/elsewhere.git
 rc=0; env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/h-err" || rc=$?
 [ "$rc" = 0 ] && grep -q 'house: not judged (no house origin)' "$tmp/h-err" || fail "a repository with a foreign origin judged the house identity (rc $rc): $(cat "$tmp/h-err")"
-git remote set-url origin git@github.com:FreeMixer/openmixer.git
+git remote set-url origin git@github.com:FreeMixer/house-fixture.git
 if env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then fail "a FreeMixer origin let a foreign identity commit"; fi
-git remote set-url origin https://github.com/Open-Mixer/openmixer.git
+git remote set-url origin https://github.com/Open-Mixer/house-fixture.git
 env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null || fail "a clean message from the house identity was refused"
 for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on ms''i overnight'; do
   printf 'a change\n\n%s\n' "$line" > "$tmp/m-bad"
