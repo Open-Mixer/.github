@@ -50,7 +50,7 @@ defaults:
 jobs:
   test:
     name: build and test (${{ inputs.image }})
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runs-on }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runs-on != 'ubuntu-latest' && inputs.runs-on) || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     container:
       image: ${{ inputs.image }}

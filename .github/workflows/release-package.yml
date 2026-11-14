@@ -112,7 +112,7 @@ jobs:
   rpm:
     name: Build the RPM (fc44) and install it
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     container:
       image: fedora:44
@@ -144,7 +144,7 @@ jobs:
   deb:
     name: Build the DEB
     needs: [preflight, plan]
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     container:
       # the oldest release of the set builds it: bookworm with the whole matrix, trixie while the wave is quick
@@ -174,7 +174,7 @@ jobs:
   deb-install:
     name: Install the DEB (${{ matrix.suite }})
     needs: [plan, deb]
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     container:
       image: debian:${{ matrix.suite }}
@@ -387,7 +387,7 @@ jobs:
     name: Install check from the channel (${{ matrix.image }})
     needs: [preflight, verify-plan, publish-rpm, publish-deb]
     if: needs.preflight.outputs.publish == 'true' && needs.verify-plan.outputs.count != '0'
-    runs-on: ubuntu-latest
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: ${{ matrix.image }}
