@@ -186,8 +186,6 @@ plan_of() { grep -F "\"file\": \"$1\"" "$t/plans.jsonl" | grep -F "\"job\": \"$2
 # <file> <job>: run the plan step's action as a run of this kind would, for the wave quick and full
 render_plan() { # <file> <job> <wave> <event> <ref type>: key=value lines in $t/out, the notice in $t/log
     local p m=''; p=$(plan_of "$1" "$2" | head -1)
-    # clap-rpm.yml is also a pull-request check: its matrix input is the variable there
-    [ "$4" != pull_request ] || m=$3
     [ -n "$p" ] || { no "$1 job $2 has no release-matrix or check-matrix step"; return 1; }
     : > "$t/out"
     case $(python3 -I -c 'import json,sys; print(json.loads(sys.argv[1])["action"])' "$p") in
@@ -228,7 +226,7 @@ check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '44 x86_
 check_plan "rncbc-v1 rpm" rncbc-v1-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
 check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
-check_plan "clap rpm" clap-rpm.yml plan pull_request '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
+check_plan "clap rpm" clap-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 # the release package: an Architecture: all deb, built and laid out for the suites of the set; its install check after the publish
 check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie amd64' 'bookworm amd64, trixie amd64' 'bookworm amd64'
 render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \

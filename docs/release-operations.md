@@ -387,7 +387,7 @@ a check uses `check-matrix` (its `images`, or `cells`). Both name what they skip
 | `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
 
 A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the quick
-set without it); `clap-rpm.yml`'s pull request follows the variable too. The one-cell jobs of `ci.yml` (key transition,
+set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
 staging, channel installability) are toolchain arms on an image the quick set always builds, and the test holds each to
 the set. What stays literal, each with its reason, is the `ALLOW` list of the test: the whole matrices the reusable
 workflows declare as input defaults, and the tables of `publish-fedora.yml` and `publish-freereac.yml`, all handed to

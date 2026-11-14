@@ -474,3 +474,5 @@ jobs:
       - uses: ./.github/actions/private-refs-check
       - uses: ./.github/actions/spdx-check
       - run: tests/trigger-gate.sh
+      - name: The trigger gate reads this repository's own workflows (this file is the one lint)
+        run: .github/actions/trigger-gate/check.sh --lint ci.yml .

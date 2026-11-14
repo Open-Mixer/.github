@@ -6,7 +6,7 @@ name: CLAP RPMs
 # installs from a clean state, pkg-config and a compile see 1.2.10, and it upgrades the Fedora release's own older
 # clap-devel), then publishes it into rpm/ of the Pages repository. 1.2.10 is the CLAP floor of every package of the
 # channel, and Fedora 44 and 45 ship 1.2.7; clap-headers-deb.yml serves the same pin to Debian. Run by hand, once per
-# change of the spec: a published NEVRA is never rebuilt with new bytes.
+# change of the spec (no heavy Action on a push or pull request; tags and dispatch only, plus one named lint: a dry-run dispatch is the check of a change to the spec, the pins or this file): a published NEVRA is never rebuilt with new bytes.
 #
 # publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
 on:
@@ -20,12 +20,6 @@ on:
         description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
         type: string
         default: ''
-  pull_request:
-    paths:
-      - 'packaging/clap-headers/**'
-      - '.github/actions/pinned-rpms/**'
-      - '.github/pins.txt'
-      - '.github/workflows/clap-rpm.yml'
 
 permissions:
   contents: read
@@ -67,7 +61,7 @@ jobs:
         uses: ./.github/actions/release-matrix
         with:
           kind: rpm
-          matrix: ${{ inputs.matrix || (github.event_name == 'pull_request' && vars.OMX_RELEASE_MATRIX || '') }}
+          matrix: ${{ inputs.matrix || '' }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
           releases: '["44", "45"]'
           arches: '["x86_64", "aarch64"]'
