@@ -23,7 +23,9 @@
 #   SKELETON    Fedora releases, space separated, whose fedora/<release>/ directories get metadata even with nothing in
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
-#   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none
+#   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none.
+#               quick also places a noarch package in the quick set's architecture trees of its release
+#               (fedora/<release>/<arch>, from release-matrix/quick.txt), never in fedora/<release>/noarch: see below
 #   CATCH_UP    'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel holds
 #               (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every package of
 #               <rpm dir> whose path the tree already holds is judged: a noarch or source package is dropped from what is
@@ -63,6 +65,7 @@ done
 
 declare -A dirs=()
 declare -A dropped=()
+declare -A served_noarch=() # <release>: the served noarch files a catch-up hands to the cells it fills (below)
 placed=()
 # a catch-up writes no file the channel holds: noarch and source packages are dropped, any other refuses the run
 if [ "${CATCH_UP:-}" = true ]; then
@@ -73,6 +76,12 @@ if [ "${CATCH_UP:-}" = true ]; then
         releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
         [ -n "$releasever" ] || { echo "$f has no .fcNN dist tag" >&2; exit 1; }
         path=fedora/$releasever/$archdir/$(basename "$f")
+        # a noarch package a quick release served sits in that release's quick architecture trees, not in noarch
+        if [ "$archdir" = noarch ] && [ ! -e "$tree/$path" ]; then
+            for s in "$tree/fedora/$releasever"/*/"$(basename "$f")"; do
+                [ -f "$s" ] && { path=${s#"$tree"/}; served_noarch[$releasever]="${served_noarch[$releasever]:-} $s"; break; }
+            done
+        fi
         [ -e "$tree/$path" ] || continue
         if [ "$archdir" = noarch ] || [ "$archdir" = SRPMS ]; then
             dropped[$f]=1
@@ -94,6 +103,28 @@ fi
 # by a quick release built for x86_64 alone). Judged only for a noarch package this run places that becomes the newest of
 # its name in the release, so a catch-up (which drops a served noarch package) and an older noarch package are never
 # refused. Nothing is placed or signed when it refuses.
+# A QUICK RELEASE PLACES A NOARCH PACKAGE IN THE QUICK SET'S ARCHITECTURE TREES ALONE (omx-dsp 0.32.1, 2026-11-14).
+# fedora/<release>/noarch is read by every architecture, so a noarch package the quick set built for x86_64 alone,
+# placed there, reached the aarch64 machines without the aarch64 packages it needs, and the aarch64 cells refused it.
+# With MATRIX_SET=quick it goes into fedora/<release>/<arch> for each architecture quick.txt names for its release
+# (a repository directory holds a noarch package as well as any other), and every other tree stays as it is served
+# until the full matrix publishes. A release quick.txt has no rpm cell for is refused, naming it. The pin guard below
+# judges fedora/<release>/noarch, which such a run does not touch, so it does not judge these packages.
+declare -A quick_arches=()
+if [ "${MATRIX_SET:-}" = quick ]; then
+    while read -r qk qr qa; do
+        [ "$qk" = rpm ] && quick_arches[$qr]="${quick_arches[$qr]:+${quick_arches[$qr]} }$qa"
+    done < <(grep -v '^#' "$here/../release-matrix/quick.txt")
+fi
+noarch_dirs() { # <releasever>: the architecture directories a noarch package of that release is placed in
+    if [ "${MATRIX_SET:-}" = quick ]; then
+        [ -n "${quick_arches[$1]:-}" ] || { echo "fc$1 has no rpm cell in the quick set (release-matrix/quick.txt): a quick release cannot place a noarch package of it" >&2; return 1; }
+        echo "${quick_arches[$1]}"
+    else
+        echo noarch
+    fi
+}
+
 rpm_cmp() { # <e> <v> <r> <e> <v> <r>: -1, 0 or 1 by rpm's own ordering
     python3 -I -c 'import sys, rpm; print(rpm.labelCompare(tuple(sys.argv[1:4]), tuple(sys.argv[4:7])))' "$@"
 }
@@ -102,6 +133,7 @@ for q in ${found[@]+"${found[@]}"}; do
     [ -z "${dropped[$q]:-}" ] || continue
     IFS='|' read -r qsrc_is arch qrel qname qver qepoch qsrcrpm < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}|%{EPOCHNUM}|%{SOURCERPM}\n' "$q")
     [ "$qsrc_is" != 1 ] && [ "$arch" = noarch ] || continue
+    [ "${MATRIX_SET:-}" != quick ] || continue
     releasever=$(printf '%s\n' "$qrel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
     [ -n "$releasever" ] || continue
     [ ! -f "$tree/fedora/$releasever/noarch/$(basename "$q")" ] || continue
@@ -134,6 +166,15 @@ for q in ${found[@]+"${found[@]}"}; do
             done
             [ -n "$serves" ] || continue
             case " ${pinners[$pname]} " in *" $a "*) continue ;; esac
+            # a newer build of it that this architecture's own tree serves (a quick release placed it there) is dnf's
+            # candidate there, not this one
+            newer=
+            for s in "$archdir"*.noarch.rpm; do
+                [ -f "$s" ] || continue
+                IFS='|' read -r sname se sv sr < <(rpm -qp --qf '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}\n' "$s")
+                [ "$sname" = "$qname" ] && [ "$(rpm_cmp "$se" "$sv" "$sr" "$qepoch" "$qver" "$qrel")" = 1 ] && { newer=1; break; }
+            done
+            [ -z "$newer" ] || continue
             # a build of the pinning package at the pinned version already there is not left behind
             built=
             for s in "$archdir"*.rpm; do
@@ -154,27 +195,46 @@ done
 for f in ${found[@]+"${found[@]}"}; do
     [ -z "${dropped[$f]:-}" ] || continue
     IFS='|' read -r is_src arch rel pkg ver < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{RELEASE}|%{NAME}|%{VERSION}\n' "$f")
-    [ "$is_src" = 1 ] && archdir=SRPMS || archdir=$arch
     releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
     [ -n "$releasever" ] || { echo "$f has no .fcNN dist tag" >&2; exit 1; }
-    dest=$tree/fedora/$releasever/$archdir
-    mkdir -p "$dest"
-    dirs[$dest]=1
-    if [ -f "$dest/$(basename "$f")" ]; then
-        echo "kept   $(basename "$f") (already published; a changed build needs a new Release)"
-    else
-        install -m 0644 "$f" "$dest/"
-        placed+=("$dest/$(basename "$f")")
-        echo "placed $(basename "$f") in fedora/$releasever/$archdir"
-    fi
-    [ "${NEWEST_ONLY:-}" = true ] || continue
-    case $rel in *.git*) ;; *) continue ;; esac
-    for old in "$dest/$pkg-$ver-"*.git*.rpm; do
-        [ -f "$old" ] && [ "$(basename "$old")" != "$(basename "$f")" ] || continue
-        # omx-lib-3.14.0-* is also how a package named omx-lib-3.14.0 would start: ask the file
-        [ "$(rpm -qp --qf '%{NAME}|%{VERSION}' "$old")" = "$pkg|$ver" ] || continue
-        rm -f "$old"
-        echo "dropped $(basename "$old") from fedora/$releasever/$archdir (an earlier staged build of $ver)"
+    if [ "$is_src" = 1 ]; then archdirs=SRPMS
+    elif [ "$arch" = noarch ]; then archdirs=$(noarch_dirs "$releasever") || exit 1
+    else archdirs=$arch; fi
+    for archdir in $archdirs; do
+        dest=$tree/fedora/$releasever/$archdir
+        mkdir -p "$dest"
+        dirs[$dest]=1
+        if [ -f "$dest/$(basename "$f")" ]; then
+            echo "kept   $(basename "$f") (already published; a changed build needs a new Release)"
+        else
+            install -m 0644 "$f" "$dest/"
+            placed+=("$dest/$(basename "$f")")
+            echo "placed $(basename "$f") in fedora/$releasever/$archdir"
+        fi
+        [ "${NEWEST_ONLY:-}" = true ] || continue
+        case $rel in *.git*) ;; *) continue ;; esac
+        for old in "$dest/$pkg-$ver-"*.git*.rpm; do
+            [ -f "$old" ] && [ "$(basename "$old")" != "$(basename "$f")" ] || continue
+            # omx-lib-3.14.0-* is also how a package named omx-lib-3.14.0 would start: ask the file
+            [ "$(rpm -qp --qf '%{NAME}|%{VERSION}' "$old")" = "$pkg|$ver" ] || continue
+            rm -f "$old"
+            echo "dropped $(basename "$old") from fedora/$releasever/$archdir (an earlier staged build of $ver)"
+        done
+    done
+done
+
+# A catch-up of a version a quick release published: its noarch packages are served from the quick architecture trees
+# alone, which the cells it fills do not read. The served file, the same bytes, goes into the architecture tree of every
+# cell the catch-up places a package in, so those machines get the noarch build the others have; the rebuild was dropped.
+for releasever in "${!served_noarch[@]}"; do
+    for archdir in $(for f in ${placed[@]+"${placed[@]}"}; do d=${f%/*}; case $d in "$tree/fedora/$releasever/"*) echo "${d##*/}" ;; esac; done | grep -vxE 'noarch|SRPMS' | sort -u); do
+        for s in ${served_noarch[$releasever]}; do
+            dest=$tree/fedora/$releasever/$archdir
+            [ ! -e "$dest/$(basename "$s")" ] || continue
+            install -m 0644 "$s" "$dest/"
+            placed+=("$dest/$(basename "$s")")
+            echo "placed $(basename "$s") in fedora/$releasever/$archdir (the served file of ${s#"$tree"/})"
+        done
     done
 done
 

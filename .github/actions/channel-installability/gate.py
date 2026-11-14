@@ -701,6 +701,14 @@ def unbuilt_pass(a, here, elsewhere):
     return list(a.same_pass) + sorted(elsewhere)
 
 
+def outside(a, release, arch, where):
+    """True, and says so, when --cell names the cells to judge and this one is not among them."""
+    if not a.cell or f"{release}/{arch}" in a.cell:
+        return False
+    say(f"{where}: outside the cells of the set, not judged")
+    return True
+
+
 def deb_arm(a):
     reds, warns, notes = [], [], []
     work = tempfile.mkdtemp(prefix="gate-deb-")
@@ -709,6 +717,10 @@ def deb_arm(a):
         built = sorted(d for d in os.listdir(a.new_dir) if os.path.isdir(os.path.join(a.new_dir, d))) \
             if a.new_dir and os.path.isdir(a.new_dir) else []
         suites = a.suite or sorted(set(served_suites(a.channel, work)) | set(built))
+        if a.cell:
+            for suite in [x for x in suites if not any(c.startswith(f"{x}/") for c in a.cell)]:
+                say(f"debian/{suite}: outside the cells of the set, not judged")
+            suites = [x for x in suites if any(c.startswith(f"{x}/") for c in a.cell)]
         for suite in suites:
             pub_src = join(a.channel, "debian", suite, "Packages")
             published = parse_stanzas(open(fetch(pub_src, os.path.join(work, f"pub-{suite}"))).read())
@@ -724,6 +736,8 @@ def deb_arm(a):
             say(f"debian/{suite}: {len(published)} published, {len(new)} new "
                 f"({' '.join(sorted(new_names)) or 'none'}), architectures {' '.join(arches)}")
             for arch in arches:
+                if outside(a, suite, arch, f"debian/{suite} {arch}"):
+                    continue
                 bg = a.bg or debian_background(suite, arch, a.mirror, a.security, work)
                 pick = lambda ss: [s for s in ss if s[0].get("Architecture") in (arch, "all")]  # noqa: E731
                 same_pass = unbuilt_pass(a, {f["Package"] for f, _ in new if f.get("Architecture") == arch},
@@ -832,6 +846,8 @@ def rpm_arm(a):
         for rel in versions:
             for arch in arches:
                 where = f"fedora/{rel} {arch}"
+                if outside(a, rel, arch, where):
+                    continue
                 mine = [f for f in rpms if re.search(rf"\.fc{rel}\.({arch}|noarch)\.rpm$", f)]
                 rpm_name = lambda f: os.path.basename(f).rsplit("-", 2)[0]  # noqa: E731
                 same_pass = unbuilt_pass(
@@ -981,6 +997,9 @@ def main(argv=None):
                                                        "the published channel")
         p.add_argument("--keep", action="store_true", help="keep the work directory")
         p.add_argument("--no-newest", action="store_true", help="skip the arm that installs each package alone")
+        p.add_argument("--cell", action="append",
+                       help="judge only these cells, RELEASE/ARCH (44/x86_64, trixie/arm64); every other cell is named and "
+                            "left out. A release of the quick set passes its cells: the trees outside it stay as served")
         p.add_argument("--unbuilt-arch-pass", action="store_true",
                        help="a dry run: on an architecture with no binary package built, the binary packages built on "
                             "another count as released in the same pass")

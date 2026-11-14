@@ -8,14 +8,17 @@
 #
 # The fixture is omx-clap-core 0.32.4 on fc44, published by the real tree script with a throwaway key:
 #   fc44 x86_64 and aarch64 omx-clap-core 0.32.3, Requires omx-clap-core-contract = 0.32.3-1.fc44; noarch contract 0.32.3.
-#   A quick-set release then brings x86_64 omx-clap-core 0.32.4 and noarch omx-clap-core-contract 0.32.4.
+#   A release then brings x86_64 omx-clap-core 0.32.4 and noarch omx-clap-core-contract 0.32.4.
 # Proves:
-#   - that release is refused before anything is placed or signed, naming the noarch package, the Fedora release, the
+#   - outside the quick set (MATRIX_SET full or unset) that release is refused before anything is placed or signed, naming the noarch package, the Fedora release, the
 #     pinning package and the architecture it was not built for (aarch64); the tree is byte-identical after;
+#   - as a release of the quick set it publishes, the contract into fedora/44/x86_64 alone: fedora/44/noarch and
+#     fedora/44/aarch64 keep what they served, so aarch64 keeps omx-clap-core 0.32.3 with its contract 0.32.3;
 #   - the same release built for x86_64 and aarch64 publishes;
 #   - a noarch placed BELOW the newest one of the release is not dnf's candidate and is not refused;
 #   - on a channel with x86_64 0.32.4 and contract 0.32.4 served and aarch64 0.32.3 (older contract), the catch-up of
-#     aarch64 0.32.4 (its rebuilt contract dropped as served) publishes: the refusal never stands in the way of the repair;
+#     aarch64 0.32.4 (its rebuilt contract dropped as served) publishes, and aarch64 gets the served contract's bytes:
+#     the refusal never stands in the way of the repair;
 #   - a noarch nothing of its source pins exactly (a language pack) is published by a run of one architecture.
 # Sabotage: NOARCH_PIN_ACTIONS names a copy of the actions with the refusal taken out; the first arm then goes red.
 #
@@ -52,7 +55,7 @@ build() { # <out dir> <version> <arch> <subpackage> <op>   the binary package Re
     find "$work/rb-$id" -name '*.rpm' -exec cp {} "$1/" \;
 }
 core() { build "$1" "$2" "$3" contract =; }
-publish() { CATCH_UP=${CU:-} MATRIX_SET=${SET:-quick} "$actions/publish-rpms/publish-tree.sh" "$tree" "$1" "$key"; }
+publish() { CATCH_UP=${CU:-} MATRIX_SET=${SET:-full} "$actions/publish-rpms/publish-tree.sh" "$tree" "$1" "$key"; }
 served() { [ -f "$tree/fedora/44/$1" ]; }
 
 # ---- the channel before the quick release
@@ -61,7 +64,7 @@ core "$work/r0" 0.32.3 aarch64
 SET=full publish "$work/r0" > "$work/log" 2>&1 || { cat "$work/log"; fail "the fixture channel could not be published"; }
 cp -a "$tree" "$work/tree0"
 
-# ---- 1. a quick release of x86_64 alone: refused, nothing placed or signed
+# ---- 1. a release of x86_64 alone outside the quick set: refused, nothing placed or signed
 core "$work/r1" 0.32.4 x86_64
 snapshot "$work/before"
 if publish "$work/r1" > "$work/log" 2>&1; then cat "$work/log"; fail "a release built for x86_64 alone published omx-clap-core-contract 0.32.4 over aarch64's omx-clap-core 0.32.3"; fi
@@ -72,7 +75,17 @@ grep -q 'not built for aarch64' "$work/log" || { cat "$work/log"; fail "the refu
 grep -q 'nothing was placed or signed' "$work/log" || { cat "$work/log"; fail "the refusal does not say nothing was placed or signed"; }
 snapshot "$work/after"
 cmp -s "$work/before" "$work/after" || fail "the refused release changed the tree"
-ok "a quick release of x86_64 alone is refused: omx-clap-core-contract 0.32.4 would leave aarch64's omx-clap-core 0.32.3 uninstallable"
+ok "a release of x86_64 alone outside the quick set is refused: omx-clap-core-contract 0.32.4 would leave aarch64's omx-clap-core 0.32.3 uninstallable"
+
+# ---- 1q. the same release of the quick set: published into the quick tree alone, the other trees as served
+list() { (cd "$tree/fedora/44" && find noarch aarch64 -name '*.rpm' | LC_ALL=C sort); }
+list > "$work/outside.before"
+SET=quick publish "$work/r1" > "$work/log" 2>&1 || { cat "$work/log"; fail "a quick release of x86_64 alone was refused"; }
+served x86_64/omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm || { cat "$work/log"; fail "the quick release did not place its contract in fedora/44/x86_64"; }
+served noarch/omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm && fail "the quick release placed its contract in fedora/44/noarch, which aarch64 reads"
+list | cmp -s "$work/outside.before" - || fail "the quick release changed fedora/44/noarch or fedora/44/aarch64: $(list | diff "$work/outside.before" - | grep '^[<>]' | tr '\n' ' ')"
+ok "a quick release of x86_64 alone publishes its contract into fedora/44/x86_64 alone; noarch and aarch64 keep what they served"
+rm -rf "$tree"; cp -a "$work/tree0" "$tree"
 
 # ---- 2. the same release built for x86_64 and aarch64: published
 core "$work/r1" 0.32.4 aarch64
@@ -98,6 +111,8 @@ core "$work/r4c" 0.32.4 aarch64
 CU=true publish "$work/r4c" > "$work/log" 2>&1 || { cat "$work/log"; fail "the catch-up of aarch64 was refused"; }
 grep -q '^dropped omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm ' "$work/log" || { cat "$work/log"; fail "the catch-up did not drop the served contract"; }
 served aarch64/omx-clap-core-0.32.4-1.fc44.aarch64.rpm || fail "the catch-up's aarch64 package is not placed"
+cmp -s "$tree/fedora/44/aarch64/omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm" "$tree/fedora/44/x86_64/omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm" ||
+    { cat "$work/log"; fail "aarch64 did not get the contract 0.32.4 the quick tree serves, byte for byte"; }
 ok "the catch-up of the missing architecture publishes on the issue's channel"
 
 # ---- 5. a noarch nothing of its source pins exactly: a run of one architecture publishes it

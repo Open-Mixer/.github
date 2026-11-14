@@ -277,7 +277,7 @@ jobs:
             tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
           - arm: rpm
             image: fedora:44
-            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 findutils
+            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
     steps:
       - run: ${{ matrix.tools }}
       - uses: actions/checkout@v4

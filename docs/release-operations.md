@@ -489,6 +489,26 @@ one no served architecture's binary matches, which the release gate's newest-onl
 (deb), `tests/arch-all-served-pin.sh` (deb, served pinners) and `tests/noarch-pin.sh` (rpm) reproduce the case on a fixture channel, with the passing arms (every
 architecture built, an older package, the catch-up, a package nothing pins exactly) and a sabotage.
 
+### A quick release writes the quick trees alone
+
+While the set is `quick` the platforms are the quick cells and nothing else: every other tree keeps what it serves
+until the full matrix publishes. A quick release never builds an aarch64 rpm, so its `noarch` package must not reach an
+aarch64 machine: in `fedora/<release>/noarch`, which dnf reads on every architecture, it did (omx-dsp-contract 0.32.1
+needs omx-dsp-devel 0.32.1, which no aarch64 tree served, and the aarch64 cells refused it). So, with `MATRIX_SET=quick`:
+
+- `publish-rpms` places a `noarch` package in `fedora/<release>/<arch>` for each architecture `quick.txt` names for its
+  release (`x86_64` for fc44 and fc45), never in `fedora/<release>/noarch`; a release with no quick rpm cell is refused.
+  A repository directory serves a `noarch` package like any other, and dnf takes the newest of the two directories. An
+  `all` deb needs nothing new: a quick release builds only the quick set's suites, and each of them is a quick cell on
+  every architecture it serves.
+- `channel-installability` judges the quick cells alone (`--cell RELEASE/ARCH`, filled from `quick.txt` by `run.sh`
+  when `MATRIX_SET` is `quick`) and names every other cell "outside the cells of the set, not judged". The publish
+  actions set `MATRIX_SET`; the reusable `channel-installability.yml` passes `OMX_RELEASE_MATRIX`.
+
+`tests/channel-installability.sh rpm_quick` replays the omx-dsp case on a fixture channel: the check of the quick release
+is green and leaves aarch64 out, the contract lands in the `x86_64` trees alone, the `aarch64` and `noarch` trees hold
+what they served, and a machine of each architecture still installs everything it is served.
+
 ### Tests
 
 `tests/staging-channel.sh` (the workflows rendered, the precheck as written, the repository files, the purge guard),
