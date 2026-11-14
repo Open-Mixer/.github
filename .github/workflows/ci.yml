@@ -38,6 +38,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: tests/commit-message-check.sh
+      - run: tests/fedora-cells.sh
       - run: tests/preamble-actions.sh
       - run: tests/channel-keep-list.sh
       - run: tests/pinned-keys.sh

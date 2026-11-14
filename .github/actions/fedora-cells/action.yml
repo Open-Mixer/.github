@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: fedora-cells
+description: No Fedora release is written into a job; every job's cells come from release-matrix or check-matrix
+
+# Rule 11-10 runs fc45 beside fc44 in every check; ruling D25 takes every job's cells from release-matrix or
+# check-matrix, whose quick.txt carries both. check.sh says what is red and what is green. A caller's CI:
+#
+#   - uses: actions/checkout@v4
+#   - uses: Open-Mixer/.github/.github/actions/fedora-cells@openmixer-v1
+
+inputs:
+  workflows:
+    description: the caller's workflow directory
+    default: .github/workflows
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WORKFLOWS: ${{ inputs.workflows }}
+      run: |
+        "$GITHUB_ACTION_PATH/check.sh" "$WORKFLOWS"
