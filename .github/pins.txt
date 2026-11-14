@@ -14,3 +14,4 @@ lv2-swh-plugins https://github.com/swh/lv2 5098e09e255eaed14e0d40ca5e7e6dfcb782d
 lv2-ir-plugins https://git.hq.sig7.se/ir.lv2.git 1d4a4f9b1aad6223d541ebb0c16d85d527478222
 ams-lv2 https://github.com/blablack/ams-lv2 f029b1e4ad7717d11fb3b1b8201ea5abac21d553
 calf https://github.com/calf-studio-gear/calf 60c4963333de726f0a6d502d97fffe8d7dec8499
+DISTRHO-Ports https://github.com/DISTRHO/DISTRHO-Ports 43330739392197cd1b3b0df23b194879ddf68f23
