@@ -133,6 +133,17 @@ if realcommit -m "change" -m "Co-Authored""-By: Claude <noreply@anthro""pic.com>
 # commits@openmixer.org), the rule each repository's own author hook used to carry
 cd "$tmp/r"
 printf 'a change\n\nthe pins check: every declared pin still resolves\n' > "$tmp/m-clean"
+# the house identity is judged only in a repository whose origin names a house org (Open-Mixer or FreeMixer): a fixture
+# repository with no origin, or a foreign one, commits as anyone and the hook says so; message patterns still apply
+NOTHOUSE=(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid)
+rc=0; env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/h-err" || rc=$?
+[ "$rc" = 0 ] && grep -q 'house: not judged (no house origin)' "$tmp/h-err" || fail "a repository with no origin judged the house identity (rc $rc): $(cat "$tmp/h-err")"
+git remote add origin https://github.com/someone/elsewhere.git
+rc=0; env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/h-err" || rc=$?
+[ "$rc" = 0 ] && grep -q 'house: not judged (no house origin)' "$tmp/h-err" || fail "a repository with a foreign origin judged the house identity (rc $rc): $(cat "$tmp/h-err")"
+git remote set-url origin git@github.com:FreeMixer/openmixer.git
+if env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then fail "a FreeMixer origin let a foreign identity commit"; fi
+git remote set-url origin https://github.com/Open-Mixer/openmixer.git
 env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null || fail "a clean message from the house identity was refused"
 for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on ms''i overnight'; do
   printf 'a change\n\n%s\n' "$line" > "$tmp/m-bad"
