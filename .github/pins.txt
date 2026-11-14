@@ -15,3 +15,4 @@ lv2-ir-plugins https://git.hq.sig7.se/ir.lv2.git 1d4a4f9b1aad6223d541ebb0c16d85d
 ams-lv2 https://github.com/blablack/ams-lv2 f029b1e4ad7717d11fb3b1b8201ea5abac21d553
 calf https://github.com/calf-studio-gear/calf 60c4963333de726f0a6d502d97fffe8d7dec8499
 DISTRHO-Ports https://github.com/DISTRHO/DISTRHO-Ports 43330739392197cd1b3b0df23b194879ddf68f23
+zita-convolver https://github.com/deepin-community/zita-convolver 930492863d7bdb7922fb7b587ccb8fb1290a1811
