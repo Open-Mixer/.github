@@ -7,3 +7,12 @@ nanovg https://github.com/memononen/nanovg.git ce3bf745eb2d2dbc14a50bf2446783f69
 # mod-host: the OpenMixer fork, which packages itself (its spec and debian/); move this to its release tag to publish
 mod-host https://github.com/Open-Mixer/mod-host aba7c05a8ae7aabdde6220361ec001a8a0a57b33
 surge-xt https://github.com/surge-synthesizer/surge 72a602284b7a599ee3a93d7a830236776e0abb2b
+# synthv1 and samplv1: upstream's v1.5.1 tag; the specs carry the teardown fix merged after it (packaging/<name>/overlay)
+synthv1 https://github.com/rncbc/synthv1 b1165dc283d98deb5f46d0506bc1f7b3bccb82fa
+samplv1 https://github.com/rncbc/samplv1 3a18dd469221d141830f08fdb6b907017d7ff974
+lv2-swh-plugins https://github.com/swh/lv2 5098e09e255eaed14e0d40ca5e7e6dfcb782d7ea
+lv2-ir-plugins https://git.hq.sig7.se/ir.lv2.git 1d4a4f9b1aad6223d541ebb0c16d85d527478222
+ams-lv2 https://github.com/blablack/ams-lv2 f029b1e4ad7717d11fb3b1b8201ea5abac21d553
+calf https://github.com/calf-studio-gear/calf 60c4963333de726f0a6d502d97fffe8d7dec8499
+DISTRHO-Ports https://github.com/DISTRHO/DISTRHO-Ports 43330739392197cd1b3b0df23b194879ddf68f23
+zita-convolver https://github.com/deepin-community/zita-convolver 930492863d7bdb7922fb7b587ccb8fb1290a1811

@@ -1,0 +1,21 @@
+calf: start the synth block counter at 0
+
+block_allvoices_base::sample_ctr was never initialised, so the first
+fill_snapshots() of the Wavetable (and Organ) synth read heap left-overs,
+looped once per 64-sample block of that garbage and wrote control_snapshots[]
+far past its end (index 33646 in one run).
+https://github.com/Open-Mixer/plugin-qualify/issues/14
+
+diff --git a/src/calf/synth.h b/src/calf/synth.h
+index fbd90a5..f5f0611 100644
+--- a/src/calf/synth.h
++++ b/src/calf/synth.h
+@@ -135,7 +135,7 @@ class block_allvoices_base
+ {
+ public:
+     enum { BlockSize = Base::BlockSize, MaxSnapshots = (Base::MaxSampleRun + Base::BlockSize - 1) / Base::BlockSize + 1 };
+-    unsigned int sample_ctr;
++    unsigned int sample_ctr = 0;
+ 
+     void fill_snapshots(int nsamples)
+     {

@@ -1,0 +1,31 @@
+swh revdelay: compute the delay ramp from its start and keep it at one sample or more
+
+The ramp summed a negative slope 256 times in float and overshot below half a
+sample, so delay2 became 0 and "write_phase % delay2" divided by zero (SIGFPE)
+when Delay Time dropped from 2.75 s or more to 0 inside one block.
+https://github.com/Open-Mixer/plugin-qualify/issues/17
+
+diff --git a/plugins/revdelay-swh.lv2/plugin.xml b/plugins/revdelay-swh.lv2/plugin.xml
+index 70547a9..67a9d1c 100644
+--- a/plugins/revdelay-swh.lv2/plugin.xml
++++ b/plugins/revdelay-swh.lv2/plugin.xml
+@@ -100,6 +100,7 @@
+       } else {
+         float next_delay_samples = CALC_DELAY (delay_time);
+         float delay_samples_slope = (next_delay_samples - delay_samples) / sample_count;
++        const float start_delay = delay_samples;
+ 
+         for (i=0; i<sample_count; i++) {
+           long read_phase, idelay_samples;
+@@ -107,7 +108,10 @@
+           LADSPA_Data insamp;
+           insamp = in[i];
+ 
+-          delay_samples += delay_samples_slope;
++          /* from the start of the ramp, not summed: a sum of a large negative slope overshoots below one sample, and
++           * delay2 and idelay_samples, the divisors below, reach 0 */
++          delay_samples = start_delay + delay_samples_slope * (i + 1);
++          if (delay_samples < 1.f) delay_samples = 1.f;
+           delay2 = (long) (delay_samples * 2);
+           write_phase = (write_phase + 1) % delay2;
+ 

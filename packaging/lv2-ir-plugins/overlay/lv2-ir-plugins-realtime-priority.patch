@@ -1,0 +1,12 @@
+diff --git a/ir.cc b/ir.cc
+index 83c2be8..c3d9141 100644
+--- a/ir.cc
++++ b/ir.cc
+@@ -46,7 +46,7 @@
+  * freewheeling mode (eg. while exporting in Ardour). You may only use
+  * false if you *only* run the plugin realtime.
+  */
+-#define CONVPROC_SCHEDULER_PRIORITY 0
++#define CONVPROC_SCHEDULER_PRIORITY 20
+ #define CONVPROC_SCHEDULER_CLASS SCHED_FIFO
+ #define THREAD_SYNC_MODE true

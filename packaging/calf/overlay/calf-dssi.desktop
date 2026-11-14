@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# Fedora's calf desktop entry, Source1 of calf.spec, unchanged below.
+[Desktop Entry]
+Name=Calf Plugin Pack for DSSI
+GenericName=Audio Effects
+Comment=Process and produce sounds using a set of plugins with DSSI interface
+Icon=calf
+Type=Application
+Exec=calf
+Terminal=false
+Categories=Audio;AudioVideo;Midi;X-Synthesis;X-Jack;
