@@ -263,7 +263,7 @@ jobs:
             promote/rpm/*.rpm
             promote/rpm.sha256
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || !inputs.dry-run) && 30 || 2 }}
 
       - name: Report a dry run honestly
         if: inputs.dry-run
@@ -332,7 +332,7 @@ jobs:
             promote/deb/*/*.deb
             promote/deb.sha256
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || !inputs.dry-run) && 30 || 2 }}
 
       - name: Report a dry run honestly
         if: inputs.dry-run

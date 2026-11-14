@@ -20,6 +20,20 @@ permissions:
 Without `issues: write` the `report-failure` job still runs, and ends in an error naming the missing permission
 instead of a silent miss.
 
+## Artifact retention
+
+The organisation's Actions artifact storage is a quota shared by every repository, so a pull-request or lane run must not
+hold its artifacts for weeks. Every `upload-artifact` in these workflows sets `retention-days` explicitly, and always with
+the one expression form
+
+    retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || <release condition>) && 30 || 2 }}
+
+A release run keeps 30 days; every other run (pull request, lane, dry-run dispatch) keeps 2. The release condition is
+the workflow's own sign that it publishes: `inputs.publish` (and `inputs.staged` in build-rpm.yml and build-deb.yml)
+where the workflow has them, `!inputs.dry-run` in promote-staged.yml, and the tag alone in release-package.yml. A
+reusable workflow reads the caller's `github.ref`, so a caller changes nothing. A repository that calls these and
+uploads its own artifacts uses the same form with its own release condition.
+
 ## Secrets
 
 | Secret | Used for |
