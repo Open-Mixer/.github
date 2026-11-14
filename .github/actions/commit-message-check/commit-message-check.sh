@@ -70,8 +70,21 @@ def report(label, text, markers):
     return len(h)
 
 
+HOUSE_ORIGIN = re.compile(r"github\.com[:/](Open-Mixer|FreeMixer)/", re.I)
+
+
+def house_origin():
+    """True when this repository's origin names a house org: only there is the house identity the rule (D47)."""
+    p = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    return p.returncode == 0 and bool(HOUSE_ORIGIN.search(p.stdout.strip()))
+
+
 def house_hits():
-    """The commit about to be made: its author and committer, as git var reads them, against the list's house identity."""
+    """The commit about to be made: its author and committer, as git var reads them, against the list's house identity.
+    Judged only in a repository whose origin names a house org; a fixture or foreign repository is not judged, and says so."""
+    if not house_origin():
+        print("house: not judged (no house origin)", file=sys.stderr)
+        return []
     with open(pfile, encoding="utf-8") as f:
         house = json.load(f)["house"]
     out = []
