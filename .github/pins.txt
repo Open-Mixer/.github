@@ -7,3 +7,6 @@ nanovg https://github.com/memononen/nanovg.git ce3bf745eb2d2dbc14a50bf2446783f69
 # mod-host: the OpenMixer fork, which packages itself (its spec and debian/); move this to its release tag to publish
 mod-host https://github.com/Open-Mixer/mod-host aba7c05a8ae7aabdde6220361ec001a8a0a57b33
 surge-xt https://github.com/surge-synthesizer/surge 72a602284b7a599ee3a93d7a830236776e0abb2b
+# synthv1 and samplv1: upstream's v1.5.1 tag; the specs carry the teardown fix merged after it (packaging/<name>/overlay)
+synthv1 https://github.com/rncbc/synthv1 b1165dc283d98deb5f46d0506bc1f7b3bccb82fa
+samplv1 https://github.com/rncbc/samplv1 3a18dd469221d141830f08fdb6b907017d7ff974

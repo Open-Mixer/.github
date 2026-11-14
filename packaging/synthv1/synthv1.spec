@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# synthv1 1.5.1, with the scheduler teardown fix that rncbc/synthv1 merged after it (#27, merge commit 893c6e5). Fedora ships
-# 0.9.91 only. Without the fix, freeing an instance while the shared scheduler thread still runs one of its
-# schedulers aborts the host. The packages keep Fedora's names, synthv1 and lv2-synthv1, and the Release sorts above
-# Fedora's and above a stock 1.5.1-1, so dnf upgrades them in place. Drop the patch at the first upstream release
-# that contains 893c6e5.
+# synthv1 1.5.1, with the scheduler teardown fix that rncbc/synthv1 merged after it (#27, merge commit 893c6e5).
+# Fedora ships 0.9.91 (Fedora 44) and 1.4.2 (Fedora 45), neither with it. Without the fix, freeing an instance while
+# the shared scheduler thread still runs one of its schedulers aborts the host. The packages keep Fedora's names,
+# synthv1 and lv2-synthv1, and the Release sorts above Fedora's and above a stock 1.5.1-1, so dnf upgrades them in
+# place. Drop the patch at the first upstream release that contains 893c6e5.
 
 %global namespace org.rncbc
+# the commit of upstream's v1.5.1 tag, as .github/pins.txt pins it
+%global commit0 b1165dc283d98deb5f46d0506bc1f7b3bccb82fa
 
 Name: synthv1
 Version: 1.5.1
