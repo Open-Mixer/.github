@@ -13,3 +13,4 @@ samplv1 https://github.com/rncbc/samplv1 3a18dd469221d141830f08fdb6b907017d7ff97
 lv2-swh-plugins https://github.com/swh/lv2 5098e09e255eaed14e0d40ca5e7e6dfcb782d7ea
 lv2-ir-plugins https://git.hq.sig7.se/ir.lv2.git 1d4a4f9b1aad6223d541ebb0c16d85d527478222
 ams-lv2 https://github.com/blablack/ams-lv2 f029b1e4ad7717d11fb3b1b8201ea5abac21d553
+calf https://github.com/calf-studio-gear/calf 60c4963333de726f0a6d502d97fffe8d7dec8499
