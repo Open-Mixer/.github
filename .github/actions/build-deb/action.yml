@@ -20,17 +20,26 @@ inputs:
     description: what joins a snapshot's version and its commit time and commit; ~git sorts below the release, +git above it (a staged build, which must meet a consumer's (>= <version>) floor)
     default: '~git'
 
+  max-jobs:
+    description: The CPUs the runner is declared with, the cap on the build's parallel jobs (the jobs action); empty reads OMX_RUNNER_CPUS, and with neither only the cgroup's quota bounds them
+    required: false
+    default: ''
+
 runs:
   using: composite
   steps:
     - shell: bash
       env:
+        MAX_JOBS: ${{ inputs.max-jobs }}
         TREE: ${{ inputs.tree }}
         TAG: ${{ inputs.tag }}
         OUT: ${{ inputs.out }}
         SEPARATOR: ${{ inputs.separator }}
       run: |
         set -euo pipefail
+        # the parallel jobs from the cgroup's CPU quota and the runner cap, never the host's nproc (actions/jobs)
+        jobs=$("$GITHUB_ACTION_PATH/../jobs/jobs.sh" ${MAX_JOBS:+--max "$MAX_JOBS"})
+        export DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:+$DEB_BUILD_OPTIONS }parallel=$jobs"  # debhelper's make -j<jobs>
         git config --global --add safe.directory "$(readlink -f "$TREE")"
         args=(-C "$TREE" -s "$SEPARATOR")
         [ -z "$TAG" ] || args+=(-t "$TAG")

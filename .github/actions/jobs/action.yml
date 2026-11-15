@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: jobs
+description: The parallel jobs (make -j) a heavy job runs, from its cgroup's CPU quota and the runner's declared CPUs, never the host's nproc
+
+# A container's nproc counts the host's cores: on a 24-core node, a job given three CPUs that builds with
+# make -j"$(nproc)" starts 24 compilers, and fourteen such runners swamp the node. This action prints the quota-sized
+# count (jobs.sh: the tightest cpu.max on the job's cgroup path, rounded up, else nproc; then bounded by the declared
+# runner CPUs) as the output `jobs`, and exports it as OMX_JOBS and MAKEFLAGS=-j<jobs> for every later step. A step
+# writes make -j"$OMX_JOBS", or plain make, which reads MAKEFLAGS.
+
+inputs:
+  max:
+    description: The CPUs the runner is declared with (a k8s request or limit, e.g. 0.75 or 3); empty reads OMX_RUNNER_CPUS from the environment, and with neither only the quota bounds the count
+    required: false
+    default: ''
+
+outputs:
+  jobs:
+    description: The number of parallel jobs
+    value: ${{ steps.jobs.outputs.jobs }}
+
+runs:
+  using: composite
+  steps:
+    - id: jobs
+      shell: bash
+      env:
+        MAX: ${{ inputs.max }}
+      run: |
+        n=$("$GITHUB_ACTION_PATH/jobs.sh" ${MAX:+--max "$MAX"})
+        echo "jobs=$n" >> "$GITHUB_OUTPUT"
+        echo "OMX_JOBS=$n" >> "$GITHUB_ENV"
+        echo "MAKEFLAGS=-j$n" >> "$GITHUB_ENV"

@@ -338,6 +338,7 @@ jobs:
       # floor, and above the staged build of any earlier commit
       - uses: Open-Mixer/.github/.github/actions/build-deb@openmixer-v1
         with:
+          max-jobs: ${{ vars.OMX_RUNNER_CPUS || '3' }}
           tag: ${{ env.RELEASE_TAG }}
           separator: ${{ inputs.staged && '+git' || '~git' }}
 

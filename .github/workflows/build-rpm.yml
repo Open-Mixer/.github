@@ -323,6 +323,7 @@ jobs:
 
       - uses: Open-Mixer/.github/.github/actions/build-rpm@openmixer-v1
         with:
+          max-jobs: ${{ vars.OMX_RUNNER_CPUS || '3' }}
           tag: ${{ env.RELEASE_TAG }}
 
       # the full matrix never goes out on top of a version the channel has for the quick set alone: the cells the
