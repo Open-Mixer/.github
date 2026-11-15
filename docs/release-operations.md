@@ -527,8 +527,8 @@ publishes it.
 | --- | --- | --- |
 | repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch` | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME` |
 | key | `/etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer`, the channel's `rpm/RPM-GPG-KEY-openmixer` | `/usr/share/keyrings/openmixer-archive-keyring.asc`, the channel's `deb/openmixer.asc` |
-| stable name | `rpm/openmixer-release.noarch.rpm` | `deb/openmixer-release.deb` |
-| updates from | `fedora/<release>/noarch/` of the tree | `debian/<suite>/all/` of the tree |
+| stable name | `rpm/openmixer-release.noarch.rpm` (the oldest Fedora release's build; noarch installs on every release) | `deb/openmixer-release.deb` |
+| updates from | `fedora/<release>/noarch/` of the tree: one build per Fedora release of the set, since the dist tag `.fcNN` ties a build to its release | `debian/<suite>/all/` of the tree |
 
 The DEB ships one source per Debian release the channel serves (bookworm, trixie) and links the one of the
 running system at configure time: the stable `.deb` is one file for every release, and the sources stay
@@ -550,8 +550,10 @@ refuses a build where the two differ), merge, and push the tag `openmixer-releas
 example `openmixer-release-1-2`. Without that tag the workflow is a dry run: both packages are built, each is
 installed in a clean container with a package of the channel installed through the repository it adds
 (`install-check.sh`), and the unsigned trees with the stable names are attached to the run. A release signs,
-publishes into the tree and at the stable names, and checks from a clean fedora:44, bookworm and trixie that
-the stable name carries the release and installs.
+publishes into the tree and at the stable names, checks from a clean container of every cell of the set (check-matrix)
+that the stable name carries the release and installs, and last runs `served-check.sh`: every Fedora release of the
+set serves the package in its own noarch tree (fc45 served the fc44 build at the stable name and never an update
+until 1-5, 2026-11-15; the rpm job builds one RPM per release of the set since).
 
 `add-openmixer` is the action the shared workflows use to add the channel to a build or install-check
 container: it installs the stable name from `base-url`.
