@@ -96,7 +96,7 @@ msg_file() { # <file>: one commit message as the commit-msg hook hands it over
   [ -f "$f" ] && [ -r "$f" ] || { echo "private-refs-check: cannot read the message $f, so nothing was judged" >&2; return 2; }
   for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
   for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
-  text=$(grep -v '^#' "$f" || true)
+  text=$(grep -vE '^#( |	|$)' "$f" || true)   # git's comment lines only: a hash and a space or tab, or a bare hash
   if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
     echo "private-refs-check: the commit message points into a private repository; the lines above. State the fact instead." >&2
     return 1
@@ -174,9 +174,10 @@ if [ "${1:-}" = --self-test ]; then
     g reset -q --hard HEAD~1
   done
   # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
-  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n' > "$scratch/msg-clean"
+  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n# On branch integration''/x\n#\tmodified:   harness''/a.sh\n#\n' > "$scratch/msg-clean"
   if ( bash "$0" --msg-file "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
-  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight'; do
+  # a line that starts with an issue number is the message's own, not a git comment: it is judged
+  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight' '#345 regenerated packages''/pipewire-native/src/x.h'; do
     printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
     if ( bash "$0" --msg-file "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
   done
