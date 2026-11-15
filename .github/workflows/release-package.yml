@@ -109,13 +109,39 @@ jobs:
           deb-releases: '["bookworm", "trixie"]'
           deb-arches: '["amd64"]'
 
+  # The Fedora releases this run builds: one RPM per release of the set (the dist tag .fcNN ties a build to its release,
+  # and publish-tree places it in fedora/<release>/noarch), so every release the set serves gets the package and its
+  # updates; fc45 served the fc44 build at the stable name alone and never an update (2026-11-15). The package is
+  # noarch: one architecture stands for the release.
+  rpm-plan:
+    name: Plan the Fedora releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.matrix.outputs.cells }}
+      releases: ${{ steps.matrix.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: rpm
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["44", "45"]'
+          arches: '["x86_64"]'
+
   rpm:
-    name: Build the RPM (fc44) and install it
-    needs: preflight
+    name: Build the RPM (fc${{ matrix.fedora }}) and install it
+    needs: [preflight, rpm-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:${{ matrix.fedora }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.rpm-plan.outputs.cells) }}
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build gnupg2 curl findutils
 
@@ -136,7 +162,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: openmixer-release-rpm
+          name: openmixer-release-rpm-fc${{ matrix.fedora }}
           path: rpms/*.rpm
           if-no-files-found: error
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
@@ -201,17 +227,20 @@ jobs:
   # before, on every Debian and Fedora release and architecture it serves (channel-installability).
   installability-rpm:
     name: Installability (rpm)
-    needs: [preflight, rpm]
+    needs: [preflight, rpm-plan, rpm]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      # the oldest release of the set runs the gate; it judges every cell from the packages' dist tags
+      image: fedora:${{ fromJSON(needs.rpm-plan.outputs.cells)[0].fedora }}
     steps:
       - uses: actions/checkout@v4
 
+      # every release's build, one flat directory: the gate and the publish read the cell from each file's dist tag
       - uses: actions/download-artifact@v4
         with:
-          name: openmixer-release-rpm
+          pattern: openmixer-release-rpm-*
+          merge-multiple: true
           path: collected
 
       - uses: ./.github/actions/channel-installability
@@ -254,23 +283,38 @@ jobs:
 
   publish-rpm:
     name: Sign and publish the RPM
-    needs: [preflight, rpm, deb, deb-install, installability-rpm, installability-deb]
+    needs: [preflight, rpm-plan, rpm, deb, deb-install, installability-rpm, installability-deb]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:${{ fromJSON(needs.rpm-plan.outputs.cells)[0].fedora }}
     concurrency:
       group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
       DO_PUBLISH: ${{ needs.preflight.outputs.publish }}
+      # the stable name is the build of the oldest release of the set: a noarch package installs on every release, and a
+      # machine then updates from its own release's tree
+      RELEASES: ${{ needs.rpm-plan.outputs.releases }}
+      EVR: ${{ needs.preflight.outputs.evr }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: openmixer-release-rpm
+          pattern: openmixer-release-rpm-*
+          merge-multiple: true
           path: collected
+
+      - name: Every release of the set has its build
+        run: |
+          set -euo pipefail
+          ls collected
+          for rel in $RELEASES; do
+            ls collected/openmixer-release-"$EVR".fc"$rel".noarch.rpm >/dev/null || { echo "::error::no build for fc$rel in collected/"; exit 1; }
+          done
+          first=${RELEASES%% *}
+          echo "STABLE=openmixer-release-$EVR.fc$first.noarch.rpm" >> "$GITHUB_ENV"
 
       - uses: ./.github/actions/publish-rpms
         with:
@@ -282,12 +326,12 @@ jobs:
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ env.CHANNEL }}
 
-      # the stable name is the signed copy the repository serves, replaced at each release
+      # the stable name is the signed copy the repository serves, replaced at each release: the oldest release's build
       - name: Place the stable name
         run: |
           set -euo pipefail
           if [ "$DO_PUBLISH" = true ]; then src=signed tree=build/channel/rpm; else src=collected tree=build/repo/rpm; fi
-          install -m 0644 "$src"/openmixer-release-*.noarch.rpm "$tree/openmixer-release.noarch.rpm"
+          install -m 0644 "$src/$STABLE" "$tree/openmixer-release.noarch.rpm"
           rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH} %{SIGPGP:pgpsig}\n' "$tree/openmixer-release.noarch.rpm"
 
       - uses: ./.github/actions/channel-push
@@ -298,7 +342,7 @@ jobs:
           channel: ${{ env.CHANNEL }}
           tag: openmixer-release-${{ needs.preflight.outputs.evr }}
           what: rpm
-          rebuild: 'install -m 0644 signed/openmixer-release-*.noarch.rpm build/channel/rpm/openmixer-release.noarch.rpm'
+          rebuild: 'install -m 0644 signed/${{ env.STABLE }} build/channel/rpm/openmixer-release.noarch.rpm'
 
       - uses: actions/upload-artifact@v4
         if: env.DO_PUBLISH != 'true'
@@ -433,3 +477,18 @@ jobs:
             apt-cache madison openmixer-release | tee served
             grep -qE "\| +$EVR +\|" served || { echo "::error::the openmixer source does not serve openmixer-release $EVR"; exit 1; }
           fi
+
+  # Every Fedora release the set builds serves the package in its own noarch tree (served-check.sh): a release that
+  # serves the stable name but never an update is red by name.
+  served:
+    name: Every Fedora release of the set serves it
+    needs: [preflight, verify]
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends zstd curl
+
+      - run: packaging/openmixer-release/served-check.sh "$BASE_URL" "${{ needs.preflight.outputs.evr }}"

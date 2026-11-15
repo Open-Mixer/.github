@@ -54,6 +54,7 @@ jobs:
       - run: tests/release-matrix.sh
       - run: tests/check-matrix.sh
       - run: tests/no-hardcoded-cells.sh
+      - run: tests/release-package-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh

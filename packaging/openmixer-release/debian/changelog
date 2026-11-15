@@ -1,3 +1,10 @@
+openmixer-release (1-5) unstable; urgency=medium
+
+  * Built and served for every Fedora release of the set: fc45 beside fc44
+    (the fc44 build alone was served before). The deb is unchanged.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Sun, 15 Nov 2026 15:40:00 +0000
+
 openmixer-release (1-4) unstable; urgency=medium
 
   * Ships the channel's public keys, the new release signing key beside
