@@ -96,7 +96,7 @@ msg_file() { # <file>: one commit message as the commit-msg hook hands it over
   [ -f "$f" ] && [ -r "$f" ] || { echo "private-refs-check: cannot read the message $f, so nothing was judged" >&2; return 2; }
   for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
   for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
-  text=$(grep -v '^#' "$f" || true)
+  text=$(grep -vE '^#( |	|$)' "$f" || true)   # git's comment lines only: a hash and a space or tab, or a bare hash
   if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
     echo "private-refs-check: the commit message points into a private repository; the lines above. State the fact instead." >&2
     return 1
