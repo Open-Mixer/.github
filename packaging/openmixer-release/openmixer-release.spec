@@ -6,7 +6,7 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        4%{?dist}
+Release:        5%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
 License:        MIT
 URL:            https://www.openmixer.org
@@ -31,6 +31,9 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
+* Sun Nov 15 2026 Pau Aliagas <linuxnow@gmail.com> - 1-5
+- Built and served for every Fedora release of the set: fc45 beside fc44 (the fc44 build alone was served before).
+
 * Sun Nov 01 2026 Pau Aliagas <linuxnow@gmail.com> - 1-4
 - Ships the channel's public keys with the new release signing key beside the old one.
 
