@@ -10,6 +10,7 @@
 #   D. cgroup v1, cpu.cfs_quota_us 300000 over cpu.cfs_period_us 100000 -> 3;
 #   E. no quota anywhere ("max", or -1 on v1): nproc, then the declared runner cap --max (or OMX_RUNNER_CPUS);
 #   F. the cap bounds a quota too: a quota of 3 with --max 1 -> 1;
+#   H. build-rpm and build-deb export the helper's count (RPM_BUILD_NCPUS, DEB_BUILD_OPTIONS parallel=);
 #   G. sabotage: a copy of the helper that answers nproc must fail A, so this test can tell the two apart.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -39,6 +40,13 @@ v2 "$t/e" /job "/job=max 100000";                         expect 24 "E. no quota
 got=$(OMX_RUNNER_CPUS=2 JOBS_NPROC=24 "$helper" --cgroup-root "$t/e/fs" --proc-cgroup "$t/e/self" 2>/dev/null || true)
 [ "$got" = 2 ] && yes "E. no quota, OMX_RUNNER_CPUS=2: 2" || no "E. OMX_RUNNER_CPUS=2 gave '$got'"
 v2 "$t/f" /job "/job=300000 100000";                      expect 1 "F. quota 3 capped by --max 1" "$t/f" --max 1
+
+# H. the shared builders take their parallel jobs from the helper, never rpm's or debhelper's own count of the host
+for a in build-rpm:RPM_BUILD_NCPUS build-deb:parallel=; do
+  f=$here/.github/actions/${a%%:*}/action.yml
+  if grep -q 'jobs/jobs.sh' "$f" && grep -q "${a#*:}" "$f" && grep -q 'max-jobs' "$f"; then yes "H. ${a%%:*} sizes its build by the jobs helper (${a#*:})"
+  else no "H. ${a%%:*} does not take its parallel jobs from jobs/jobs.sh (${a#*:}, max-jobs)"; fi
+done
 
 # G. sabotage: the helper that every job had before, nproc, cannot pass A
 if [ -z "${JOBS_SABOTAGE:-}" ]; then

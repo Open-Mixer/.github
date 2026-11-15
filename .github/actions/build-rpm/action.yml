@@ -17,16 +17,25 @@ inputs:
     description: directory the RPMs are copied to
     default: rpms
 
+  max-jobs:
+    description: The CPUs the runner is declared with, the cap on the build's parallel jobs (the jobs action); empty reads OMX_RUNNER_CPUS, and with neither only the cgroup's quota bounds them
+    required: false
+    default: ''
+
 runs:
   using: composite
   steps:
     - shell: bash
       env:
+        MAX_JOBS: ${{ inputs.max-jobs }}
         TREE: ${{ inputs.tree }}
         TAG: ${{ inputs.tag }}
         OUT: ${{ inputs.out }}
       run: |
         set -euo pipefail
+        # the parallel jobs from the cgroup's CPU quota and the runner cap, never the host's nproc (actions/jobs)
+        jobs=$("$GITHUB_ACTION_PATH/../jobs/jobs.sh" ${MAX_JOBS:+--max "$MAX_JOBS"})
+        export RPM_BUILD_NCPUS="$jobs"  # rpm's %_smp_build_ncpus, so %{_smp_mflags} is -j<jobs>, never the host's count
         git config --global --add safe.directory "$(readlink -f "$TREE")"
         dnf builddep -y "$TREE"/packaging/*.spec
         args=(-C "$TREE")
