@@ -11,12 +11,16 @@
 #   render.sh --self-test         each drift, planted in each file, must go red
 #
 # packaging/deps.txt, one dependency per line, blank and # lines ignored:
-#   <rpm name>  <deb name>  <floor>  <ceiling>  [<VARIABLE>]
+#   <rpm name>  <deb name>  <floor>  [<ceiling> | -]  [<VARIABLE>]
 # VARIABLE names a workflow variable (env: VARIABLE: v<floor>) that pins the release tag of the same
 # dependency. A dependency has a floor AND a ceiling (the house rule: below 1.0 the ceiling is the next minor, from 1.0
 # the next major): the spec states `<name> >= floor` and `<name> < ceiling`, debian/control `(>= floor~)` and
-# `(<< ceiling~)`. A line with no ceiling, a ceiling that is not a version, or one that is not above the floor is
-# refused; so is a spec or control file that does not state the ceiling or states another one. No exact pin is written.
+# `(<< ceiling~)`. A ceiling that is not a version or not above the floor is refused; so is a spec or control file that
+# does not state the ceiling or states another one. No exact pin is written.
+# A FLOOR-ONLY row (no ceiling, or `-`; Open-Mixer/.github#102) is how a consumer declares one of OUR packages: the
+# owner's rule is floors only on our packages, and a breaking release declares its own Breaks/Conflicts. It renders
+# `>= floor` and no upper bound: a spec or control file that states a ceiling for it is drift, and --write removes it.
+# Third-party rows keep their floor and ceiling as before.
 # A versioned requirement in the spec or the control file whose package deps.txt does not list is drift too.
 set -euo pipefail
 
@@ -28,12 +32,15 @@ load() { # <root>: fills RPM[] DEB[] FLOOR[] CEIL[] VAR[] from deps.txt
   [ -f "$f" ] || { echo "deps-render: $f is missing" >&2; return 1; }
   while read -r r d v c x _; do
     case "$r" in ''|'#'*) continue ;; esac
+    # floor-only: no ceiling, `-`, or the 4th field is already the VARIABLE
+    if [ "$c" = - ]; then c=""; elif [ -z "$x" ] && [[ "$c" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then x="$c"; c=""; fi
     [[ "$v" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "deps-render: $DEPS: '$r' has no numeric floor ('$v')" >&2; return 1; }
     [ -n "$d" ] || { echo "deps-render: $DEPS: '$r' has no deb name" >&2; return 1; }
-    [ -n "$c" ] || { echo "deps-render: $DEPS: '$r' has a floor ($v) and no ceiling: a dependency needs both" >&2; return 1; }
+    if [ -n "$c" ]; then
     [[ "$c" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "deps-render: $DEPS: '$r' has no numeric ceiling ('$c')" >&2; return 1; }
     [ "$(printf '%s\n%s\n' "$v" "$c" | sort -V | head -n1)" = "$v" ] && [ "$v" != "$c" ] ||
       { echo "deps-render: $DEPS: the ceiling of '$r' ($c) is not above its floor ($v)" >&2; return 1; }
+    fi
     RPM+=("$r"); DEB+=("$d"); FLOOR+=("$v"); CEIL+=("$c"); VAR+=("${x:-}")
   done < "$f"
   [ "${#RPM[@]}" -gt 0 ] || { echo "deps-render: $f lists no dependency" >&2; return 1; }
@@ -66,8 +73,18 @@ run() { # <mode> <root>
       fi
     done
     [ "$seen" = 1 ] || { echo "deps-render: no spec in packaging/ requires $n >= ${FLOOR[$i]}" >&2; bad=1; }
-    # spec ceiling: a `< ceiling` on the same package, at least one, and every one the same
+    # spec ceiling: a `< ceiling` on the same package, at least one, and every one the same; none on a floor-only row
     local cseen=0
+    if [ -z "${CEIL[$i]}" ]; then
+      for f in $(spec_files "$root"); do
+        e="$(esc "$n")"
+        if grep -qE "^(Build)?Requires:.*[ ,]$e *< *[0-9]" "$f"; then
+          if [ "$mode" = write ]; then
+            sed -i -E "/^(Build)?Requires: *$e *< *[0-9][0-9.]* *\$/d; /^(Build)?Requires:/ s/,? *$e *< *[0-9][0-9.]*//" "$f"
+          else echo "deps-render: $f states a ceiling for $n, which $DEPS declares floor-only" >&2; bad=1; fi
+        fi
+      done
+    else
     for f in $(spec_files "$root"); do
       e="$(esc "$n")"
       if grep -qE "^(Build)?Requires:.*[ ,]$e *< *[0-9]" "$f"; then cseen=1
@@ -77,6 +94,7 @@ run() { # <mode> <root>
       fi
     done
     [ "$cseen" = 1 ] || { echo "deps-render: no spec in packaging/ requires $n < ${CEIL[$i]}: a dependency needs a ceiling" >&2; bad=1; }
+    fi
     # control
     if [ -f "$ctl" ]; then
       e="$(esc "${DEB[$i]}")"
@@ -85,7 +103,13 @@ run() { # <mode> <root>
         elif grep -E "^(Build-Depends|Depends|Pre-Depends):" "$ctl" | grep -oE "$e \(>= [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} at a floor other than ${FLOOR[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (>= ${FLOOR[$i]})" >&2; bad=1; fi
-      if grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" "$ctl"; then
+      if [ -z "${CEIL[$i]}" ]; then
+        if grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" "$ctl"; then
+          if [ "$mode" = write ]; then
+            sed -i -E "/^(Build-Depends|Depends|Pre-Depends):/ { s/, *$e \(<< [0-9][0-9.]*~?\)//g; s/$e \(<< [0-9][0-9.]*~?\), *//g; }" "$ctl"
+          else echo "deps-render: debian/control states a ceiling for ${DEB[$i]}, which $DEPS declares floor-only" >&2; bad=1; fi
+        fi
+      elif grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" "$ctl"; then
         if [ "$mode" = write ]; then sed -i -E "/^(Build-Depends|Depends|Pre-Depends):/ s/($e \(<< )[0-9][0-9.]*/\1${CEIL[$i]}/g" "$ctl"
         elif grep -E "^(Build-Depends|Depends|Pre-Depends):" "$ctl" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} below a ceiling other than ${CEIL[$i]}" >&2; bad=1; fi
@@ -125,10 +149,10 @@ if [ "${1:-}" = --self-test ]; then
   S="$(mktemp -d)"; trap 'rm -rf "$S"' EXIT
   fail=0
   mk() { rm -rf "$S/t"; mkdir -p "$S/t/packaging" "$S/t/debian" "$S/t/.github/workflows"
-    printf '# test\nlib-devel  libx-dev  1.2.0  2  LIB_REF\nother      libother 0.4.0  0.5\n' > "$S/t/$DEPS"
-    printf 'Name: t\nBuildRequires: gcc\nBuildRequires: lib-devel >= 1.2.0\nBuildRequires: lib-devel < 2\nBuildRequires: other >= 0.4.0\nBuildRequires: other < 0.5\nRequires: lib-devel >= 1.2.0\nRequires: lib-devel < 2\n' > "$S/t/packaging/t.spec"
-    printf 'Source: t\nBuild-Depends: debhelper-compat (= 13), libx-dev (>= 1.2.0~), libx-dev (<< 2~), libother (>= 0.4.0~), libother (<< 0.5~)\n\nPackage: t\nDepends: libx-dev (>= 1.2.0~), libx-dev (<< 2~), ${misc:Depends}\n' > "$S/t/debian/control"
-    printf 'env:\n  LIB_REF: v1.2.0\n' > "$S/t/.github/workflows/ci.yml"; }
+    printf '# test\nlib-devel  libx-dev  1.2.0  2  LIB_REF\nother      libother 0.4.0  0.5\nown-devel  libown-dev 0.3.0\nownb  libownb  1.4  -  OWNB_REF\nownc  libownc  2.1  OWNC_REF\n' > "$S/t/$DEPS"
+    printf 'Name: t\nBuildRequires: gcc\nBuildRequires: lib-devel >= 1.2.0\nBuildRequires: lib-devel < 2\nBuildRequires: other >= 0.4.0\nBuildRequires: other < 0.5\nRequires: lib-devel >= 1.2.0\nRequires: lib-devel < 2\nBuildRequires: own-devel >= 0.3.0\nRequires: ownb >= 1.4\nRequires: ownc >= 2.1\n' > "$S/t/packaging/t.spec"
+    printf 'Source: t\nBuild-Depends: debhelper-compat (= 13), libx-dev (>= 1.2.0~), libx-dev (<< 2~), libother (>= 0.4.0~), libother (<< 0.5~), libown-dev (>= 0.3.0~)\n\nPackage: t\nDepends: libx-dev (>= 1.2.0~), libx-dev (<< 2~), libownb (>= 1.4~), libownc (>= 2.1~), ${misc:Depends}\n' > "$S/t/debian/control"
+    printf 'env:\n  LIB_REF: v1.2.0\n  OWNB_REF: v1.4\n  OWNC_REF: v2.1\n' > "$S/t/.github/workflows/ci.yml"; }
   # <name> <file> <sed expression that plants the drift>
   sab() { mk; sed -i -E "$3" "$S/t/$2"
     if run check "$S/t" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
@@ -151,8 +175,15 @@ if [ "${1:-}" = --self-test ]; then
   sab spec-ceiling-differs packaging/t.spec '/^Requires: lib-devel </ s/2/3/'
   sab control-no-ceiling debian/control   's/, libother \(<< 0\.5~\)//'
   sab control-ceiling-differs debian/control '/^Depends/ s/<< 2~/<< 5~/'
+  # a FLOOR-ONLY row (our own packages, .github#102): '>= floor' and no upper bound anywhere
+  sab floor-only-floor-drift   packaging/t.spec '/^Requires: ownb/ s/1\.4/1.3/'
+  sab floor-only-spec-ceiling  packaging/t.spec '$a Requires: ownb < 2'
+  sab floor-only-ctl-ceiling   debian/control   '/^Depends/ s/libownc \(>= 2\.1~\)/libownc (>= 2.1~), libownc (<< 3~)/'
+  sab floor-only-ctl-gone      debian/control   's/, libown-dev \(>= 0\.3\.0~\)//'
+  sab floor-only-tag           .github/workflows/ci.yml 's/OWNC_REF: v2\.1/OWNC_REF: v2.0/'
   # --write puts every drifted file right, and a second check is green
   mk; sed -i 's/1\.2\.0/0.5.0/' "$S/t/packaging/t.spec" "$S/t/debian/control" "$S/t/.github/workflows/ci.yml"
+  printf 'Requires: ownb < 2\n' >> "$S/t/packaging/t.spec"; sed -i 's/libownc (>= 2.1~)/libownc (>= 2.1~), libownc (<< 3~)/' "$S/t/debian/control"
   run write "$S/t" >/dev/null 2>&1 || true
   if run check "$S/t" >/dev/null 2>&1; then echo "WRITE repairs every file: ok"; else echo "WRITE left drift"; fail=1; fi
   [ "$fail" = 0 ] || exit 1
