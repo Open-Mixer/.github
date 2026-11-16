@@ -748,8 +748,13 @@ def deb_arm(a):
             new_names = {f["Package"] for f, _ in new}
             say(f"debian/{suite}: {len(published)} published, {len(new)} new "
                 f"({' '.join(sorted(new_names)) or 'none'}), architectures {' '.join(arches)}")
+            # a dry run judges only the architectures it built (the artefacts say which); a real publish judges them all
+            built_arches = {f.get("Architecture") for f, _ in new} - {"all", None, ""}
             for arch in arches:
                 if outside(a, suite, arch, f"debian/{suite} {arch}"):
+                    continue
+                if a.dry_run and built_arches and arch not in built_arches:
+                    say(f"debian/{suite} {arch}: not built in this pass, not judged")
                     continue
                 bg = a.bg or debian_background(suite, arch, a.mirror, a.security, work)
                 pick = lambda ss: [s for s in ss if s[0].get("Architecture") in (arch, "all")]  # noqa: E731
@@ -1013,6 +1018,9 @@ def main(argv=None):
         p.add_argument("--cell", action="append",
                        help="judge only these cells, RELEASE/ARCH (44/x86_64, trixie/arm64); every other cell is named and "
                             "left out. A release of the quick set passes its cells: the trees outside it stay as served")
+        p.add_argument("--dry-run", action="store_true",
+                       help="a release dry run (nothing is published): the deb arm judges only the architectures the "
+                            "pass built; a real publish judges every architecture the channel serves")
         p.add_argument("--unbuilt-arch-pass", action="store_true",
                        help="a dry run: on an architecture with no binary package built, the binary packages built on "
                             "another count as released in the same pass")

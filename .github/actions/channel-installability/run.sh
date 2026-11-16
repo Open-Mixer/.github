@@ -17,6 +17,8 @@ base=${BASE_URL:-https://www.openmixer.org}
 args=("$kind" --channel "$channel" --new-dir "$dir" --same-pass "${SAME_PASS:-}")
 for a in ${ARCHES:-}; do args+=(--arch "$a"); done
 [ "${UNBUILT_ARCH_PASS:-}" != true ] || args+=(--unbuilt-arch-pass)
+# DRY_RUN=true (nothing is published): the deb arm judges only the architectures the pass built
+[ "${DRY_RUN:-}" != true ] || args+=(--dry-run)
 # A release of the quick set (MATRIX_SET=quick) judges the quick set's cells alone, release-matrix/quick.txt: its
 # packages reach those trees only, and every other tree stays as served until the full matrix publishes. CELLS
 # (RELEASE/ARCH, space separated) names the cells outright.

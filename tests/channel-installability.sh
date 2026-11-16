@@ -16,7 +16,7 @@
 #            published into the quick set's architecture trees alone (fc44 and fc45 x86_64), the aarch64 and noarch trees
 #            keep the packages they served, the aarch64 view still installs, and the check judges the quick cells alone,
 #            naming each cell it leaves out.
-# Usage: tests/channel-installability.sh [ceiling|deb|rpm|rpm_quick]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb|deb_unbuilt|rpm|rpm_quick]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -181,6 +181,28 @@ arm_deb() {
     "${args[@]}" --new-index "$d/lib-patch" --drop libproto0=0.5.0
   expect 2 'could not take the measurement' 'deb: an index that cannot be read is not a pass' -- \
     deb --channel "$d/nowhere" --suite bookworm --arch amd64 --bg "$d/bg" --new-index "$d/lib-patch"
+}
+
+arm_deb_unbuilt() {
+  # a dry run that built amd64 only (release.yml arm: false): arm64 is judged only when the pass built an arm64 package
+  command -v dose-debcheck >/dev/null || { bad 'deb unbuilt: dose-debcheck is not installed'; return; }
+  local d=$t/debu; mkdir -p "$d/channel/debian/trixie"
+  { stanza libc6 2.36-9 amd64; stanza libc6 2.36-9 arm64; } > "$d/bg"
+  { stanza contract 0.4.4 all
+    stanza libdsp-dev 0.4.4 amd64 'contract (>= 0.4.4~), contract (<< 0.5~)'
+    stanza libdsp-dev 0.4.4 arm64 'contract (>= 0.4.4~), contract (<< 0.5~)'
+  } > "$d/channel/debian/trixie/Packages"
+  { stanza contract 0.5.0 all; stanza libdsp-dev 0.5.0 amd64 'contract (>= 0.5.0~), contract (<< 0.6~)'; } > "$d/amd64-only"
+  { cat "$d/amd64-only"; stanza libdsp-dev 0.5.0 arm64 'contract (>= 0.5.0~), contract (<< 0.6~)'; } > "$d/both"
+  { cat "$d/amd64-only"; stanza stale 1.0 arm64 'contract (<< 0.5~)'; } > "$d/arm64-stale"
+  args=(deb --channel "$d/channel" --suite trixie --arch amd64 --arch arm64 --bg "$d/bg")
+  expect 0 'debian/trixie arm64: not built in this pass, not judged' \
+    'deb unbuilt: an amd64-only pass is not judged on arm64 against its stale packages' -- "${args[@]}" --dry-run --new-index "$d/amd64-only"
+  expect 1 'RED deb: debian/trixie arm64: ' 'deb unbuilt: a REAL publish of an amd64-only pass is still judged on arm64, red on the stale pin' -- \
+    "${args[@]}" --new-index "$d/amd64-only"
+  expect 1 'RED deb: debian/trixie arm64: ' 'deb unbuilt: a pass that built arm64 is still judged on it, red on the stale candidate' -- \
+    "${args[@]}" --new-index "$d/arm64-stale"
+  expect 0 - 'deb unbuilt: a pass that built both and fits is green' -- "${args[@]}" --new-index "$d/both"
 }
 
 arm_rpm() {
@@ -357,7 +379,7 @@ arm_rpm_unbuilt() {
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
   arms=(ceiling)
-  command -v dose-debcheck >/dev/null && arms+=(deb)
+  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt)
   command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm)
 fi
 for arm in "${arms[@]}"; do "arm_$arm"; done
