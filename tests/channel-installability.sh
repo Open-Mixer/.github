@@ -83,6 +83,18 @@ arm_ceiling() {
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
 
+  # a pull request's snapshot (<v>~git<time>.<sha>, sorting below <v>) is judged at the <v> it would release (#93): a
+  # published consumer's (>= <v>) floor does not refuse it; a snapshot of an older version still is
+  { stanza libx7 1.10.4 amd64
+    stanza consumer 1.0.43 amd64 'libx7 (>= 1.11.0)'
+  } > "$d/snap-published"
+  stanza libx7 1.11.0~git1794785975.a48ccb1 amd64 > "$d/snap-at-floor"
+  stanza libx7 1.10.9~git1794785975.a48ccb1 amd64 > "$d/snap-too-old"
+  expect 0 - 'ceiling: a snapshot of the version a consumer floors on is judged at that version, green' -- \
+    ceiling --kind deb --published "$d/snap-published" --new "$d/snap-at-floor"
+  expect 1 'libx7 1.10.9~git1794785975.a48ccb1 falls outside the range published consumer 1.0.43 declares (libx7 (>= 1.11.0))' \
+    'ceiling: a snapshot of an older version is still red' -- ceiling --kind deb --published "$d/snap-published" --new "$d/snap-too-old"
+
   # rpm: repoquery's format, rich and plain Requires, a constraint without a release
   { printf '@@libproto 0.4.4-1.fc44 x86_64\nrtld(GNU_HASH)\n'
     printf '@@hostd 0.19.1-1.fc44 x86_64\n(libproto(x86-64) >= 0.4.4 with libproto(x86-64) < 0.5)\nlibproto.so.0()(64bit)\n'
