@@ -4,8 +4,9 @@
 # channel-installability, each arm on a throwaway channel, offline:
 #   ceiling  a library released above a published consumer's ceiling is red and names the consumer ("release it in
 #            the same pass"); the consumer's new release in the same pass, or in this very release, turns it green; a
-#            dependency between our own packages without a floor or a ceiling is red; a shared library's shlibs floor is
-#            not; the same for rpm Requires, plain and rich.
+#            dependency between our own packages without a floor is red, and a floor alone is green (.github#102: the
+#            owner's rule is floors only on our packages; a breaking release declares Breaks/Conflicts); the same for rpm
+#            Requires, plain and rich.
 #   deb      dose-debcheck: the library alone above the consumer's ceiling is red although the old library is still in
 #            the tree (apt takes the newest and does not go back: plugin-hostd-protocol 0.5.0); a patch
 #            inside the ceiling is green; a package broken before the release is reported, not held against it.
@@ -75,9 +76,8 @@ arm_ceiling() {
     ceiling --kind deb --published "$d/published" --new "$d/whole-pass"
   expect 1 'hostd 0.20.0 of this pass requires libproto0 (<< 0.5~)' 'ceiling: a consumer of the pass that does not fit is red' -- \
     ceiling --kind deb --published "$d/published" --new "$d/pass-misfit"
-  expect 1 'without a ceiling' 'ceiling: a new dependency on our own package without a ceiling is red' -- \
+  expect 0 - 'ceiling: a FLOOR-ONLY dependency on our own package is green (.github#102: floors only on our packages)' -- \
     ceiling --kind deb --published "$d/published" --new "$d/no-ceiling"
-  grep -qF '(<< 0.20~)' "$t/out" && ok 'ceiling: ... and says the R-107 ceiling' || bad 'ceiling: no R-107 hint'
   expect 1 'without a floor' 'ceiling: one without a floor is red' -- \
     ceiling --kind deb --published "$d/published" --new "$d/no-floor"
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
@@ -121,7 +121,7 @@ arm_ceiling() {
   expect 1 'published hostd 0.19.1-1.fc44 declares (libproto < 0.5): release it in the same pass' 'ceiling (rpm): a library alone above a rich-dependency ceiling is red' -- \
     ceiling --kind rpm --published "$d/rpm-published" --new "$d/rpm-lib-alone"
   expect 0 - 'ceiling (rpm): a patch inside it is green' -- ceiling --kind rpm --published "$d/rpm-published" --new "$d/rpm-lib-patch"
-  expect 1 'without a ceiling' 'ceiling (rpm): a Requires without a ceiling is red' -- \
+  expect 0 - 'ceiling (rpm): a floor-only Requires on our own package is green (.github#102)' -- \
     ceiling --kind rpm --published "$d/rpm-published" --new "$d/rpm-no-ceiling"
 
   # the version orders the gate compares with, against the cases that bite
