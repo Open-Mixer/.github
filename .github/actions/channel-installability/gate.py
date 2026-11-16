@@ -388,8 +388,11 @@ def ceiling_check(kind, published, new, same_pass=()):
             if not is_new and cons_pkg.name in new_names:
                 continue  # the consumer's new release replaces this one; it is checked as new
             for op, ver in ranges(cons_pkg).get(lib.name, []):
-                if not op or satisfies(kind, release_version(lib.version), op, ver):
-                    continue  # a snapshot is judged at the version it would release (#93)
+                # BOTH SIDES at the version they would release (#93): the library, and the version a consumer
+                # names. A pass's own -dev pins '=' its runtime package at the same snapshot, so judging one side
+                # alone calls one string two releases that do not fit (regression from #94).
+                if not op or satisfies(kind, release_version(lib.version), op, release_version(ver)):
+                    continue
                 k = (cons_pkg.name, cons_pkg.version, lib.name, lib.version, op, ver)
                 if k in said:
                     continue
