@@ -20,6 +20,10 @@ name: channel-installability (reusable)
 on:
   workflow_call:
     inputs:
+      dry-run:
+        description: 'true when the release is a dry run (nothing is published): only the architectures built are judged'
+        type: boolean
+        default: false
       deb-artifacts:
         description: 'Pattern of the artifacts of this run holding the DEBs, each laid out <suite>/*.deb; empty checks no DEB'
         type: string
@@ -84,6 +88,7 @@ jobs:
           same-pass: ${{ inputs.same-pass }}
           # while a release wave is open (quick), the quick set's cells alone: nothing reaches the other trees
           matrix-set: ${{ vars.OMX_RELEASE_MATRIX }}
+          dry-run: ${{ inputs.dry-run }}
 
   rpm:
     name: Installability (rpm)
@@ -116,3 +121,4 @@ jobs:
           same-pass: ${{ inputs.same-pass }}
           # while a release wave is open (quick), the quick set's cells alone: nothing reaches the other trees
           matrix-set: ${{ vars.OMX_RELEASE_MATRIX }}
+          dry-run: ${{ inputs.dry-run }}

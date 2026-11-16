@@ -47,6 +47,9 @@ inputs:
   same-pass:
     description: packages other repositories release in the same pass, space separated; a breakage they cause or suffer is reported, not red
     default: ''
+  dry-run:
+    description: "true for a release dry run (nothing is published): only the architectures the pass built are judged; a real publish judges every architecture the channel serves"
+    default: ''
   matrix-set:
     description: "quick judges only the quick set's cells (release-matrix/quick.txt) and names every other one; empty: the job's MATRIX_SET, which publish-rpms and publish-debs set"
     default: ''
@@ -65,5 +68,6 @@ runs:
         FEDORA_VERSIONS: ${{ inputs.fedora-versions }}
         ARCHES: ${{ inputs.arches }}
         SAME_PASS: ${{ inputs.same-pass }}
+        DRY_RUN: ${{ inputs.dry-run || env.DRY_RUN }}
         MATRIX_SET: ${{ inputs.matrix-set || env.MATRIX_SET }}
       run: '"$GITHUB_ACTION_PATH/run.sh" "$KIND" "$PACKAGES" "$CHANNEL"'

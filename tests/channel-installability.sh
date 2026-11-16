@@ -197,7 +197,7 @@ arm_deb_unbuilt() {
   { cat "$d/amd64-only"; stanza stale 1.0 arm64 'contract (<< 0.5~)'; } > "$d/arm64-stale"
   args=(deb --channel "$d/channel" --suite trixie --arch amd64 --arch arm64 --bg "$d/bg")
   expect 0 'debian/trixie arm64: not built in this pass, not judged' \
-    'deb unbuilt: an amd64-only pass is not judged on arm64 against its stale packages' -- "${args[@]}" --new-index "$d/amd64-only"
+    'deb unbuilt: an amd64-only pass is not judged on arm64 against its stale packages' -- "${args[@]}" --dry-run --new-index "$d/amd64-only"
   expect 1 'RED deb: debian/trixie arm64: ' 'deb unbuilt: a REAL publish of an amd64-only pass is still judged on arm64, red on the stale pin' -- \
     "${args[@]}" --new-index "$d/amd64-only"
   expect 1 'RED deb: debian/trixie arm64: ' 'deb unbuilt: a pass that built arm64 is still judged on it, red on the stale candidate' -- \
