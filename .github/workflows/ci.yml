@@ -47,6 +47,7 @@ jobs:
       - run: tests/quick-unbuilt-pass.sh
       - run: tests/reusable-workflows.sh
       - run: tests/runner-selection.sh
+      - run: tests/hosted-default-runner.sh
       - run: tests/release-checks.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
