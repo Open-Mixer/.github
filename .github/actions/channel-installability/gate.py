@@ -748,8 +748,13 @@ def deb_arm(a):
             new_names = {f["Package"] for f, _ in new}
             say(f"debian/{suite}: {len(published)} published, {len(new)} new "
                 f"({' '.join(sorted(new_names)) or 'none'}), architectures {' '.join(arches)}")
+            # only the architectures this pass built are judged: the artefacts say which, not a flag
+            built_arches = {f.get("Architecture") for f, _ in new} - {"all", None, ""}
             for arch in arches:
                 if outside(a, suite, arch, f"debian/{suite} {arch}"):
+                    continue
+                if built_arches and arch not in built_arches:
+                    say(f"debian/{suite} {arch}: not built in this pass, not judged")
                     continue
                 bg = a.bg or debian_background(suite, arch, a.mirror, a.security, work)
                 pick = lambda ss: [s for s in ss if s[0].get("Architecture") in (arch, "all")]  # noqa: E731
