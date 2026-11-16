@@ -165,8 +165,8 @@ arm_deb() {
   grep -qF 'hostd-tests 0.19.1 was installable and is not' "$t/out" && ok 'deb: ... and what installs through it' || bad 'deb: hostd-tests not named'
   grep -qF 'RED deb: debian/bookworm amd64 newest: apt-get install clap-host fails on a clean machine: clap-host : Depends: libproto0 (< 0.5~)' "$t/out" \
     && ok 'deb (newest): apt-get -s names the package and the reason' || bad 'deb (newest): apt-get -s finding missing'
-  grep -qF 'HYGIENE: panel 0.9.1 depend on hostd with no ceiling' "$t/out" \
-    && ok 'deb (hygiene): a published build without a ceiling is flagged' || bad 'deb (hygiene): not flagged'
+  grep -qF 'HYGIENE: panel 0.9.1 depend on hostd' "$t/out" \
+    && bad 'deb (hygiene): a floor-only published build is flagged (.github#102: floors only)' || ok 'deb (hygiene): a floor-only published build is not flagged'
   expect 0 - 'deb: a patch inside the ceiling is green' -- "${args[@]}" --new-index "$d/lib-patch"
   grep -qF 'already-broken 1.0 was already uninstallable before' "$t/out" && ok 'deb: a package broken before is reported, not red' \
     || bad 'deb: the earlier breakage is not reported'
@@ -239,8 +239,8 @@ arm_rpm() {
   grep -qF 'published clap-host 0.30.6-1.fc44 declares (libproto < 0.5): release it in the same pass' "$t/out" && ok 'rpm: ... and the ceiling arm names the consumer' || bad 'rpm: ceiling arm silent'
   grep -qF 'RED rpm: fedora/44 x86_64 newest: installing panel falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44: with libproto 0.5.0-1.fc44 requested, dnf takes hostd 0.17.0-1.fc44 instead' "$t/out" \
     && ok 'rpm (newest): a fallback to an old build is red, naming the package' || bad 'rpm (newest): fallback not found'
-  grep -qF 'HYGIENE: hostd 0.17.0-1.fc44 depend on libproto with no ceiling' "$t/out" \
-    && ok 'rpm (hygiene): the old build without a ceiling is flagged' || bad 'rpm (hygiene): not flagged'
+  grep -qF 'HYGIENE: hostd 0.17.0-1.fc44 depend on libproto' "$t/out" \
+    && bad 'rpm (hygiene): a floor-only old build is flagged (.github#102: floors only)' || ok 'rpm (hygiene): a floor-only old build is not flagged'
   expect 0 - 'rpm: a patch inside the ceiling is green' -- "${args[@]}" --new-dir "$d/new-patch"
   grep -qF 'already-broken 1.0-1.fc44.noarch was already uninstallable before' "$t/out" && ok 'rpm: a package broken before is reported, not red' \
     || bad 'rpm: the earlier breakage is not reported'
