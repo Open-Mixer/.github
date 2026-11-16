@@ -17,7 +17,7 @@ description: Say which cells a check runs, the quick set's alone while a release
 #         uses: Open-Mixer/.github/.github/actions/check-matrix@openmixer-v1
 #         with:
 #           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-#           deb-releases: '["bookworm", "trixie"]'
+#           deb-releases: '["trixie"]'
 #           deb-arches: '["amd64", "arm64"]'
 #   full-deb:
 #     needs: checks

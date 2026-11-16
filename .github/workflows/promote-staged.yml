@@ -92,7 +92,7 @@ on:
         description: 'JSON array of the RPM architectures'
       suite-matrix:
         type: string
-        default: '["bookworm", "trixie"]'
+        default: '["trixie"]'
         description: 'JSON array of the Debian releases a release of this package covers'
       deb-arch-matrix:
         type: string

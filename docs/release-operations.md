@@ -284,7 +284,8 @@ pulled copy and pushes nothing.
 
 ## The quick set and the full matrix
 
-A release builds eight cells: Fedora 44 and 45 on x86_64 and aarch64, Debian bookworm and trixie on amd64 and arm64.
+A release builds six cells: Fedora 44 and 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
+for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
@@ -295,7 +296,7 @@ set** instead:
 
 trixie amd64 joined the set on 2026-11-13: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
 from the deb channel, and with no quick amd64 cell every one of their runs failed on a version the wave had not
-built there. bookworm stays out.
+built there.
 
 The set is written once, in `.github/actions/release-matrix/quick.txt`. `build-rpm.yml` and `build-deb.yml` ask the
 `release-matrix` action in their first job, and the build jobs and the install checks both run for the cells it
@@ -327,7 +328,7 @@ names, no others. The run says which set it builds, and why, in a notice.
 A check outside the release workflows (a full-stack install check after the publish, like plugin-hostd's
 `plugin-hostd-full`, or a repository's ordinary CI matrix of containers) covers the cells the set builds and no others
 (ruling D25): while `OMX_RELEASE_MATRIX` is `quick` only the quick cells, and `full` (or the variable unset) adds the
-rest. A cell the channel does not serve for the wave (bookworm) is skipped by reading the variable, never deleted from
+rest. A cell the channel does not serve for the wave is skipped by reading the variable, never deleted from
 the workflow, and comes back with `full`. Without this a check can only fail on a cell the set never built, every quick
 release ends red, and a real failure no longer stands out (Open-Mixer/.github#59).
 
@@ -345,7 +346,7 @@ The `check-matrix` action renders such a matrix. The caller writes its whole mat
         uses: Open-Mixer/.github/.github/actions/check-matrix@openmixer-v1
         with:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          deb-releases: '["bookworm", "trixie"]'
+          deb-releases: '["trixie"]'
           deb-arches: '["amd64", "arm64"]'
 
   full-deb:
@@ -378,13 +379,13 @@ a check uses `check-matrix` (its `images`, or `cells`). Both name what they skip
 
 | Workflow | Primitive | Quick | Full |
 | --- | --- | --- | --- |
-| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie amd64, arm64 | bookworm and trixie, amd64 and arm64 |
+| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie amd64, arm64 | trixie, amd64 and arm64 |
 | `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc44 x86_64 | fc44, x86_64 and aarch64 |
 | `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc44 and fc45 x86_64 | fc44 and fc45, x86_64 and aarch64 |
-| `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | bookworm and trixie |
-| `release-package.yml` build, install check, layout | `release-matrix`, `Architecture: all` as above; the oldest release of the set builds it | trixie | bookworm and trixie |
-| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
-| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
+| `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | trixie |
+| `release-package.yml` build, install check, layout | `release-matrix`, `Architecture: all` as above; the oldest release of the set builds it | trixie | trixie |
+| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:44, fedora:45, debian:trixie | the same |
+| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:44, fedora:45, debian:trixie | the same |
 
 A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the quick
 set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,

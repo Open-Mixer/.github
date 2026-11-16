@@ -86,7 +86,7 @@ jobs:
         with:
           kind: deb
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["bookworm", "trixie"]'
+          releases: '["trixie"]'
           arches: '["amd64"]'
 
   # The install check after the publish is a check: the cells the set builds, no others (check-matrix).
@@ -106,7 +106,7 @@ jobs:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
           rpm-releases: '["44", "45"]'
           rpm-arches: '["x86_64"]'
-          deb-releases: '["bookworm", "trixie"]'
+          deb-releases: '["trixie"]'
           deb-arches: '["amd64"]'
 
   # The Fedora releases this run builds: one RPM per release of the set (the dist tag .fcNN ties a build to its release,
@@ -173,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      # the oldest release of the set builds it: bookworm with the whole matrix, trixie while the wave is quick
+      # the oldest release of the set builds it: trixie, the one Debian release built
       image: debian:${{ fromJSON(needs.plan.outputs.cells)[0].suite }}
     steps:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends build-essential dpkg-dev debhelper lintian gnupg curl ca-certificates

@@ -69,17 +69,17 @@ jobs:
               rpm_binaries='libreac libreac-devel libreac-transport libreac-transport-devel'
               deb_binaries='libreac6 libreac-dev libreac-transport7 libreac-transport-dev'
               deb_requires=''
-              deb_suites='["bookworm", "trixie"]'
+              deb_suites='["trixie"]'
               channel_deps=false ;;
             FreeREAC/reac-pw)
               package=reac-pw
               rpm_binaries=''
               deb_binaries=''
               deb_requires='libreac6 libreac-transport7'
-              deb_suites='["bookworm", "trixie"]'
+              deb_suites='["trixie"]'
               channel_deps=true ;;
             FreeREAC/reac-stageboxes)
-              # libadwaita 1.4 is needed: bookworm carries 1.2, so the DEB is trixie only
+              # libadwaita 1.4 is needed, so the DEB is trixie only
               package=reac-stageboxes
               rpm_binaries=''
               deb_binaries=''

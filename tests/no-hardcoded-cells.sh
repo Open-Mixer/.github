@@ -6,7 +6,7 @@
 # Proves, over every file of .github/workflows:
 #   A. a literal cell (debian:<suite>, fedora:<n>, fc<n>, a bare Debian suite) is one the quick set builds, except as the
 #      releases / arches a plan step is handed (the whole matrix, declared once); bookworm
-#      written into a workflow is red, because while the wave is quick nothing may build or check it;
+#      written into a workflow is red, because no release is built or checked for it any more (2026-11-16);
 #   B. a strategy.matrix dimension (suite, fedora, arch, image, include rows naming an image) is never a literal list:
 #      it is fromJSON of a plan job's output;
 #   C. a JSON array of cell names (["bookworm", "trixie"], ["x86_64", "aarch64"], ["44", "45"]) is written only as the
@@ -44,16 +44,13 @@ for line in open(quick_txt):
 # reusable workflows and tables of the callers: what is passed to release-matrix, never what a job runs.
 ALLOW = [
     ("build-deb.yml", r"default: '\[\"amd64\", \"arm64\"\]'", "declares the caller's whole deb architectures, fed to release-matrix"),
-    ("build-deb.yml", r"default: '\[\"bookworm\", \"trixie\"\]'", "declares the caller's whole Debian releases, fed to release-matrix"),
-    ("build-deb.yml", r"bookworm is Raspberry Pi OS", "the input's description"),
-    ("build-deb.yml", r"matrix\.suite == 'bookworm'", "a per-cell behaviour inside a cell: it only runs when bookworm is in the cells"),
+    ("build-deb.yml", r"default: '\[\"trixie\"\]'", "declares the caller's whole Debian releases, fed to release-matrix"),
     ("build-rpm.yml", r"default: '\[\"x86_64\", \"aarch64\"\]'", "declares the caller's whole rpm architectures, fed to release-matrix"),
     ("build-rpm.yml", r"default: '\[\"44\", \"45\"\]'", "declares the caller's whole Fedora releases, fed to release-matrix"),
-    ("ci.yml", r"tests/bookworm-asan\.sh", "the name of a test script of this repository, not a cell"),
     ("publish-fedora.yml", r"\[\"45\"\]", "the Fedora releases the dispatcher asks for: the caller's whole matrix, passed to build-rpm.yml"),
-    ("promote-staged.yml", r"default: '\[\"(x86_64|bookworm|amd64|44)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
-    ("purge-staging.yml", r"default: '\[\"(bookworm|44)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
-    ("publish-freereac.yml", r"deb_suites='\[\"(bookworm|trixie)\"", "each repository's own whole matrix, passed to build-deb.yml, which runs release-matrix"),
+    ("promote-staged.yml", r"default: '\[\"(x86_64|trixie|amd64|44)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
+    ("purge-staging.yml", r"default: '\[\"(trixie|44)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
+    ("publish-freereac.yml", r"deb_suites='\[\"trixie\"", "each repository's own whole matrix, passed to build-deb.yml, which runs release-matrix"),
     ("publish-fedora.yml", r"arm='\[\"x86_64\"", "each repository's own whole matrix, passed to build-rpm.yml, which runs release-matrix"),
     ("release-c-lib.yml", r"arch-matrix: \$\{\{ inputs\.arm", "the caller's whole architectures, passed to build-rpm.yml and build-deb.yml"),
 ]
@@ -217,31 +214,29 @@ check_plan() {
     if [ "$got" = "$f" ]; then yes "$label: full: $f"; else no "$label: full cells '$got', want '$f'"; fi
 }
 D=workflow_dispatch
-DEB2='bookworm amd64, bookworm arm64, trixie amd64, trixie arm64'
-check_plan "pugl-nanovg deb" pugl-nanovg-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
+DEB2='trixie amd64, trixie arm64'
+check_plan "pugl-nanovg deb" pugl-nanovg-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
 check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
-check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie amd64' 'bookworm amd64, trixie amd64' 'bookworm amd64'
-check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
+check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie amd64' 'trixie amd64' ''
+check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
 check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 check_plan "rncbc-v1 rpm" rncbc-v1-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
-check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" 'bookworm amd64, bookworm arm64'
+check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
 check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
 check_plan "clap rpm" clap-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
 # the release package: an Architecture: all deb, built and laid out for the suites of the set; one noarch rpm per Fedora
 # release of the set (the dist tag ties a build to its release); its install check after the publish
-check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie amd64' 'bookworm amd64, trixie amd64' 'bookworm amd64'
+check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie amd64' 'trixie amd64' ''
 check_plan "openmixer-release rpm" release-package.yml rpm-plan push tag '44 x86_64, 45 x86_64' '44 x86_64, 45 x86_64' ''
 render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
     && yes "openmixer-release verify, quick: fedora:44, fedora:45, debian:trixie" || { no "openmixer-release verify, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-grep -q 'skipped while quick: bookworm amd64' "$t/log" && yes "openmixer-release verify: the notice names bookworm as skipped" || no "openmixer-release verify: the notice does not name bookworm"
-render_plan release-package.yml verify-plan full push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:bookworm","debian:trixie"]' ] \
-    && yes "openmixer-release verify, full: all four images" || { no "openmixer-release verify, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
+render_plan release-package.yml verify-plan full push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
+    && yes "openmixer-release verify, full: the same three images (no bookworm)" || { no "openmixer-release verify, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
 # .github's own CI: the language packs
 render_plan ci.yml plan quick push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
     && yes "ci langpacks, quick: fedora:44, fedora:45, debian:trixie" || { no "ci langpacks, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-grep -q 'skipped while quick: bookworm amd64' "$t/log" && yes "ci langpacks: the notice names bookworm as skipped" || no "ci langpacks: the notice does not name bookworm"
-render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:bookworm","debian:trixie"]' ] \
-    && yes "ci langpacks, full: all four images" || { no "ci langpacks, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
+render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
+    && yes "ci langpacks, full: the same three images (no bookworm)" || { no "ci langpacks, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
 # promote-staged.yml stays as it is, by design: it promotes the whole matrix (collect.py refuses a staged tree that lacks
 # any release or architecture), so its install checks cover what it promotes; its lists are inputs, never literals in a job.
 

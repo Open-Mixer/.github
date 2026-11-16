@@ -31,7 +31,7 @@ on:
         description: 'JSON array of the Fedora releases whose empty staging index must exist'
       suite-matrix:
         type: string
-        default: '["bookworm", "trixie"]'
+        default: '["trixie"]'
         description: 'JSON array of the Debian releases whose empty staging index must exist'
       reason:
         type: string
@@ -53,7 +53,7 @@ on:
         description: 'JSON array of the Fedora releases whose empty staging index must exist'
       suite-matrix:
         type: string
-        default: '["bookworm", "trixie"]'
+        default: '["trixie"]'
         description: 'JSON array of the Debian releases whose empty staging index must exist'
       reason:
         type: string

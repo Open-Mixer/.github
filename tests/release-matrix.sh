@@ -141,7 +141,7 @@ def run(kind, inputs, event, ref_type, var):
              releases=out["releases"]), p.stdout
 
 FULL = {"rpm": ["fc44, x86_64", "fc44, aarch64", "fc45, x86_64", "fc45, aarch64"],
-        "deb": ["bookworm, amd64", "bookworm, arm64", "trixie, amd64", "trixie, arm64"]}
+        "deb": ["trixie, amd64", "trixie, arm64"]}
 QUICK = {"rpm": ["fc44, x86_64", "fc45, x86_64"], "deb": ["trixie, amd64", "trixie, arm64"]}
 X86 = {"rpm": {"arch-matrix": '["x86_64"]'}, "deb": {"arch-matrix": '["amd64"]'}}
 # (what, inputs, event, ref type, OMX_RELEASE_MATRIX, the set, the jobs)
@@ -172,11 +172,11 @@ for what, inputs, event, rt, var, want_set, want in cases:
         n += 1
 print(f"ok   {n} runs rendered: a tag is full unless the wave is open, a staged run and a dispatch are quick unless told full, a pull request is full")
 
-# the four quick cells and the eight of a release, counted across the two workflows
+# the four quick cells and the six of a release, counted across the two workflows
 q = sum(len(run(k, {"staged": True}, "workflow_dispatch", "branch", None)[0].jobs) for k in WF)
 f = sum(len(run(k, {"publish": True}, "push", "tag", None)[0].jobs) for k in WF)
-assert (q, f) == (4, 8), f"a staged run builds {q} cells and a release {f}, want 4 and 8"
-print("ok   a staged run is 4 build jobs and 4 install checks, a release 8 and 8")
+assert (q, f) == (4, 6), f"a staged run builds {q} cells and a release {f}, want 4 and 8"
+print("ok   a staged run is 4 build jobs and 4 install checks, a release 6 and 6")
 
 # a caller built for x86_64 alone: the quick rpm cells, and of the quick deb cells the one it builds, trixie amd64
 got, _ = run("rpm", dict(X86["rpm"], staged=True), "workflow_dispatch", "branch", None)
