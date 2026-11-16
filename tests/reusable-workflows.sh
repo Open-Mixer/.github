@@ -60,7 +60,7 @@ import sys
 src, n, how, out = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 fork = ("startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != "
         "github.repository && 'ubuntu-latest' || ")
-caller = "(inputs.runner != 'ubuntu-latest' && inputs.runner) || "
+caller = "inputs.runner || "
 lines = open(src).read().split("\n")
 line = lines[n - 1]
 lines[n - 1] = line.replace(fork, "") if how == "strip" else line.replace(fork + caller, caller + fork)

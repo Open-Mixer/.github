@@ -109,7 +109,7 @@ on:
       runner:
         type: string
         default: 'ubuntu-latest'
-        description: 'Runner label for the x86 jobs (a pull request from a fork always runs on GitHub-hosted runners)'
+        description: 'Runner label for the x86 jobs, GitHub-hosted by default (a caller that needs a private runner passes it, e.g. arc-freemixer; the organisation variable OMX_RUNNER is not read; a pull request from a fork always runs on GitHub-hosted runners)'
       dry-run:
         type: boolean
         default: false
@@ -386,7 +386,7 @@ jobs:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: [find, served]
     if: ${{ !cancelled() && inputs.rpm && needs.served.result == 'success' }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: fedora:${{ matrix.fedora }}
@@ -428,7 +428,7 @@ jobs:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: [find, served]
     if: ${{ !cancelled() && inputs.deb && needs.served.result == 'success' }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: debian:${{ matrix.suite }}

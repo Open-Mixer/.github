@@ -53,7 +53,7 @@ on:
       runner:
         type: string
         default: 'ubuntu-latest'
-        description: 'Runner label for the x86 jobs (a private repo passes its own runners, e.g. arc-freemixer; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
+        description: 'Runner label for the x86 jobs, GitHub-hosted by default (a private repo, or a job that needs a private runner, passes its own runners, e.g. arc-freemixer; the organisation variable OMX_RUNNER is not read; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
       package-name:
         required: true
         type: string
@@ -269,7 +269,7 @@ jobs:
     needs: preflight
     # a catch-up of a version served in every cell plans nothing: no build, no publish, and the first job said so
     if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0'
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 120
     container:
       image: fedora:${{ matrix.fedora }}
@@ -286,6 +286,7 @@ jobs:
         env:
           EXTRA: ${{ inputs.build-packages }}
         run: |
+          # shellcheck disable=SC2086 # EXTRA is a list of package names, split on purpose
           dnf install -y --setopt=install_weak_deps=False git rpm-build dnf5-plugins gcc make tar gzip python3 \
             pipewire-jack-audio-connection-kit-devel $EXTRA
 
@@ -371,6 +372,7 @@ jobs:
             grep -q "/$bin-[0-9]" release.txt && staged=$((staged + 1))
           done
           if [ "$ARCH" = "$FIRST_ARCH" ]; then
+            # shellcheck disable=SC2086 # the binary names are counted as words
             [ "$staged" -eq "$(echo ${BINARIES:-$NAME} | wc -w)" ] || { echo "::error::not every binary RPM (${BINARIES:-$NAME}) is among the staged RPMs"; exit 1; }
           else
             # a later architecture may stage nothing only when every binary it built is noarch
@@ -521,7 +523,7 @@ jobs:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: [preflight, publish, release, live]
     if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: fedora:${{ matrix.fedora }}
@@ -577,6 +579,7 @@ jobs:
             repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
             echo "$bin $(rpm -q --qf '%{VERSION}' "$bin")-$rel from $repo"
             short=$(printf '%s\n' "$rel" | sed -n 's/.*\.git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\)\..*/\1/p')
+            # shellcheck disable=SC2015 # either test failing is the error
             [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] || { echo "::error::$bin $rel is not the build of $GITHUB_SHA"; exit 1; }
             case $repo in openmixer-staging*) ;; *) echo "::error::$bin came from $repo, not the staging channel"; exit 1 ;; esac
           done

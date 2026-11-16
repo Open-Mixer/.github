@@ -51,7 +51,7 @@ on:
       runner:
         type: string
         default: 'ubuntu-latest'
-        description: 'Runner label for the x86 jobs (a private repo passes its own runners, e.g. arc-freemixer; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
+        description: 'Runner label for the x86 jobs, GitHub-hosted by default (a private repo, or a job that needs a private runner, passes its own runners, e.g. arc-freemixer; the organisation variable OMX_RUNNER is not read; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
       package-name:
         required: true
         type: string
@@ -274,7 +274,7 @@ jobs:
     needs: preflight
     # a catch-up of a version served in every cell plans nothing: no build, no publish, and the first job said so
     if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0'
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
     timeout-minutes: 90
@@ -303,6 +303,7 @@ jobs:
           EXTRA: ${{ inputs.build-packages }}
         run: |
           apt-get update -qq
+          # shellcheck disable=SC2086 # EXTRA is a list of package names, split on purpose
           apt-get install -y --no-install-recommends ca-certificates git dpkg-dev debhelper build-essential lintian python3 $EXTRA
 
       - uses: actions/checkout@v4
@@ -527,7 +528,7 @@ jobs:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: [preflight, publish, release, live]
     if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: debian:${{ matrix.suite }}

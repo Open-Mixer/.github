@@ -70,7 +70,8 @@ for jn, job in jobs.items():
         assert isinstance(got, str) and HOSTED.match(got), \
             f"{name}: job {jn} ({ctx['github']['event_name']} {ctx['github']['ref']} private={ctx['github']['event']['repository']['private']} {ctx['matrix']['arch']}) runs on {got!r} with the caller passing nothing"
     for k in ("runner", "runs-on"):
-        if f"inputs.{k}" in ro:
+        if k in declared and ro.startswith("${{"):
+            assert f"inputs.{k}" in ro, f"{name}: job {jn} chooses its runner without reading the caller's {k}: {ro}"
             ctx = next(cases({**defaults, k: ARC}))
             ctx["matrix"]["arch"] = "x86_64"
             got = evaluate(ro, ctx)
