@@ -322,6 +322,16 @@ def r107_ceiling(floor):
     return f"0.{nums[1] + 1}" if nums[0] == 0 else f"{nums[0] + 1}"
 
 
+SNAPSHOT_RE = re.compile(r"^(?P<release>.+?)~git[0-9][^-]*(?P<revision>-.*)?$")
+
+
+def release_version(version):
+    """The version a pull request's snapshot would release: <v>~git<time>.<sha> (build-deb's separator, which sorts
+    below <v>) is <v>, its Debian revision kept; any other version is itself."""
+    m = SNAPSHOT_RE.match(version)
+    return m.group("release") + (m.group("revision") or "") if m else version
+
+
 def ceiling_check(kind, published, new, same_pass=()):
     """Returns (reds, warnings, notes): lists of lines."""
     reds, warns, notes = [], [], []
@@ -378,8 +388,8 @@ def ceiling_check(kind, published, new, same_pass=()):
             if not is_new and cons_pkg.name in new_names:
                 continue  # the consumer's new release replaces this one; it is checked as new
             for op, ver in ranges(cons_pkg).get(lib.name, []):
-                if not op or satisfies(kind, lib.version, op, ver):
-                    continue
+                if not op or satisfies(kind, release_version(lib.version), op, ver):
+                    continue  # a snapshot is judged at the version it would release (#93)
                 k = (cons_pkg.name, cons_pkg.version, lib.name, lib.version, op, ver)
                 if k in said:
                     continue
