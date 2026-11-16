@@ -160,6 +160,8 @@ jobs:
   hook "a hook that is the stub before openmixer-v1 is green (grace)" green "$HERE/commit-message-check/commit-msg.previous-v1"
   { cat "$HERE/commit-message-check/commit-msg.previous-v1"; echo '# edited'; } > "$t/third3"
   hook "a hook that is an edited stub-before-openmixer-v1 is red" red "$t/third3"
+  # the stub that carried the old FREEMIXER names, kept only as a fixture: it is not accepted
+  hook "a hook that is the previous stub is red" red "$HERE/no-local-copies/fixtures/previous-stub.fixture"
   plant "a hook that is not the stub is red" .githooks/commit-msg 'exec tools/commit-message-check.sh --msg-file "$1"'
   # sabotage: with the name and content rules gone, a planted copy passes, so the arms above are what catch it
   sed -e "s|^HERE=.*|HERE=$HERE|" -e "s/^NAMES=.*/NAMES='^\$'/" -e "s/^  '.*'\$/  '^\$NEVER'/" "${BASH_SOURCE[0]}" > "$t/sab.sh"
