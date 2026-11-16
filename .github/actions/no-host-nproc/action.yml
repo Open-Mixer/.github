@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: no-host-nproc
+description: Fail when a workflow of the repository sizes its parallel jobs from the host's nproc
+
+# A container's nproc counts the host's cores, so make -j"$(nproc)" on a three-CPU runner starts dozens of compilers on
+# a shared node. A heavy step takes its count from Open-Mixer/.github's jobs action and builds with make -j"$OMX_JOBS".
+# The scan is proven first on planted workflows (its --self-test: a make -j"$(nproc)" line must be seen, a make
+# -j"$OMX_JOBS" line must pass), then reads the caller's .github/workflows. The caller has checked the repository out.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/no-host-nproc.sh" --self-test
+        "$GITHUB_ACTION_PATH/no-host-nproc.sh" "$GITHUB_WORKSPACE/.github/workflows"
