@@ -19,11 +19,13 @@ packages" on a clean bookworm and trixie). Three arms:
            with every one of our packages it pulls in, to the newest version published: dnf backtracks, and in the
            middle of a pass takes an old build without a ceiling beside the new library (plugin-hostd 0.17.0 asks only
            for protocol >= 0.2.0) while repoclosure passes. A fallback the release brings is RED, with the reason.
-  hygiene  every published build, old ones too, whose dependencies on our own packages lack a floor or a ceiling is
-           flagged, to be removed from the index or superseded (reported, not red).
-  ceiling  every dependency between the channel's own packages that a new package declares has a floor AND a ceiling
-           (R-107: below 1.0 the ceiling is the next minor, from 1.0 the next major); and a new version outside the
-           range a published consumer declares is RED unless that consumer's new release is in the same pass.
+  hygiene  every published build, old ones too, whose dependencies on our own packages lack a floor is flagged, to be
+           removed from the index or superseded (reported, not red).
+  ceiling  every dependency between the channel's own packages that a new package declares has a floor; a ceiling is
+           optional (Open-Mixer/.github#102, the owner's rule: consumers declare FLOORS only on our packages, and a
+           breaking release declares generated Breaks/Conflicts); where a ceiling IS declared it must not be crossed:
+           a new version outside the range a published consumer declares is RED unless that consumer's new release is
+           in the same pass.
 
 A package named in --same-pass (released by another repository in the same pass) excuses a breakage of its own or one
 it causes: its own release is checked when it publishes. --unbuilt-arch-pass (a dry run, whose matrix builds one
@@ -348,8 +350,8 @@ def ceiling_check(kind, published, new, same_pass=()):
                 by.setdefault(name, []).append((op, ver))
         return by
 
-    # 1. a floor and a ceiling on every dependency between our own packages (a new package must; a published one
-    #    that does not is reported, not held against this release)
+    # 1. a floor on every dependency between our own packages, a ceiling optional (.github#102: floors only on our
+    #    packages); a new package must; a published one that does not is reported, not held against this release
     def sanity(p, sink, what):
         for dep, cons in ranges(p).items():
             ops = {op for op, _ in cons if op}
@@ -359,13 +361,10 @@ def ceiling_check(kind, published, new, same_pass=()):
                 # a shared library's shlibs dependency: the soname in the package name is its ceiling, and a new
                 # soname is a new package
                 continue
-            if has_floor and has_ceiling:
-                continue
-            missing = " and ".join(x for x, ok in (("a floor", has_floor), ("a ceiling", has_ceiling)) if not ok)
-            floors = [v for op, v in cons if op in FLOOR_OPS]
-            hint = f"; R-107: the ceiling of {floors[0]} is {fmt('<<' if kind == 'deb' else '<', r107_ceiling(floors[0]) + ('~' if kind == 'deb' else ''), kind)}" if floors else ""
-            sink.append(f"{what}{p.name} {p.version} depends on {dep} without {missing} "
-                        f"(every dependency between our own packages has both{hint})")
+            if has_floor:
+                continue  # a floor alone is the rule (.github#102); a declared ceiling is checked in 2
+            sink.append(f"{what}{p.name} {p.version} depends on {dep} without a floor "
+                        f"(every dependency between our own packages states its floor)")
 
     seen = set()
     for p in new:
@@ -413,9 +412,10 @@ def ceiling_check(kind, published, new, same_pass=()):
 # ----------------------------------------------------------------------------------------------- hygiene
 
 def hygiene(kind, published):
-    """Every published build, old ones too, whose dependencies on our own packages lack a floor or a ceiling: a
-    package manager that backtracks (dnf) can fall back to it and install it beside the new library it does not fit,
-    so it should leave the index or be superseded. Grouped by package and dependency; reported, not red."""
+    """Every published build, old ones too, whose dependencies on our own packages lack a floor: a package manager
+    that backtracks (dnf) can fall back to it and install it beside a library it does not fit, so it should leave the
+    index or be superseded. A floor alone is the rule (.github#102); a breaking release declares Breaks/Conflicts.
+    Grouped by package and dependency; reported, not red."""
     ours = {p.name for p in published}
     groups = {}
     for p in published:
@@ -425,13 +425,9 @@ def hygiene(kind, published):
                 by.setdefault(name, set()).add(op)
         for dep, ops in by.items():
             ops.discard(None)
-            has_floor, has_ceiling = bool(ops & FLOOR_OPS), bool(ops & CEILING_OPS)
-            if has_floor and has_ceiling:
-                continue
-            if has_floor and kind == "deb" and re.match(r"^lib.*\d$", dep) and ops <= {">="}:
-                continue  # a shlibs floor: the soname is the ceiling
-            missing = " and ".join(x for x, ok in (("floor", has_floor), ("ceiling", has_ceiling)) if not ok)
-            groups.setdefault((p.name, dep, missing), set()).add(p.version)
+            if ops & FLOOR_OPS:
+                continue  # a floor alone is the rule (.github#102)
+            groups.setdefault((p.name, dep, "floor"), set()).add(p.version)
     cmpk = functools.cmp_to_key(deb_cmp if kind == "deb" else rpm_cmp)
     return [f"HYGIENE: {name} {' '.join(sorted(vs, key=cmpk))} depend on {dep} with no {missing}: remove these builds "
             f"from the index or supersede them" for (name, dep, missing), vs in sorted(groups.items())]
