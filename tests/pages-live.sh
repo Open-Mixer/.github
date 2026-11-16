@@ -6,7 +6,8 @@
 # asked); a later deployment that is ahead of the commit is a success (green); a deployment that is behind it is
 # not; a deployment still in progress at the timeout (red, naming the deployment and its state); no deployment at
 # all (red, and Pages is asked for a build); a failed deployment is followed by a new build that succeeds (green);
-# a lagging deployment that turns success in time (green); no token (warned, still waits).
+# a lagging deployment that turns success in time (green); a built Pages build with no deployment record (green,
+# naming the build), ahead of the commit (green), errored or behind (red); no token (warned, still waits).
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 wait_sh=$here/../.github/actions/pages-live/wait.sh
@@ -20,7 +21,8 @@ cat > "$work/bin/curl" <<'STUB'
 #!/bin/bash
 url=${@: -1}; url=${url%%\?*}
 case " $* " in *" -X POST "*)
-    { echo "POST $url"; cat; } >> "$SITE_DIR/api.log"; touch "$SITE_DIR/redeployed"; exit 0 ;;
+    { echo "POST $url"; cat; } >> "$SITE_DIR/api.log"; touch "$SITE_DIR/redeployed"
+    [ ! -e "$SITE_DIR/post403" ] || printf 403; exit 0 ;;
 esac
 n=$(( $(cat "$SITE_DIR/reads" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$SITE_DIR/reads"
 f=${url#https://api.example/repos/Open-Mixer/channel/}; f=${f//\//_}
@@ -80,4 +82,35 @@ state "$work/no-token/live" "[]"
 (unset GH_TOKEN; arm no-token red "Pages has no deployment for $C")
 grep -q '::warning::no token' "$work/no-token/out.log" || fail "no-token: no warning"
 [ ! -e "$work/no-token/api.log" ] || fail "no-token: a build was requested without a token"
+# Pages built the commit but never recorded a deployment for it: the builds list is evidence (green, says so)
+state "$work/build-only/live" "[{\"id\":9,\"sha\":\"$D\"}]" 9:success
+echo '{"status":"behind"}' > "$work/build-only/live/compare_$C...$D"
+echo "[{\"status\":\"built\",\"commit\":\"$C\"}]" > "$work/build-only/live/pages_builds"
+arm build-only ok
+grep -q "built $C of Open-Mixer/channel (build, no deployment record)" "$work/build-only/out.log" || fail "build-only: evidence not named"
+
+# a build ahead of the commit counts; one that errored does not (control), nor does a built one that is behind
+state "$work/build-ahead/live" "[]"
+echo "[{\"status\":\"built\",\"commit\":\"$D\"}]" > "$work/build-ahead/live/pages_builds"
+echo '{"status":"ahead"}' > "$work/build-ahead/live/compare_$C...$D"
+arm build-ahead ok
+
+state "$work/build-errored/live" "[]"
+echo "[{\"status\":\"errored\",\"commit\":\"$C\"}]" > "$work/build-errored/live/pages_builds"
+echo "{\"status\":\"errored\",\"commit\":\"$C\"}" > "$work/build-errored/live/pages_builds_latest"
+arm build-errored red "no deployment for $C"
+
+state "$work/build-behind/live" "[]"
+echo "[{\"status\":\"built\",\"commit\":\"$D\"}]" > "$work/build-behind/live/pages_builds"
+echo '{"status":"behind"}' > "$work/build-behind/live/compare_$C...$D"
+arm build-behind red "no deployment for $C"
+
+# the build request answers 403 (token cannot request a build): a named warning, never a red; the build shows built
+state "$work/post403/live" "[]"
+state "$work/post403/next" "[]"
+echo "[{\"status\":\"built\",\"commit\":\"$C\"}]" > "$work/post403/next/pages_builds"
+touch "$work/post403/post403"
+arm post403 ok
+grep -q '::warning::the Pages build request was refused (HTTP 403: the publish token cannot request a Pages build)' "$work/post403/out.log" || fail "post403: no named warning"
+
 echo "ok   pages-live: $pass arms"
