@@ -64,7 +64,7 @@ jobs:
           kind: deb
           matrix: ${{ inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["bookworm", "trixie"]'
+          releases: '["trixie"]'
           arches: '["amd64", "arm64"]'
 
   build:

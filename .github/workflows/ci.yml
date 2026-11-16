@@ -59,7 +59,7 @@ jobs:
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
-      - run: tests/bookworm-asan.sh
+      - run: tests/no-retired-debian-release.sh
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test
@@ -217,7 +217,7 @@ jobs:
           tests/staging-installability.sh
 
   # The images the language packs are checked in: the cells the release set builds, no others while OMX_RELEASE_MATRIX
-  # is quick (ruling D25); the whole list, bookworm among it, with full. check-matrix names what it skips.
+  # is quick (ruling D25); the whole list with full. check-matrix names what it skips.
   plan:
     name: plan the matrix checks
     runs-on: ubuntu-latest
@@ -234,7 +234,7 @@ jobs:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
           rpm-releases: '["44", "45"]'
           rpm-arches: '["x86_64"]'
-          deb-releases: '["bookworm", "trixie"]'
+          deb-releases: '["trixie"]'
           deb-arches: '["amd64"]'
 
   langpacks:
