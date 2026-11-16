@@ -27,7 +27,9 @@ test('pins.txt: a line with a version or a source RPM pins; a commit alone pins 
 
 test('zynthian install set and plugin-qualify action', () => {
   const set = installSet('X=1\nPACKAGES="plugin-hostd omx-panel"\n', 'z');
-  assert.deepEqual(set.map((r) => `${r.pkg} ${r.where}`), ['plugin-hostd debian/bookworm/*', 'plugin-hostd debian/trixie/*', 'omx-panel debian/bookworm/*', 'omx-panel debian/trixie/*']);
+  // the recipe is what a Zynthian installs, and a Zynthian is a Pi: arm64, never every architecture
+  assert.deepEqual(set.map((r) => `${r.pkg} ${r.where}`), ['plugin-hostd debian/bookworm/arm64', 'plugin-hostd debian/trixie/arm64', 'omx-panel debian/bookworm/arm64', 'omx-panel debian/trixie/arm64']);
+  assert.ok(set.every((r) => !r.where.endsWith('/*') && !r.where.endsWith('/amd64')), 'no amd64 pin from the Pi recipe');
   const pq = pluginQualifyRows(`echo "deb [signed-by=/k] https://www.openmixer.org/deb/debian/bookworm ./" | sudo tee x\nsudo apt-get install -y --no-install-recommends plugin-hostd plugin-hostd-tests\ndpkg --compare-versions "$v" ge 0.15.3 || exit 1\n`, 'q');
   assert.deepEqual(pq.map((r) => `${r.pkg} ${r.version} ${r.where}`), ['plugin-hostd >=0.15.3 debian/bookworm/amd64', 'plugin-hostd-tests newest debian/bookworm/amd64']);
 });
@@ -35,6 +37,12 @@ test('zynthian install set and plugin-qualify action', () => {
 // the committed list: every line is the generator's, and names the pin that produced it
 const body = committed.split('\n').filter((l) => l && !l.startsWith('#'));
 const sources = committed.split('\n').filter((l) => l.startsWith('# source ')).map((l) => l.slice(9));
+
+test('keep-list.txt: the Zynthian recipe pins trixie/arm64, not trixie/* (the committed list is the generator\'s)', () => {
+  const zyn = body.filter((l) => l.split('\t')[3].includes('zynthian-sys@'));
+  assert.ok(zyn.some((l) => l.startsWith('plugin-qualify\tnewest\tdebian/trixie/arm64\t')), 'plugin-qualify trixie/arm64');
+  assert.deepEqual(zyn.filter((l) => !/\tdebian\/(bookworm|trixie)\/arm64\t/.test(l)), []);
+});
 
 test('keep-list.txt: it is non-empty and every line has four columns', () => {
   assert.ok(body.length > 0);

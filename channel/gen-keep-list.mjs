@@ -94,12 +94,15 @@ export function pinsTxtRows(text, pin) {
   return out;
 }
 
-// install_openmixer.sh: PACKAGES="a b c"
+// install_openmixer.sh: PACKAGES="a b c". The recipe installs on a Zynthian, and Zynthian runs on the Pi: the set
+// pins arm64 only (ruled 2026-11-16). As debian/<suite>/* it also pinned amd64, where nothing installs it: the
+// trixie/amd64 retirement of plugin-qualify 0.20.3 (no amd64 build installs there) met a pin it did not owe.
+export const INSTALL_SET_ARCH = 'arm64';
 export function installSet(text, pin) {
   const m = text.match(/^PACKAGES="([^"]*)"/m);
   if (!m) return [];
   return m[1].split(/\s+/).filter(Boolean).flatMap((pkg) =>
-    ['bookworm', 'trixie'].map((s) => ({ pkg, version: 'newest', where: `debian/${s}/*`, pin })));
+    ['bookworm', 'trixie'].map((s) => ({ pkg, version: 'newest', where: `debian/${s}/${INSTALL_SET_ARCH}`, pin })));
 }
 
 // the plugin-qualify action: apt-get install ... plugin-hostd plugin-hostd-tests; dpkg --compare-versions ... ge X
