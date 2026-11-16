@@ -94,6 +94,21 @@ arm_ceiling() {
     ceiling --kind deb --published "$d/snap-published" --new "$d/snap-at-floor"
   expect 1 'libx7 1.10.9~git1794785975.a48ccb1 falls outside the range published consumer 1.0.43 declares (libx7 (>= 1.11.0))' \
     'ceiling: a snapshot of an older version is still red' -- ceiling --kind deb --published "$d/snap-published" --new "$d/snap-too-old"
+  # REGRESSION FROM #94: a snapshot pass whose -dev pins '=' its own runtime package at the same snapshot. Pin and
+  # package are one string; judging only the package at its release version (1.11.0) against the pin's snapshot
+  # (= 1.11.0~git...) called them "two releases that do not fit each other" (libreac#65: every -dev that pins '=')
+  { stanza libx7 1.11.0~git1794787685.e71e550 amd64
+    stanza libx-dev 1.11.0~git1794787685.e71e550 amd64 'libx7 (= 1.11.0~git1794787685.e71e550)'
+  } > "$d/snap-pass-pins"
+  expect 0 - 'ceiling: a snapshot pass whose -dev pins = its own runtime package at the same snapshot, green' -- \
+    ceiling --kind deb --published "$d/snap-published" --new "$d/snap-pass-pins"
+  # ... while a -dev pinning '=' a version this pass does not release is still a misfit
+  { stanza libx7 1.11.0~git1794787685.e71e550 amd64
+    stanza libx-dev 1.11.0~git1794787685.e71e550 amd64 'libx7 (= 1.10.9)'
+  } > "$d/snap-pass-mispins"
+  expect 1 'do not fit each other' \
+    'ceiling: a snapshot -dev pinning = another version of its runtime package is still red' -- \
+    ceiling --kind deb --published "$d/snap-published" --new "$d/snap-pass-mispins"
 
   # rpm: repoquery's format, rich and plain Requires, a constraint without a release
   { printf '@@libproto 0.4.4-1.fc44 x86_64\nrtld(GNU_HASH)\n'
