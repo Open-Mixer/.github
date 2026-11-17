@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# Copyright (C) 2026 Pau Aliagas
 # doc-gate doc-gate.sh [options] [--list | --update] | --self-test
 #
 # The one documentation gate of every OpenMixer C repository (and the Python beside it), run from the repository root.
@@ -13,6 +13,7 @@
 #   --base <ref>          the base to shrink against, resolved by resolve-base (fetched, verified, refused by name;
 #                         the base's files are read at the merge-base with HEAD); without it only the tree is judged
 #   --py <path>           a Python path ruff checks (repeatable)    --ruff-config <file>  ruff's configuration (ruff.toml)
+#   --ruff-version <v>    the pinned ruff version, required with --py (another ruff gives other findings)
 #   --accept-config-change  the Doxyfile or the ruff configuration differs from the base's on purpose (this change);
 #                         the flag is itself a finding when nothing differs, so it never stays in a workflow
 #   --list                print the tree's rows and stop           --update  rewrite the baseline, only ever lower
@@ -25,7 +26,7 @@
 # WARN_IF_DOC_ERROR, WARN_IF_INCOMPLETE_DOC, WARN_AS_ERROR, WARN_FORMAT, a filter, EXCLUDE_PATTERNS; a tracked header of the
 # Doxyfile's INPUT (FILE_PATTERNS, RECURSIVE, EXCLUDE honoured; git-tracked files only) with no @file in a doc comment
 # (doxygen reports none of a file's undocumented members without one); an untracked header there (it would enter the
-# reference unjudged); a header that hides code from doxygen (@cond, @internal, @if); a warning log doxygen did not
+# reference unjudged); a header that hides code from doxygen (@cond, @internal, @private, @if); a warning log doxygen did not
 # write; a header it wrote no HTML page for (it did not read it). The HTML is written to a throwaway directory,
 # removed on exit: with every GENERATE_* off doxygen 1.9.8 never records @param and @return and warns on every
 # function, documented or not. Every sort and comm runs under LC_ALL=C.
@@ -35,7 +36,9 @@
 # not sorted and unique is red; --update rewrites the baseline from the tree only when that lowers it, and refuses by
 # name otherwise. With --base: a baseline row the base's baseline does not carry is red (the list only shrinks); a
 # watched Doxyfile setting that differs from the base's, each read through `doxygen -x` in its own tree, is red by
-# key with both values unless --accept-config-change; a base
+# key with both values unless --accept-config-change (the accepted change is then logged, key and both values); a
+# setting read through doxygen -x_noenv, so an environment variable in it ($(VAR), which would read equal on both
+# sides and differ at run time) is refused by key; a base
 # without the gate's files is the change that brings it, and has nothing to compare. Watched means every setting but
 # the ones that only shape the rendered output (PROJECT_*, OUTPUT_DIRECTORY, GENERATE_*, HTML_*, the graphs, the search).
 #
@@ -46,6 +49,9 @@
 # Exit 0 at the baseline; 1 a finding (the rows, the setting, the header, the suppression, an --update that would
 # raise); 2 the gate cannot run (no doxygen, another version, a missing file, no log, a header not read, a base
 # resolve-base refuses): never a pass.
+#
+# The limit that stays: a declaration under a preprocessor condition that is false with only the Doxyfile's PREDEFINED
+# (an #ifdef X block) is not read, as a C compiler would not read it either; its rows are neither warned nor missed.
 set -euo pipefail
 export LC_ALL=C
 
@@ -67,7 +73,7 @@ list() { sed 's/^/  /' >&2; }
 # settings <doxyfile> <out>: the effective settings as doxygen reads them, one `KEY<TAB>VALUE` per line, continuations
 # joined, runs of blanks folded; run in the directory the Doxyfile belongs to (its @INCLUDE paths)
 settings() {
-  "$DOXYGEN" -x "$1" 2>/dev/null | awk '
+  "$DOXYGEN" -x_noenv "$1" 2>/dev/null | awk '
     /\\$/ { sub(/\\$/, ""); line = line $0; next }
     { line = line $0
       if (match(line, /^[A-Z_]+[ \t]*=/)) { key = substr(line, 1, RLENGTH - 1); sub(/[ \t]*$/, "", key)
@@ -151,7 +157,7 @@ suppressed() {
 }
 
 gate() {
-  local doxyfile=Doxyfile baseline=docs/doxygen-baseline.txt pin=docs/doxygen-version.txt base='' ruff_config=ruff.toml
+  local doxyfile=Doxyfile baseline=docs/doxygen-baseline.txt pin=docs/doxygen-version.txt base='' ruff_config=ruff.toml ruff_version=''
   local mode=check accept=0 base_given=0 root want have h page nofile hidden new stale grown changed mb key now_v base_v py_now py_base
   local -a py=()
   while [ $# -gt 0 ]; do
@@ -162,6 +168,7 @@ gate() {
       --base) base=$2; base_given=1; shift 2 ;;
       --py) py+=("$2"); shift 2 ;;
       --ruff-config) ruff_config=$2; shift 2 ;;
+      --ruff-version) ruff_version=$2; shift 2 ;;
       --accept-config-change) accept=1; shift ;;
       --list) mode=list; shift ;;
       --update) mode=update; shift ;;
@@ -181,6 +188,9 @@ gate() {
   if [ "${#py[@]}" -gt 0 ]; then
     command -v "$RUFF" >/dev/null 2>&1 || cannot "ruff ($RUFF) is not installed, and Python paths were given"
     [ -f "$ruff_config" ] || cannot "no ruff configuration at $ruff_config"
+    [ -n "$ruff_version" ] || cannot "no ruff version pinned (--ruff-version): another ruff gives other findings"
+    have=$("$RUFF" --version 2>/dev/null | head -n 1 | sed 's/^ruff //')
+    [ "$have" = "$ruff_version" ] || cannot "ruff is $have, the pin is $ruff_version: other versions give other findings, run the gate with ruff $ruff_version"
   fi
   tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
@@ -198,6 +208,10 @@ gate() {
   for key in INPUT_FILTER FILTER_PATTERNS EXCLUDE_PATTERNS; do
     [ -z "$(setting $key "$tmp/cfg")" ] || finding "$doxyfile sets $key = $(setting $key "$tmp/cfg"): a filter hides what the gate counts (EXCLUDE names a path, and is compared with the base)"
   done
+  for key in $(cut -f1 "$tmp/cfg" | grep -Ev "$UNWATCHED" || true); do
+    # shellcheck disable=SC2016 # the literal $( is matched
+    case $(setting "$key" "$tmp/cfg") in *'$('*) finding "$doxyfile sets $key from an environment variable ($(setting "$key" "$tmp/cfg")): it would read equal against the base and differ at run time, write the value" ;; esac
+  done
   for key in WARN_FORMAT WARN_LINE_FORMAT; do
     [ -z "$(setting $key "$tmp/cfg")" ] || finding "$doxyfile sets $key: the gate reads doxygen's own warning format, another one reads as no rows"
   done
@@ -212,8 +226,8 @@ gate() {
     awk '/\/\*\*/ { doc = 1 } /^[ \t]*\/\/\// { doc = 1; line = 1 } doc && /[@\\]file([^A-Za-z_]|$)/ { found = 1 } /\*\// || line { doc = 0; line = 0 } END { exit !found }' "$h" || echo "$h"
   done < "$tmp/headers")
   if [ -n "$nofile" ]; then echo "$nofile" | list; finding "a header with no @file in a doc comment (/** @file or /// @file): doxygen reports none of its undocumented members without one"; fi
-  hidden=$(xargs grep -nHE '[@\\](cond|endcond|internal|endinternal|if|ifnot|endif)([[:space:]]|$)' < "$tmp/headers" || true)
-  if [ -n "$hidden" ]; then echo "$hidden" | list; finding "a header hides code from doxygen (@cond, @internal, @if): document it instead"; fi
+  hidden=$(xargs grep -nHE '[@\\](cond|endcond|internal|endinternal|private|privatesection|if|ifnot|endif)([[:space:]]|$)' < "$tmp/headers" || true)
+  if [ -n "$hidden" ]; then echo "$hidden" | list; finding "a header hides code from doxygen (@cond, @internal, @private, @if): document it instead"; fi
   [ "$RED" = 0 ] || exit 1
 
   # doxygen over exactly those headers, its HTML thrown away, its warnings to a log of the gate's
@@ -277,7 +291,8 @@ gate() {
         now_v=$(setting "$key" "$tmp/cfg"); base_v=$(setting "$key" "$tmp/cfg.base")
         if [ "$now_v" != "$base_v" ]; then
           changed=1
-          [ "$accept" = 1 ] || finding "$doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here (a narrowed reference is no lower baseline; --accept-config-change when it is meant)"
+          if [ "$accept" = 1 ]; then echo "doc-gate: accepted: $doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here"
+          else finding "$doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here (a narrowed reference is no lower baseline; --accept-config-change when it is meant)"; fi
         fi
       done
     else
@@ -287,7 +302,8 @@ gate() {
       if [ -f "$tmp/base/$ruff_config" ]; then
         if ! cmp -s "$ruff_config" "$tmp/base/$ruff_config"; then
           changed=1
-          [ "$accept" = 1 ] || finding "$ruff_config differs from the base's at $base: a changed configuration is no fewer findings (--accept-config-change when it is meant)"
+          if [ "$accept" = 1 ]; then echo "doc-gate: accepted: $ruff_config differs from the base's at $base"; diff -u "$tmp/base/$ruff_config" "$ruff_config" | sed 's/^/  /' || true
+          else finding "$ruff_config differs from the base's at $base: a changed configuration is no fewer findings (--accept-config-change when it is meant)"; fi
         fi
         py_base=$(suppressed "$tmp/base" "$ruff_config" "${py[@]}")
         if [ "${py_now#* }" -gt "${py_base#* }" ]; then
@@ -321,7 +337,7 @@ self_test() {
 #!/bin/bash
 S=${STANDIN:?}
 if [ "${1:-}" = --version ]; then cat "$S/version"; exit 0; fi
-if [ "${1:-}" = -x ]; then
+if [ "${1:-}" = -x ] || [ "${1:-}" = -x_noenv ]; then
   awk '/^@INCLUDE[ \t]*=/ { f = $3; while ((getline l < f) > 0) print l; next } /^[A-Z_]+[ \t]*\+?=/' "$2"; exit 0
 fi
 cfg=$(cat)
@@ -354,7 +370,8 @@ SH
   # run <args...>: the gate in the tree, output to $work/out, the status returned
   run() { (cd "$t" && bash "$script" "$@") > "$work/out" 2>&1; }
   G=(--doxyfile Doxyfile --baseline docs/doxygen-baseline.txt --pin docs/doxygen-version.txt)
-  B=(--base main --py py --ruff-config ruff.toml)
+  local ruff_real; ruff_real=$(ruff --version 2>/dev/null | head -n 1 | sed 's/^ruff //')
+  B=(--base main --py py --ruff-config ruff.toml --ruff-version "${ruff_real:-none}")
   green() { local what=$1; shift; if run "$@"; then ok "$what"; else no "$what"; fi; }
   # red <what> <exit> <text> <args...>: the status and the text, in the output
   red() { local what=$1 want=$2 text=$3 got=0; shift 3; run "$@" || got=$?
@@ -408,6 +425,11 @@ SH
   red "a header hiding code with @cond is red, by name" 1 "src/a.h:4" "${G[@]}"; reset
   printf '/** @file\n * @brief A.\n * @internal\n */\nint A;\nint B;\n' > "$t/src/a.h"
   red "a header hiding code with @internal is red, by name" 1 "src/a.h:3" "${G[@]}"; reset
+  printf '/** @file\n * @brief A.\n */\nint A;\n/** @private */\nint B;\n' > "$t/src/a.h"
+  red "a header hiding a declaration with @private is red, by name" 1 "src/a.h:5" "${G[@]}"; reset
+  # shellcheck disable=SC2016 # the Doxyfile line is literal
+  printf 'EXCLUDE_SYMBOLS = $(HIDE)\n' >> "$t/Doxyfile"
+  red "a compared setting read from an environment variable is red, by key" 1 "sets EXCLUDE_SYMBOLS from an environment variable" "${G[@]}"; reset
   echo 'EXTRACT_ALL = YES' >> "$t/Doxyfile"; red "EXTRACT_ALL = YES is red, by key" 1 "Doxyfile sets EXTRACT_ALL = YES" "${G[@]}"; reset
   echo 'HIDE_UNDOC_MEMBERS = YES' >> "$t/Doxyfile"; red "HIDE_UNDOC_MEMBERS = YES is red, by key" 1 "sets HIDE_UNDOC_MEMBERS = YES" "${G[@]}"; reset
   echo 'WARN_IF_UNDOCUMENTED = NO' >> "$t/Doxyfile"; red "WARN_IF_UNDOCUMENTED = NO is red, by key" 1 "sets WARN_IF_UNDOCUMENTED = NO" "${G[@]}"; reset
@@ -423,6 +445,7 @@ SH
   echo 'EXCLUDE = src/b.h' >> "$t/Doxyfile"
   red "a watched Doxyfile setting changed against the base is red, by key, both values" 1 "Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "${G[@]}" "${B[@]}"
   green "the same change, accepted" "${G[@]}" "${B[@]}" --accept-config-change
+  if grep -q "accepted: Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "$work/out"; then ok "and the accepted change is logged, key and both values"; else no "the accepted change is not logged"; fi
   reset; red "the accept flag with nothing changed is itself red: it never stays" 1 "drop the flag" "${G[@]}" "${B[@]}" --accept-config-change
   sed -i 's/^PREDEFINED = X=$/PREDEFINED = X= Y=/' "$t/Doxyfile"
   red "PREDEFINED changed against the base is red, by key" 1 "Doxyfile changes PREDEFINED against main" "${G[@]}" "${B[@]}"; reset
@@ -435,11 +458,11 @@ SH
   red "the same row against the base is red: the baseline only shrinks, the row named" 1 "src/a.h: Member C" "${G[@]}" "${B[@]}"
   reset; sed -i '1d' "$standin/warnings"; cp "$standin/warnings" "$t/docs/doxygen-baseline.txt"
   green "a baseline row struck against the base" "${G[@]}" "${B[@]}"; reset
-  green "a base without the gate's files is the change that brings it" "${G[@]}" --base before --py py --ruff-config ruff.toml
+  green "a base without the gate's files is the change that brings it" "${G[@]}" --base before --py py --ruff-config ruff.toml --ruff-version "${ruff_real:-none}"
   if grep -q "before has no Doxyfile at the merge-base" "$work/out" && grep -q "before has no docs/doxygen-baseline.txt" "$work/out" && grep -q "before has no ruff.toml" "$work/out"; then ok "and says so, each file by name"; else no "the files the base lacks are not named"; fi
   red "an empty base is refused by name (resolve-base)" 1 "the base is empty" "${G[@]}" --base ''
   red "a base this clone does not hold is refused by name (resolve-base)" 2 "no-such does not resolve" "${G[@]}" --base no-such
-  git -C "$t" remote add origin "$work/gone"; git -C "$t" update-ref refs/remotes/origin/main "$main_c"
+  git -C "$t" remote add origin "file://$work/gone"; git -C "$t" update-ref refs/remotes/origin/main "$main_c"
   red "a stale remote base whose fetch fails is refused by name, never read (resolve-base)" 2 "could not fetch origin/main from origin" "${G[@]}" --base origin/main
   git -C "$t" remote remove origin
 
@@ -457,7 +480,12 @@ SH
   printf '"""M."""\n\n\ndef f():\n    """F."""\n    return 1\n' > "$t/py/m.py"
   green "a suppression removed with the function documented" "${G[@]}" "${B[@]}"; reset
   printf '\n[lint.per-file-ignores]\n"py/*" = ["D103"]\n' >> "$t/ruff.toml"
-  red "a changed ruff configuration against the base is red, by name" 1 "ruff.toml differs from the base's" "${G[@]}" "${B[@]}"; reset
+  red "a changed ruff configuration against the base is red, by name" 1 "ruff.toml differs from the base's" "${G[@]}" "${B[@]}"
+  green "the same change, accepted" "${G[@]}" "${B[@]}" --accept-config-change
+  if grep -q "accepted: ruff.toml differs from the base's at main" "$work/out" && grep -q '^  +\[lint.per-file-ignores\]' "$work/out"; then ok "and the accepted change is logged, with its diff"; else no "the accepted ruff change is not logged"; fi
+  reset
+  red "a ruff of another version than the pin is refused, both named" 2 "ruff is $ruff_real, the pin is 0.0.1" "${G[@]}" --base main --py py --ruff-config ruff.toml --ruff-version 0.0.1
+  red "no ruff pin with Python paths given is refused by name" 2 "no ruff version pinned" "${G[@]}" --base main --py py --ruff-config ruff.toml
   RUFF=$work/none red "no ruff with Python paths given is refused by name" 2 "ruff ($work/none) is not installed" "${G[@]}" "${B[@]}"
   rm "$t/ruff.toml"; red "no ruff configuration is refused by name" 2 "no ruff configuration at ruff.toml" "${G[@]}" "${B[@]}"; reset
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# Copyright (C) 2026 Pau Aliagas
 name: doc-gate
 description: The documentation gate of a C repository and its Python, doxygen's warnings held to a baseline that only shrinks
 
@@ -31,6 +31,9 @@ inputs:
   ruff-config:
     description: ruff's configuration
     default: ruff.toml
+  ruff-version:
+    description: the pinned ruff version, required with py (another ruff gives other findings)
+    default: ''
   accept-config-change:
     description: the Doxyfile or the ruff configuration changes on purpose in this pull request (red when nothing changed)
     default: 'false'
@@ -47,6 +50,7 @@ runs:
         BASE: ${{ inputs.base }}
         PY: ${{ inputs.py }}
         RUFF_CONFIG: ${{ inputs.ruff-config }}
+        RUFF_VERSION: ${{ inputs.ruff-version }}
         ACCEPT: ${{ inputs.accept-config-change }}
       working-directory: ${{ github.workspace }}
       run: |
@@ -54,6 +58,6 @@ runs:
         "$GITHUB_ACTION_PATH/doc-gate.sh" --self-test
         args=(--doxyfile "$DOXYFILE" --baseline "$BASELINE" --pin "$PIN" --ruff-config "$RUFF_CONFIG")
         [ "$COMPARE" != true ] || args+=(--base "$BASE")
-        for p in $PY; do args+=(--py "$p"); done
+        for p in $PY; do args+=(--py "$p" --ruff-version "$RUFF_VERSION"); done
         [ "$ACCEPT" != true ] || args+=(--accept-config-change)
         "$GITHUB_ACTION_PATH/doc-gate.sh" "${args[@]}"
