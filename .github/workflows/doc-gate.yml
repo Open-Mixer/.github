@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: doc-gate
+# The documentation gate of a C repository and its Python, from this repository and nowhere else: doxygen's warnings
+# over the tracked headers held to the repository's baseline as a set, which only shrinks against the pull request's
+# base; a Doxyfile setting that would narrow what doxygen sees is red against the base; ruff must be clean and the
+# findings it is told to ignore may not grow. The base is resolved by resolve-base (fetched, verified, refused by
+# name). The gate proves itself on planted trees before it reads the tree (actions/doc-gate).
+#
+#   jobs:
+#     docs:
+#       uses: Open-Mixer/.github/.github/workflows/doc-gate.yml@openmixer-v1
+#       with:
+#         doxyfile: tools/Doxyfile            # the repository's data; every input has a default
+#         baseline: tools/doxygen.baseline
+#         pin: tools/doxygen.version
+#         py: clients/python tests/lib       # the Python half, none without
+#
+# doxygen comes from the runner's apt (ubuntu-24.04 serves 1.9.8); the pin must name that version, so a runner change
+# that moves doxygen is red by name, never a quietly different baseline.
+on:
+  workflow_call:
+    inputs:
+      doxyfile:
+        description: the Doxyfile
+        type: string
+        default: Doxyfile
+      baseline:
+        description: the baseline, the sorted set of rows the headers still carry
+        type: string
+        default: docs/doxygen-baseline.txt
+      pin:
+        description: the file pinning the doxygen version
+        type: string
+        default: docs/doxygen-version.txt
+      py:
+        description: the Python paths ruff checks, space-separated (none means no Python half)
+        type: string
+        default: ''
+      ruff-config:
+        description: ruff's configuration
+        type: string
+        default: ruff.toml
+      accept-config-change:
+        description: the Doxyfile or the ruff configuration changes on purpose in this pull request (red when nothing changed)
+        type: boolean
+        default: false
+      runner:
+        description: runner label (a private repository passes its own runners; a pull request from a fork always runs on GitHub-hosted runners)
+        type: string
+        default: ubuntu-24.04
+
+permissions:
+  contents: read
+
+jobs:
+  doc-gate:
+    name: documentation gate (doxygen baseline, ruff)
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: doxygen from apt, ruff with pipx
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends doxygen
+          if [ -n "${{ inputs.py }}" ]; then pipx install ruff; fi
+          doxygen --version
+      - uses: Open-Mixer/.github/.github/actions/doc-gate@openmixer-v1
+        with:
+          doxyfile: ${{ inputs.doxyfile }}
+          baseline: ${{ inputs.baseline }}
+          pin: ${{ inputs.pin }}
+          compare: ${{ github.event_name == 'pull_request' }}
+          base: origin/${{ github.base_ref }}
+          py: ${{ inputs.py }}
+          ruff-config: ${{ inputs.ruff-config }}
+          accept-config-change: ${{ inputs.accept-config-change }}
