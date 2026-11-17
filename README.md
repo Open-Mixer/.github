@@ -34,8 +34,9 @@ them: `public-sources-check.yml` (commit messages, private references, and no lo
 commit-msg hook being `.github/actions/commit-message-check/commit-msg` byte for byte; and, in a public repository,
 no dated document, no dated folder and no folder of evidence or notes), `ci-node.yml`, `ci-c.yml`,
 `fuzz.yml`, `release-c-lib.yml` (both kinds built, then `channel-installability.yml`, then RPMs and DEBs published),
-`channel-installability.yml` (no release leaves a package of the channel uninstallable) and `release-npm.yml`
-(trusted publishing). Each documents its
+`channel-installability.yml` (no release leaves a package of the channel uninstallable), `release-npm.yml`
+(trusted publishing) and `doc-gate.yml` (doxygen's warnings held to a baseline that only shrinks, ruff beside it;
+its base, like every compare gate's, resolved by `.github/actions/resolve-base`: `docs/doc-gate.md`). Each documents its
 inputs at its top. A repository whose every tracked file carries its licence runs `.github/actions/spdx-check`: the
 rule is the format of the file, a format with no comment syntax carries no header, and there is no list of files.
 
