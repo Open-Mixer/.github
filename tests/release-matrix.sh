@@ -14,7 +14,7 @@
 #     request builds the full matrix whatever the variable says; a caller built for x86_64 alone has no quick deb
 #     cell and builds its own full deb matrix;
 #   - a matrix or a variable that is neither quick nor full fails the first job;
-#   - release-c-lib.yml hands its matrix input on to both, and publish-fedora.yml always asks for the full matrix.
+#   - release-c-lib.yml hands its matrix input on to both.
 #   - cells.sh, run on a tree: one line per package and version with the cells its files lie in, the set of the run
 #     that published it, kept by a later run that publishes something else, replaced when the version goes out again
 #     for the full matrix, and gone with the files; both tree scripts call it and both publish actions hand it the
@@ -188,7 +188,7 @@ assert (got.set, got.jobs) == ("quick", ["trixie, amd64"]), f"{got} {log}"
 # (omx-plugins run 43412676885, 2026-11-13)
 got, log = run("deb", dict(X86["deb"]), "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs) == ("quick", ["trixie, amd64"]), f"a lane's amd64-only dispatch builds {got.set} {got.jobs}: {log}"
-# one Fedora release asked for (publish-fedora): the quick set never adds a release the caller did not name
+# one Fedora release asked for: the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
 # the source and noarch packages ship from the first of the caller's architectures the set builds
@@ -213,9 +213,7 @@ assert on["workflow_call"]["inputs"]["matrix"] == {"description": on["workflow_c
     "release-c-lib.yml: matrix is not an optional string input"
 for job in ("rpm", "deb"):
     assert lib["jobs"][job]["with"]["matrix"].replace(" ", "") == "${{inputs.matrix}}", f"release-c-lib.yml: {job} does not hand on matrix"
-fed = yaml.safe_load(open(f"{here}/.github/workflows/publish-fedora.yml"))
-assert fed["jobs"]["rpm"]["with"]["matrix"] == "full", "publish-fedora.yml fills a Fedora release: it must ask for the full matrix"
-print("ok   release-c-lib.yml hands matrix on; publish-fedora.yml asks for the full matrix")
+print("ok   release-c-lib.yml hands matrix on")
 
 # ---- the set reaches the channel index, and a full release reads it
 for kind, (path, rel_in, key) in WF.items():

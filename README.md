@@ -7,6 +7,9 @@ every repository that has none of its own.
 
 ## Releasing a package
 
+Publishing is by tagging only: every job that signs or pushes to the channel, npm or a GitHub release runs only on a
+tag push, and a run by hand never publishes (`docs/release-operations.md`, "Publish only by tagging").
+
 Every package's release workflow is a few lines that call the one reusable workflow of this
 repository, `.github/workflows/build-rpm.yml`: push a tag `vX.Y.Z` that matches the `Version:` of the
 package's `packaging/*.spec`, and the RPMs are built for x86_64 and aarch64, signed, published into the

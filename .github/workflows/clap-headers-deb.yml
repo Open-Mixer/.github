@@ -4,22 +4,21 @@ name: clap-headers DEBs
 
 # Builds clap-headers from the pin of .github/pins.txt for every Debian release and publishes it into deb/ of the
 # Pages repository. libomx-clap-core-dev Depends on clap-headers, so the -dev package installs only where this
-# package is served: Debian carries no CLAP header package. Run by hand, once per pin: the package carries the
+# package is served: Debian carries no CLAP header package. Released by a tag, once per pin: the package carries the
 # version of actions/deb-deps/clap-headers/changelog, and a published version is never rebuilt with new bytes, so
 # a moved pin needs a new changelog entry with it.
 #
 # The package is Architecture: all, so one build per Debian release serves every architecture.
 #
-# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact. Nothing is
+# A push of a tag `clap-headers-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
+# artifact and signs and pushes nothing (docs/release-operations.md, "Publish only by tagging"). Nothing is
 # published by it, and the run says so in its summary; a publish ends by reading the channel back for the package.
 
 on:
+  push:
+    tags: ['clap-headers-*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Sign and publish; only a run on the main branch publishes'
-        type: boolean
-        default: false
       matrix:
         description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
         type: string
@@ -34,15 +33,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse to publish from anywhere but main
-        if: inputs.publish && github.ref != 'refs/heads/main'
-        run: echo "::error::publish is only for a run on main"; exit 1
-
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/release-preflight
         with:
-          publish: ${{ inputs.publish }}
+          publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           require-tag: 'false'
           target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -109,7 +104,7 @@ jobs:
           name: clap-headers-debs-${{ matrix.suite }}
           path: out
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   publish:
     name: Sign and publish
@@ -122,7 +117,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+      DO_PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -176,4 +171,4 @@ jobs:
           name: clap-headers-unsigned-apt-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}

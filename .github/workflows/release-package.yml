@@ -52,7 +52,7 @@ jobs:
           spec=packaging/openmixer-release/openmixer-release.spec
           evr=$(sed -n 's/^Version: *//p' "$spec")-$(sed -n 's/^Release: *\([0-9][0-9.]*\)%{?dist}$/\1/p' "$spec")
           echo "evr=$evr" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
             [ "$GITHUB_REF_NAME" = "openmixer-release-$evr" ] ||
               { echo "::error::tag $GITHUB_REF_NAME is not openmixer-release-$evr, the release of the packaging"; exit 1; }
             echo publish=true >> "$GITHUB_OUTPUT"
@@ -292,7 +292,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ needs.preflight.outputs.publish }}
+      DO_PUBLISH: ${{ needs.preflight.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
       # the stable name is the build of the oldest release of the set: a noarch package installs on every release, and a
       # machine then updates from its own release's tree
       RELEASES: ${{ needs.rpm-plan.outputs.releases }}
@@ -363,7 +363,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ needs.preflight.outputs.publish }}
+      DO_PUBLISH: ${{ needs.preflight.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
 

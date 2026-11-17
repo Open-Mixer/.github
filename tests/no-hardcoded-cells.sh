@@ -47,11 +47,8 @@ ALLOW = [
     ("build-deb.yml", r"default: '\[\"trixie\"\]'", "declares the caller's whole Debian releases, fed to release-matrix"),
     ("build-rpm.yml", r"default: '\[\"x86_64\", \"aarch64\"\]'", "declares the caller's whole rpm architectures, fed to release-matrix"),
     ("build-rpm.yml", r"default: '\[\"44\", \"45\"\]'", "declares the caller's whole Fedora releases, fed to release-matrix"),
-    ("publish-fedora.yml", r"\[\"45\"\]", "the Fedora releases the dispatcher asks for: the caller's whole matrix, passed to build-rpm.yml"),
     ("promote-staged.yml", r"default: '\[\"(x86_64|trixie|amd64|44)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
     ("purge-staging.yml", r"default: '\[\"(trixie|44)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
-    ("publish-freereac.yml", r"deb_suites='\[\"trixie\"", "each repository's own whole matrix, passed to build-deb.yml, which runs release-matrix"),
-    ("publish-fedora.yml", r"arm='\[\"x86_64\"", "each repository's own whole matrix, passed to build-rpm.yml, which runs release-matrix"),
     ("release-c-lib.yml", r"arch-matrix: \$\{\{ inputs\.arm", "the caller's whole architectures, passed to build-rpm.yml and build-deb.yml"),
 ]
 # a matrix of toolchain arms, each one image the quick set always builds (rule A holds the image to the set)

@@ -387,7 +387,7 @@ jobs:
       cancel-in-progress: false
     env:
       # a release (publish on a tag) to the real channel, or a staged run to the staging channel
-      DO_PUBLISH: ${{ (inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged }}
+      DO_PUBLISH: ${{ (inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || inputs.staged }}
     steps:
       # <suite>-<arch> only: artifacts outlive their attempt, and the published copies an earlier attempt uploaded
       # as -debs-signed are flat, which publish-tree.sh refuses (tests/deb-rerun-layout.sh)
@@ -446,7 +446,7 @@ jobs:
   release:
     name: GitHub release
     needs: publish
-    if: inputs.publish && inputs.create-github-release && github.ref_type == 'tag'
+    if: ${{ inputs.publish && inputs.create-github-release && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 10
     permissions:
@@ -516,7 +516,7 @@ jobs:
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: [preflight, publish, release, live]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
+    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || inputs.staged) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -591,7 +591,7 @@ jobs:
   report-failure:
     name: Report a failed release
     needs: [preflight, build, publish, release, live, verify]
-    if: ${{ always() && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    if: ${{ always() && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     permissions:
@@ -613,7 +613,7 @@ jobs:
   notify-worker-image:
     name: Tell the worker image build
     needs: [publish, verify]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
+    if: ${{ !cancelled() && needs.publish.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     continue-on-error: true

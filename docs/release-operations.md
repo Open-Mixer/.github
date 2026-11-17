@@ -118,17 +118,23 @@ Use a throwaway Pages repository, never the live channel.
 5. Download an RPM or DEB from the GitHub release of the retried run and compare its sha256 with the file the
    channel serves.
 
-## A released version for a new Fedora release
+## Publish only by tagging
 
-The release preflight refuses a version the channel already serves, but only in the trees the release publishes
-into: build-rpm.yml checks the Fedora releases of its `fedora-versions`, build-deb.yml the suites of its
-`suite-matrix`. A version served for fc44 therefore does not block its first fc45 publish.
+Nothing reaches the channel root (the Pages repository), npm or a GitHub release except from a tag push. Every job that
+signs or pushes there runs only when `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`. A run
+by hand (`workflow_dispatch`) may build and dry-run, never publish, and no workflow has a `publish` input to switch
+that on. Re-running a failed tag run keeps its event `push`, so it still publishes. `tests/publish-only-by-tag.sh`
+(run by ci.yml) fails by name on a publishing job without that condition.
 
-To give a new Fedora release the packages the others serve, without a version bump, run `publish-fedora.yml` on
-main with the repository, its existing tag and `fedora-versions` (`["45"]`). It checks the tag is annotated and
-verified, builds that commit with the inputs the repository's own release.yml passes, and publishes the named
-releases only; the GitHub release of the tag is left as it is. Publish in dependency order (omx-contract first),
-since each build takes its BuildRequires from the channel's tree of its own Fedora release, and one run at a time.
+Two things are outside the rule, and the gate names them. A `staged: true` build writes `staging/` of the channel
+repository only, which no client installs from. `promote-staged.yml` publishes a staged build by dispatch and then
+creates the tag, the reverse of tagging first: it is exempt in the gate until the owner rules on it.
+
+`publish-fedora.yml` and `publish-freereac.yml` are removed: they republished an existing tag by hand, which this
+rule forbids. A new Fedora release gets the packages by re-running the tag run of each repository (in dependency
+order, omx-contract first, since each build takes its BuildRequires from the channel's tree of its own Fedora
+release), or by a new version tag. The preflight refuses a version the channel already serves, but only in the
+trees the release publishes into, so a version served for fc44 does not block its first fc45 publish.
 
 ## The staging channel of a release wave
 
@@ -319,7 +325,6 @@ names, no others. The run says which set it builds, and why, in a notice.
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
-  `publish-fedora.yml` always passes `full`: a new Fedora release is filled whole.
 - The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
   cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
 
@@ -391,7 +396,7 @@ A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full
 set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
 staging, channel installability) are toolchain arms on an image the quick set always builds, and the test holds each to
 the set. What stays literal, each with its reason, is the `ALLOW` list of the test: the whole matrices the reusable
-workflows declare as input defaults, and the tables of `publish-fedora.yml` and `publish-freereac.yml`, all handed to
+workflows declare as input defaults, all handed to
 `release-matrix`. `promote-staged.yml` is left whole on purpose: it promotes the whole matrix (its collect step refuses
 a staged tree that lacks any cell), so its install checks cover what it promotes.
 
