@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# Copyright (C) 2026 Pau Aliagas
 name: resolve-base
 description: Resolve the base of a compare gate the one way, fetched and verified, or refuse it by name
 

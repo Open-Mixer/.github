@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# Copyright (C) 2026 Pau Aliagas
 # resolve-base (.github/actions/resolve-base): the one base-resolution rule of every compare gate, proven on throwaway
 # repositories: a local, remote and sha base resolve with their merge-base; a stale origin/main is fetched first and an
 # unreachable remote is refused by name, never the stale copy; an empty base, no base, HEAD, origin/ and a ref at HEAD's

@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# Copyright (C) 2026 Pau Aliagas
 # doc-gate (.github/actions/doc-gate): the shared documentation gate, proven on a scratch repository under a stand-in
 # doxygen (its warnings a file, its pages written as doxygen names them) and then the real one: the set compare (a new
 # row, a stale row, a swapped row, a duplicate, a missing last newline, continuation lines joined), --update only ever
