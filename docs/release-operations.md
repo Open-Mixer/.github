@@ -127,8 +127,18 @@ that on. Re-running a failed tag run keeps its event `push`, so it still publish
 (run by ci.yml) reads what every step of every workflow and composite action DOES (`gh release`, `npm publish`, an
 upload, any `git push`, a `gh api` write, the channel push helper) and fails, by file, job and step, on a publish whose
 conditions are not all false when the tag condition is false (so `x || TAG` and `always() || TAG` fail), and on one
-whose conditions can never be true on a tag push. It proves itself on planted trees first. A build with `staged: true`
-and the purge of staging are named in it as staging-only.
+whose conditions can never be true on a tag push. It proves itself on planted trees first. It reads `curl` uploads (`-T`,
+`--upload-file`, a POST or PUT to a releases or uploads API) too, and every step of an action, a second unguarded publish
+included.
+
+The gate exempts exactly what the push WRITES, never an input name: a push whose written path (the `what` of
+`channel-push`, followed through the actions that call it) is under `staging/` in every case it runs outside a tag
+push. Two things are therefore allowed, by the owner's staged release cadence rule (stage builds feed the next layer;
+they are not the release channel consumers install from): the stage builds (`staged: true`) and `purge-staging`, which
+deletes staging only. An action handed `staging: inputs.staged` that writes elsewhere is refused.
+
+Limit: a script of the repository itself (not of an action directory) that does the `git push` or the upload is
+invisible to the gate; the shared workflows have none, and a caller repository's own scripts are not scanned (Open-Mixer/.github#132).
 
 A `staged: true` build is outside the rule, on purpose: it writes `staging/` of the channel repository only, which no
 client installs from, so it is the stage flow of a release wave and not a channel release. The release itself is a

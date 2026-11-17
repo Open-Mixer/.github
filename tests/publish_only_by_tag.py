@@ -2,17 +2,21 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 """Publish only by tagging (docs/release-operations.md).
 
-A step PUBLISHES when of what it does: `gh release create|upload`, `npm publish`, an rsync/rclone/s3 copy, any
-`git push`, a `gh api` write to refs, releases, contents or dispatches, a third-party release/pages action, or a local
+A step PUBLISHES by what it does: `gh release create|upload`, `npm publish`, an rsync/rclone/s3 copy, any
+`git push`, a `gh api` write to refs, releases, contents or dispatches, a `curl` upload (-T, --upload-file) or a curl write to a
+releases or uploads API, a third-party release/pages action, or a local
 composite action that contains one of these (the channel push helper is one). Names are not read: a workflow named
 anything publishes if its steps do.
 
 Every publishing step must be GUARDED: the conjunction of its job `if`, its step `if`, and (for a composite action)
 the action's own `if` with `inputs.X` replaced by what the caller passes, must be false whenever the tag condition is
 false, for EVERY value of the other conditions. So `x || TAG`, `always() || TAG`, a TAG that is only in a job name or a
-comment, and a `sign: true` are all refused. A build with `staged: true` writes staging/ of the channel repository
-only (the stage flow, not a release), and the purge of staging is likewise staging-only: those two are named below.
-
+comment, and a `sign: true` are all refused. The only exemption is by what the push WRITES, never by an input name: a
+push whose written path (the `what` of the channel push helper, followed through the actions that call it) is under
+staging/ in every case it can run outside a tag push. That is the stage builds (they feed the next layer; they are not
+the release channel consumers install from) and the purge of staging. An action that is handed `staging: ...` and
+writes elsewhere is refused. LIMIT: a script of the repository (not of an action directory) that itself does the
+`git push` or the upload is invisible to this gate.
 A workflow a person can start by hand takes no input named like a publish switch. Workflows and composite actions,
 .yml and .yaml, are all read. Usage: publish_only_by_tag.py <repo root> | --selftest
 """
@@ -20,8 +24,8 @@ import itertools, json, os, re, sys, tempfile
 import yaml
 
 TAG = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
-STAGING_ONLY_ACTIONS = {"purge-staging"}      # writes staging/ only
-STAGED_ATOM = "inputs.staged"                  # a build with staged: true publishes to staging/ only
+PUSH_HELPER = "channel-push"                   # the one helper that pushes to the channel; its `what` input names the path
+STAGING = "staging/"                           # what a stage build, and the purge of staging, write: nothing else is exempt
 
 RUN_PUBLISHES = [
     (re.compile(r"\bgh\s+release\s+(create|upload|edit|delete)\b"), "gh release"),
@@ -30,6 +34,25 @@ RUN_PUBLISHES = [
     (re.compile(r"\bgit\b[^\n]*\bpush\b|^\s*push\s+origin\b", re.M), "git push"),
     (re.compile(r"\bgh\s+api\b[^\n]*(git/refs|/releases|/dispatches|/contents/)"), "a gh api write"),
 ]
+CURL_UPLOAD = re.compile(r"(?:^|\s)(?:-T\S*|--upload-file\S*)(?:\s|=|$)")
+CURL_WRITE = re.compile(r"(?:-X\s*|--request[ =]\s*)(?:POST|PUT|PATCH)\b|(?:^|\s)(?:-d|-F|--data\S*|--form\S*)(?:\s|=|$)")
+CURL_TARGET = re.compile(r"releases|uploads")
+
+
+def run_publishes(t):
+    """what a run script does that publishes, or None. t has its continuation lines joined and comments dropped"""
+    for rx, what in RUN_PUBLISHES:
+        for m in rx.finditer(t):
+            line_end = t.find("\n", m.end())
+            if what == "npm publish" and "--dry-run" in t[m.start():line_end if line_end >= 0 else None]: continue
+            return what
+    for line in t.splitlines():
+        if re.search(r"\bcurl\b", line):
+            if CURL_UPLOAD.search(line): return "a curl upload"
+            if CURL_WRITE.search(line) and CURL_TARGET.search(line): return "a curl write to a releases or uploads API"
+    return None
+
+
 USES_PUBLISHES = re.compile(r"gh-release|pypi-publish|deploy-pages|gh-pages|pages-deploy|upload-release-asset|create-release|action-gh-release")
 
 
@@ -94,13 +117,17 @@ def atoms(ast, acc):
 def ev(ast, val):
     k = ast[0]
     if k == "atom":
-        t = ast[1].lower()
-        if t == "true": return True
-        if t == "false": return False
-        return val[ast[1]]
+        t = ast[1]
+        if len(t) >= 2 and t[0] == "'" and t[-1] == "'": return t[1:-1]
+        if t.lower() == "true": return True
+        if t.lower() == "false": return False
+        return val[t]
     if k == "not": return not ev(ast[1], val)
-    if k == "and": return ev(ast[1], val) and ev(ast[2], val)
-    return ev(ast[1], val) or ev(ast[2], val)
+    if k == "and":
+        a = ev(ast[1], val)
+        return ev(ast[2], val) if a else a
+    a = ev(ast[1], val)
+    return a if a else ev(ast[2], val)
 
 
 def strip_expr(v):
@@ -125,7 +152,7 @@ def literal(v):
     return v
 
 
-def subst(expr, inputs, env):
+def subst(expr, inputs, env, strings=False):
     """replace inputs.X by what the caller passed and env.X by the job's env, a few levels deep"""
     e = canon(expr)
     for _ in range(4):
@@ -135,7 +162,9 @@ def subst(expr, inputs, env):
                 if name not in table: return m.group(0)
                 v = table[name]
                 lit = literal(v)
-                if lit is not None: return "true" if lit.lower() == "true" else "false"
+                if lit is not None:
+                    if strings: return "'" + lit + "'"
+                    return "true" if lit.lower() == "true" else "false"
                 return "(" + canon(v) + ")"
             return f
         n = re.sub(r"\binputs\.([\w-]+)", one("inputs", inputs), e)
@@ -146,39 +175,38 @@ def subst(expr, inputs, env):
     return e
 
 
-def guarded(exprs, safe):
-    """True when the conjunction of exprs is false whenever TAGATOM (and each safe atom) is false"""
+def dest_ast(dest):
+    """where a push writes: ('expr', text) is an expression, ('lit', text) a string, possibly with ${{ }} after a prefix"""
+    kind, text = dest
+    if kind == "expr": return parse(tokens(text))
+    return ("atom", "'" + text.split("${{")[0] + "'")
+
+
+OTHER_EVENT = re.compile(r"github\.event_name\s*==\s*'(?!push')\w+'")
+
+
+def judge(exprs, dest):
+    """'ok' when, whenever the conjunction of exprs holds, it is a tag push or the push writes under staging/ only,
+    and some such case exists; 'unguarded' when it can hold otherwise; 'never' when it can hold on no tag push"""
     exprs = [e for e in exprs if e is not None and str(e).strip() not in ("", "True")]
-    if not exprs: return False
     asts = [parse(tokens(e)) for e in exprs]
+    dast = dest_ast(dest) if dest else None
     ats = set()
-    for a in asts: atoms(a, ats)
-    free = sorted(x for x in ats if x not in ("TAGATOM",) and x.lower() not in ("true", "false") and x not in safe)
-    if len(free) > 16: return False
+    for a in asts + ([dast] if dast else []): atoms(a, ats)
+    free = sorted(x for x in ats if x != "TAGATOM" and x.lower() not in ("true", "false") and not x.startswith("'"))
+    if len(free) > 16: return "unguarded"
+    reach = False
     for combo in itertools.product([False, True], repeat=len(free)):
         val = dict(zip(free, combo)); val["TAGATOM"] = False
-        for sa in safe: val[sa] = False
-        if all(ev(a, val) for a in asts): return False
-    return True
-
-
-def reachable(exprs, safe):
-    """True when the conjunction can be true ON A TAG PUSH: a guard that also excludes the event of a tag (a job `if`
-    that wants workflow_dispatch) is a publisher that can never publish"""
-    exprs = [e for e in exprs if e is not None and str(e).strip() not in ("", "True")]
-    if not exprs: return True
-    asts = [parse(tokens(e)) for e in exprs]
-    ats = set()
-    for a in asts: atoms(a, ats)
-    other_event = lambda x: re.fullmatch(r"github\.event_name\s*==\s*'(?!push')\w+'", x) is not None
-    free = sorted(x for x in ats if x != "TAGATOM" and x.lower() not in ("true", "false") and not other_event(x))
-    if len(free) > 16: return True
-    for combo in itertools.product([False, True], repeat=len(free)):
-        val = dict(zip(free, combo)); val["TAGATOM"] = True
-        for x in ats:
-            if other_event(x): val[x] = False
-        if all(ev(a, val) for a in asts): return True
-    return False
+        if all(ev(a, val) for a in asts):
+            d = ev(dast, val) if dast else None
+            if not (isinstance(d, str) and d.startswith(STAGING)): return "unguarded"
+            reach = True
+        val["TAGATOM"] = True
+        for x in free:
+            if OTHER_EVENT.fullmatch(x): val[x] = False
+        if all(ev(a, val) for a in asts): reach = True
+    return "ok" if reach else "never"
 
 
 # ---- what a step does
@@ -203,53 +231,69 @@ class Repo:
         m = re.match(r"(?:\./|[\w.-]+/[\w.-]+/)\.github/actions/([\w-]+)(?:@.*)?$", uses)
         return m.group(1) if m and m.group(1) in self.actions else None
 
+    def defaults(self, name):
+        inp = self.actions[name].get("inputs") or {}
+        return {k: v["default"] for k, v in inp.items() if isinstance(v, dict) and v.get("default") is not None}
+
     def action_publishers(self, name, stack=()):
-        """[(what, [guard exprs over inputs.*], safe-atoms)] for the publishing steps inside a composite action"""
+        """[(what, [guard exprs over this action's inputs], dest)] for EVERY publishing step inside a composite action,
+        dest being where a push writes (('expr'|'lit', text) over the action's inputs) or None when it is not known"""
         if name in self.memo: return self.memo[name]
         if name in stack: return []
         act = self.actions[name]
-        defaults = {k: (v or {}).get("default") for k, v in (act.get("inputs") or {}).items()}
         out = []
         steps = ((act.get("runs") or {}).get("steps")) or []
         for st in steps:
-            out += self.step_publishers(st, [], {}, {k: v for k, v in defaults.items() if v is not None}, stack + (name,), frozenset())
-        # a script of the action directory that publishes, called from a step, makes the whole action a publisher
+            out += self.step_publishers(st, [], {}, stack + (name,))
+        # a script of the action directory that publishes, run by a step: that step's own `if` guards it
         d = os.path.join(self.root, ".github", "actions", name)
         for fn in sorted(os.listdir(d)):
-            if fn.endswith((".sh", ".py")) and not fn.startswith(("selftest", "test")) and not out:
-                txt = re.sub(r"\\\n\s*", " ", open(os.path.join(d, fn), errors="replace").read())
-                txt = "\n".join(l for l in txt.splitlines() if not l.lstrip().startswith("#"))
-                for rx, what in RUN_PUBLISHES:
-                    # a script publishes when a LINE starts with the command (a quoted example or a fixture does not)
-                    if re.search(r"^\s*(?:\w+=\S+\s+)*(?:" + rx.pattern.replace("^\\s*", "").replace("\\b", "", 1) + ")", txt, re.M):
-                        out.append((what + " in " + fn, [], frozenset())); break
+            if not fn.endswith((".sh", ".py")) or fn.startswith(("selftest", "test")): continue
+            txt = re.sub(r"\\\n\s*", " ", open(os.path.join(d, fn), errors="replace").read())
+            txt = "\n".join(l for l in txt.splitlines() if not l.lstrip().startswith("#"))
+            what = None
+            for rx, w in RUN_PUBLISHES:
+                # a script publishes when a LINE starts with the command (a quoted example or a fixture does not)
+                if re.search(r"^\s*(?:\w+=\S+\s+)*(?:" + rx.pattern.replace("^\\s*", "").replace("\\b", "", 1) + ")", txt, re.M): what = w; break
+            if what is None and any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in txt.splitlines()): what = "a curl upload"
+            if not what: continue
+            users = [st for st in steps if fn in str(st.get("run", ""))]
+            for st in users or [{}]:
+                out.append((what + " in " + fn, ([st["if"]] if "if" in st else []), None))
         self.memo[name] = out
         return out
 
-    def step_publishers(self, st, base_guards, env, defaults, stack, safe):
-        """publishing findings of one step: [(what, [guard exprs], safe)] with the step's own `if` included"""
+    def step_publishers(self, st, base_guards, env, stack):
+        """publishing findings of one step: [(what, [guard exprs], dest)] with the step's own `if` included"""
         found = []
         guards = base_guards + ([st["if"]] if "if" in st else [])
         uses = str(st.get("uses", ""))
         if uses:
             name = self.local(uses)
-            if name in STAGING_ONLY_ACTIONS: return []
             if name:
-                with_ = dict(defaults); with_.update(st.get("with") or {})
-                sf = set(safe)
-                stg = (st.get("with") or {}).get("staging")
-                if stg is not None and STAGED_ATOM in str(stg): sf.add(STAGED_ATOM)
-                for what, inner, isf in self.action_publishers(name, stack):
+                with_ = self.defaults(name); with_.update(st.get("with") or {})
+                for what, inner, dest in self.action_publishers(name, stack):
                     sub = [subst(g, with_, {}) for g in inner]
-                    found.append((f"{what} (through {name})", guards + sub, frozenset(sf | set(isf))))
+                    if name == PUSH_HELPER and "what" in with_: dest = self.dest_of(with_["what"])
+                    elif dest is not None: dest = self.lift_dest(dest, with_)
+                    found.append((f"{what} (through {name})", guards + sub, dest))
             elif USES_PUBLISHES.search(uses):
-                found.append((f"the action {uses}", guards, safe))
+                found.append((f"the action {uses}", guards, None))
         if "run" in st:
-            t = run_text(st)
-            for rx, what in RUN_PUBLISHES:
-                hit = [m for m in rx.finditer(t) if not (what == "npm publish" and "--dry-run" in t[m.start():t.find("\n", m.end()) if t.find("\n", m.end()) >= 0 else None])]
-                if hit: found.append((what, guards, safe)); break
+            what = run_publishes(run_text(st))
+            if what: found.append((what, guards, None))
         return found
+
+    @staticmethod
+    def dest_of(v):
+        """the written path a with: value names"""
+        v = str(v).strip()
+        return ("expr", canon(v)) if re.fullmatch(r"\$\{\{.*\}\}", v, re.S) else ("lit", v)
+
+    @staticmethod
+    def lift_dest(dest, with_):
+        kind, text = dest
+        return ("expr", subst(text, with_, {}, strings=True)) if kind == "expr" else dest
 
 
 def check_workflow(repo, path, doc, bad):
@@ -265,12 +309,14 @@ def check_workflow(repo, path, doc, bad):
         env = dict(wf_env); env.update(body.get("env") or {})
         base = [body["if"]] if "if" in body else []
         for n, st in enumerate(body["steps"]):
-            for what, gs, safe in repo.step_publishers(st, base, env, {}, (), frozenset()):
+            for what, gs, dest in repo.step_publishers(st, base, env, ()):
                 exprs = [subst(g, {}, env) for g in gs]
+                if dest and dest[0] == "expr": dest = ("expr", subst(dest[1], {}, env, strings=True))
                 label = st.get("name") or st.get("uses") or f"step {n + 1}"
-                if not guarded(exprs, safe):
-                    bad.append(f"{rel}: job '{job}' step '{label}' publishes ({what}) without the tag condition ({TAG})")
-                elif not reachable(exprs, safe):
+                r = judge(exprs, dest)
+                if r == "unguarded":
+                    bad.append(f"{rel}: job '{job}' step '{label}' publishes ({what}) without the tag condition ({TAG}), and does not write under {STAGING} only")
+                elif r == "never":
                     bad.append(f"{rel}: job '{job}' step '{label}' ({what}) can never publish: its conditions exclude a tag push")
 
 
@@ -318,6 +364,21 @@ def selftest():
         "job if: workflow_dispatch": {"workflows/a.yml": wf(job_if="github.event_name == 'workflow_dispatch'")},
         "a .yaml workflow": {"workflows/a.yaml": wf()},
         "a publish job whose own if wants workflow_dispatch, so it can never publish": {"workflows/a.yml": wf(job_if="${{ github.event_name == 'workflow_dispatch' }}", step_if="${{ " + T + " }}")},
+        "a stage build whose push writes outside staging/": {
+            "actions/channel-push/action.yml": "name: channel-push\ninputs:\n  what:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: git push origin HEAD\n",
+            "actions/pub/action.yml": "name: pub\ninputs:\n  sign:\n    default: 'false'\n  staging:\n    default: 'false'\nruns:\n  using: composite\n  steps:\n    - if: inputs.sign == 'true'\n      uses: ./.github/actions/channel-push\n      with:\n        what: rpm\n",
+            "workflows/a.yml": "name: w\non:\n  workflow_call:\n    inputs:\n      staged:\n        type: boolean\njobs:\n  j:\n    runs-on: x\n    steps:\n      - uses: ./.github/actions/pub\n        with:\n          sign: ${{ inputs.staged }}\n          staging: ${{ inputs.staged }}\n"},
+        "curl -T upload": {"workflows/a.yml": wf(run="curl -sS -T x.rpm https://host/up/")},
+        "curl --upload-file": {"workflows/a.yml": wf(run="curl --upload-file x.rpm https://host/up/")},
+        "curl POST to a releases uploads API": {"workflows/a.yml": wf(run="curl -X POST -H 'Auth: t' --data-binary @x https://uploads.github.com/repos/o/r/releases/1/assets")},
+        "curl PUT to a releases API on a continued line": {"workflows/a.yml": wf(run="curl -sS \\\n            -X PUT -d @b https://api.github.com/repos/o/r/releases/1")},
+        "a second unguarded publish in the same action": {
+            "actions/pub/action.yml": "name: pub\ninputs:\n  sign:\n    default: 'false'\nruns:\n  using: composite\n  steps:\n    - if: inputs.sign == 'true'\n      shell: bash\n      run: gh release create v1\n    - shell: bash\n      run: gh release upload v1 x\n",
+            "workflows/a.yml": "name: w\non:\n  workflow_dispatch: {}\njobs:\n  j:\n    runs-on: x\n    steps:\n      - uses: ./.github/actions/pub\n        with:\n          sign: ${{ " + T + " }}\n"},
+        "a guarded publish step and an unguarded script in the same action": {
+            "actions/pub/action.yml": "name: pub\ninputs:\n  sign:\n    default: 'false'\nruns:\n  using: composite\n  steps:\n    - if: inputs.sign == 'true'\n      shell: bash\n      run: gh release create v1\n    - shell: bash\n      run: ${{ github.action_path }}/go.sh\n",
+            "actions/pub/go.sh": "#!/bin/bash\ngit push origin HEAD\n",
+            "workflows/a.yml": "name: w\non:\n  workflow_dispatch: {}\njobs:\n  j:\n    runs-on: x\n    steps:\n      - uses: ./.github/actions/pub\n        with:\n          sign: ${{ " + T + " }}\n"},
         "a dispatch input named publish": {"workflows/a.yml": wf(run="echo hi", on="workflow_dispatch:\n    inputs:\n      publish:\n        type: boolean")},
         "env DO_PUBLISH without the tag": {"workflows/a.yml": wf(step_if="env.DO_PUBLISH == 'true'", env="DO_PUBLISH: ${{ github.ref == 'refs/heads/main' }}")},
         "a composite action that pushes, called bare": {
@@ -339,8 +400,9 @@ def selftest():
         "a composite action guarded through its input": {
             "actions/pub/action.yml": "name: pub\ninputs:\n  sign:\n    default: 'false'\nruns:\n  using: composite\n  steps:\n    - if: inputs.sign == 'true'\n      shell: bash\n      run: gh release create v1\n",
             "workflows/a.yml": "name: w\non:\n  workflow_dispatch: {}\njobs:\n  j:\n    runs-on: x\n    env:\n      DO: ${{ " + T + " }}\n    steps:\n      - uses: ./.github/actions/pub\n        with:\n          sign: ${{ env.DO }}\n"},
-        "a staged build into staging/ only": {
-            "actions/pub/action.yml": "name: pub\ninputs:\n  sign:\n    default: 'false'\n  staging:\n    default: 'false'\nruns:\n  using: composite\n  steps:\n    - if: inputs.sign == 'true'\n      shell: bash\n      run: git push origin HEAD\n",
+        "a staged build writing under staging/ only": {
+            "actions/channel-push/action.yml": "name: channel-push\ninputs:\n  what:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: git push origin HEAD\n",
+            "actions/pub/action.yml": "name: pub\ninputs:\n  sign:\n    default: 'false'\n  staging:\n    default: 'false'\nruns:\n  using: composite\n  steps:\n    - if: inputs.sign == 'true'\n      uses: ./.github/actions/channel-push\n      with:\n        what: ${{ inputs.staging == \'true\' && \'staging/rpm\' || \'rpm\' }}\n",
             "workflows/a.yml": "name: w\non:\n  workflow_call:\n    inputs:\n      staged:\n        type: boolean\njobs:\n  j:\n    runs-on: x\n    steps:\n      - uses: ./.github/actions/pub\n        with:\n          sign: ${{ inputs.staged }}\n          staging: ${{ inputs.staged }}\n"},
     }
     ok = True
