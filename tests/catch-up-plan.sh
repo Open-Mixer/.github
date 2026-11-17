@@ -138,8 +138,8 @@ for kind in ("rpm", "deb"):
     pf = [s for s in pre["steps"] if "release-preflight" in s.get("uses", "")][0]["with"]
     assert pf.get("catch-up") == "${{ inputs.catch-up }}", f"build-{kind}.yml does not hand catch-up to the preflight"
     assert "needs.preflight.outputs.count != '0'" in jobs["build"]["if"], f"build-{kind}.yml builds on an empty plan"
-    assert "needs.preflight.outputs.count != '0'" in jobs["publish"]["if"], f"build-{kind}.yml publishes on an empty plan"
-    pub = [s for s in jobs["publish"]["steps"] if s.get("id") == "publish"][0]["with"]
+    assert "needs.preflight.outputs.count != '0'" in jobs["publish-go"]["if"], f"build-{kind}.yml publishes on an empty plan"
+    pub = [s for s in jobs["publish-release"]["steps"] if s.get("id") == "publish"][0]["with"]
     assert pub.get("catch-up") == "${{ inputs.catch-up }}", f"build-{kind}.yml does not hand catch-up to the publish"
     assert pub.get("matrix-set") == "${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}", \
         f"build-{kind}.yml records a set of its own on a catch-up (cells.tsv must keep the version's)"

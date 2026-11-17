@@ -30,7 +30,7 @@ the one expression form
 
 A release run keeps 30 days; every other run (pull request, lane, dry-run dispatch) keeps 2. The release condition is
 the workflow's own sign that it publishes: `inputs.publish` (and `inputs.staged` in build-rpm.yml and build-deb.yml)
-where the workflow has them, `!inputs.dry-run` in promote-staged.yml, and the tag alone in release-package.yml. A
+where the workflow has them, the tag push in promote-staged.yml, and the tag alone in release-package.yml. A
 reusable workflow reads the caller's `github.ref`, so a caller changes nothing. A repository that calls these and
 uploads its own artifacts uses the same form with its own release condition.
 
@@ -118,17 +118,41 @@ Use a throwaway Pages repository, never the live channel.
 5. Download an RPM or DEB from the GitHub release of the retried run and compare its sha256 with the file the
    channel serves.
 
-## A released version for a new Fedora release
+## Publish only by tagging
 
-The release preflight refuses a version the channel already serves, but only in the trees the release publishes
-into: build-rpm.yml checks the Fedora releases of its `fedora-versions`, build-deb.yml the suites of its
-`suite-matrix`. A version served for fc44 therefore does not block its first fc45 publish.
+Nothing reaches the channel root (the Pages repository), npm or a GitHub release except from a tag push. A run by hand
+(`workflow_dispatch`) may build and dry-run, never publish, and no workflow has a `publish` input to switch that on.
+Re-running a failed tag run keeps its event `push`, so it still publishes.
 
-To give a new Fedora release the packages the others serve, without a version bump, run `publish-fedora.yml` on
-main with the repository, its existing tag and `fedora-versions` (`["45"]`). It checks the tag is annotated and
-verified, builds that commit with the inputs the repository's own release.yml passes, and publishes the named
-releases only; the GitHub release of the tag is left as it is. Publish in dependency order (omx-contract first),
-since each build takes its BuildRequires from the channel's tree of its own Fedora release, and one run at a time.
+The rule is decided by EXACT MATCH, never by evaluating an expression (`tests/publish-only-by-tag.sh`, run by ci.yml,
+which proves itself first on planted trees: every way of publishing red, the allowed shapes green):
+
+1. A job with a publishing step carries the job-level `if:` that is exactly
+   `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')` (whitespace and the `${{ }}` aside). An extra
+   `||` or `&&`, `always()`, an input, or the condition on a step instead of the job is refused, by job name. A step
+   publishes by what it does (`gh release`, `npm publish`, an upload, `curl -T`, a POST or PUT to a releases or uploads
+   API, any `git push`, a `gh api` write, the channel push helper, or a composite action that contains one), not by its
+   name. That is why a job that must also wait on the outcome of jobs that may be skipped has a gate job beside it
+   (`publish-go`, `release-go`, `notify-go`) holding those conditions, and the publishing job needs the gate.
+2. What is not publishing, by proof: a push whose `what` is a literal path under `staging/` (no expression, no `..`,
+   no `//`): the stage builds and the purge of staging. By the owner's staged release cadence rule they feed the next
+   layer and are not the release channel consumers install from. And a call of a composite action whose publishing
+   steps carry one of the three canonical sign gates, when the caller gives it a literal `sign: 'false'` (the dry run,
+   an unsigned tree) or `staging: 'true'` with the staging gate. Any expression where a literal is needed is not a
+   proof and the job needs the exact tag condition.
+
+So `build-rpm.yml` and `build-deb.yml` have `publish-release` (the tag condition alone, sign true, staging false), and
+`publish`, which stages (`staged: true`, `staging: 'true'`) or assembles the unsigned tree (`sign: 'false'`). The package
+workflows (surge-xt, pugl-nanovg, clap, rncbc-v1, mod-host-protocol), `release-package.yml` and `promote-staged.yml` have
+a publishing job under the tag condition and a `-dry-run` job beside it under its negation. Limit: a script of the
+repository itself (not of an action directory) that does the `git push` or the upload is invisible to the gate; the
+shared workflows have none, and a caller repository's own scripts are not scanned (Open-Mixer/.github#132).
+
+`publish-fedora.yml` and `publish-freereac.yml` are removed: they republished an existing tag by hand, which this
+rule forbids. A new Fedora release gets the packages by re-running the tag run of each repository (in dependency
+order, omx-contract first, since each build takes its BuildRequires from the channel's tree of its own Fedora
+release), or by a new version tag. The preflight refuses a version the channel already serves, but only in the
+trees the release publishes into, so a version served for fc44 does not block its first fc45 publish.
 
 ## The staging channel of a release wave
 
@@ -233,13 +257,13 @@ staged.
 ### Promoting a staged version
 
 `promote-staged.yml` makes a staged build the release without building it again, so what the layers above were built
-and verified against is what ships. A repository calls it from a `promote.yml` of its own (dispatched by hand, with
-`contents: write`; the header of `promote-staged.yml` has the caller), with the staged `version` and, when staging
-holds builds of more than one commit of that version, the `commit`.
+and verified against is what ships. A repository calls it from a `promote.yml` of its own (triggered by the push of the tag `v<version>`, with
+`contents: write`; the header of `promote-staged.yml` has the caller). The version is the tag's and the commit is the
+one the tag is on; a dispatch of the caller is a dry run that takes `version` and `commit` as inputs.
 
 1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
    architecture of the matrix, with its source package, and must cover every release the channel root serves the
-   package for. The commit must be on the default branch, and `v<version>` must be free or already on that commit.
+   package for. The commit must be on the default branch.
    A staged build of the quick set does not hold every cell, so it is refused here by name: a version is promoted
    from a staged run of the full matrix, or released from its tag.
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
@@ -250,11 +274,11 @@ holds builds of more than one commit of that version, the `commit`.
 4. **Prove.** Every promoted file is fetched from the served channel and its SHA256 compared with the staged one
    (`same bytes <sha256> <path>` lines in the run log), then the version installs from the channel root alone in a
    clean container of every release and architecture.
-5. **Tag and release.** Only then: `v<version>` on the commit the staged build recorded, and the GitHub release with
-   the promoted files. The tag is made by the workflow's token, so it starts no tag-triggered release run.
+5. **Release.** Only then: the GitHub release of the tag that started the run, with the promoted files. The workflow
+   never creates the tag.
 
-Any refusal in 1 or 2 leaves the channel as it was. `dry-run: true` stops after assembling an unsigned tree: nothing
-is pushed, tagged or released. A promoted package keeps the version string of its staged build
+Any refusal in 1 or 2 leaves the channel as it was. A run that is not a tag push stops after assembling an unsigned tree: nothing
+is pushed or released. A promoted package keeps the version string of its staged build
 (`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
 
@@ -319,7 +343,6 @@ names, no others. The run says which set it builds, and why, in a notice.
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
-  `publish-fedora.yml` always passes `full`: a new Fedora release is filled whole.
 - The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
   cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
 
@@ -391,7 +414,7 @@ A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full
 set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
 staging, channel installability) are toolchain arms on an image the quick set always builds, and the test holds each to
 the set. What stays literal, each with its reason, is the `ALLOW` list of the test: the whole matrices the reusable
-workflows declare as input defaults, and the tables of `publish-fedora.yml` and `publish-freereac.yml`, all handed to
+workflows declare as input defaults, all handed to
 `release-matrix`. `promote-staged.yml` is left whole on purpose: it promotes the whole matrix (its collect step refuses
 a staged tree that lacks any cell), so its install checks cover what it promotes.
 
@@ -435,12 +458,14 @@ and `quick-deps.sh` on trees of its own.
 A cell that joins the quick set (trixie amd64, 2026-11-13) has no build of the versions already tagged and served.
 `republish` cannot fill it alone: it rebuilds every cell of the run, and its rebuilt arch-independent packages
 (`all`, `noarch`) and source rpms carry other bytes under the names the channel serves. A **catch-up** fills only
-what is missing:
+what is missing.
 
-```
-gh workflow run release.yml -R Open-Mixer/<repository> --ref main \
-  -f source-ref=v<version> -f publish=true -f catch-up=true
-```
+A catch-up used to be started by hand: `gh workflow run release.yml ... -f source-ref=v<version> -f publish=true
+-f catch-up=true`. **That recipe is retired** by "Publish only by tagging": a dispatch publishes nothing, and a re-run of
+a tag run repeats the inputs of the tag push, which carry no `catch-up`. A catch-up can be a dry run by dispatch (the
+plan and the assembled tree are the proof), and the publish of a missing cell waits for a design that is a tag push
+(the open question is which tag; until then a new version tag fills the cell). The plan, the refusals and the
+publish rules below are unchanged and still tested.
 
 - **The plan.** The first job (`release-matrix`, `matrix.sh`) takes the set's cells as above, reads `<kind>/cells.tsv`
   from the channel repository (the API, not the Pages site, which lags a push), and leaves out every cell the tag's

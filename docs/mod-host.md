@@ -55,8 +55,8 @@ of exactly 1024 bytes, two commands in one write and one command in two writes (
 The fork's version is one for both formats: `packaging/mod-host.spec` Version equals the upstream part of
 `debian/changelog`, and the fork's CI refuses a difference. A `v<version>` tag of the fork attaches the RPMs and DEBs
 to its GitHub release. To publish into the channel, move the `mod-host` line of `pins.txt` to the tag's commit, then
-run `mod-host-protocol-rpm.yml` and `mod-host-protocol-deb.yml` on main with `publish` set; the RPM workflow refuses
-to publish a snapshot build.
+push a tag `mod-host-protocol-<version>`, which runs `mod-host-protocol-rpm.yml` and `mod-host-protocol-deb.yml`
+and publishes; the RPM workflow refuses to publish a snapshot build.
 
 The fork's versions (0.10.8 and later) sort above everything the channel carried before: the RPMs
 `0.10.6.f14a230-11.x.omx` built from the patches here, audinux's `0.10.6.f14a230-12`, and the DEBs `0.1.0-8~omx`.

@@ -74,6 +74,7 @@ def ev(expr, inputs, needs=None, matrix=None, ref_type="branch"):
     if e.startswith("${{") and e.endswith("}}"):
         e = e[3:-2].strip()
     e = re.sub(r"\binputs\.([a-z0-9-]+)", lambda m: f'inputs["{m.group(1)}"]', e)
+    e = e.replace("needs.publish-release", "needs.publish_release")
     e = e.replace("&&", " and ").replace("||", " or ")
     e = re.sub(r"!(?!=)", " not ", e)
     env = {"inputs": inputs, "fromJSON": json.loads, "cancelled": lambda: False, "always": lambda: True,
@@ -81,7 +82,7 @@ def ev(expr, inputs, needs=None, matrix=None, ref_type="branch"):
            "format": lambda f, *a: re.sub(r"\{(\d+)\}", lambda m: str(a[int(m.group(1))]), f),
            "contains": lambda a, b: b in a,
            "github": O(ref_type=ref_type, ref_name="v1.2.0" if ref_type == "tag" else "main", sha="5f455d37cfb5" + "0" * 28, run_id="4242",
-                       event_name="workflow_dispatch", ref="refs/heads/x", repository="o/r",
+                       event_name="push" if ref_type == "tag" else "workflow_dispatch", ref="refs/tags/v1.2.0" if ref_type == "tag" else "refs/heads/x", repository="o/r",
                        event=O(pull_request=O(head=O(repo=O(full_name="o/r"))))),
            "needs": needs or O(), "matrix": matrix or O(), "vars": O(), "secrets": O(), "runner": O(temp="/tmp"),
            "env": O(), "startsWith": lambda a, b: str(a).startswith(b)}
@@ -142,35 +143,48 @@ def check(path, kind):
         assert truthy(ev(s["with"].get("staging", "false"), inp)) == want_stg, \
             f"{path}: the build of {name} {'does not add' if want_stg else 'adds'} the staging channel"
 
-    # the publish: a staged run signs and publishes into staging/<kind>, in the live group
+    # the publish, by exact match (tests/publish_only_by_tag.py reads the same): a release is the job publish-release, whose
+    # `if` is the tag condition alone and whose publish is sign true, staging false; a staged run and a dry run are the
+    # coordinator `publish`, whose two publish steps are staging true with sign true, and sign false
+    TAGC = "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}"
+    rel = jobs["publish-release"]
+    assert rel["if"] == TAGC and rel["env"]["DO_PUBLISH"] == "true", f"{path}: publish-release is not guarded by the tag condition alone"
+    rst = [x for x in rel["steps"] if f"/actions/publish-{kind}s@" in x.get("uses", "")][0]
+    assert rst["with"]["sign"] == "true" and rst["with"]["staging"] == "false" and "if" not in rst, f"{path}: the release publish step"
+    assert "staged" not in rel["concurrency"]["group"] and rel["concurrency"]["group"].endswith("-live"), f"{path}: the release publishes outside the live group"
     pub = jobs["publish"]
     assert ev(pub.get("if", "true"), staged, needs=ok_build), f"{path}: publish skipped on a staged run"
-    for name, inp, rt, want_do, want_stg in (("staged", staged, "branch", True, True), ("a release", tag, "tag", True, False),
-                                             ("a dry run", dry, "branch", False, False), ("staging", staging, "branch", False, False)):
-        assert truthy(ev(pub["env"]["DO_PUBLISH"], inp, ref_type=rt)) == want_do, f"{path}: DO_PUBLISH for {name}"
-        st = [x for x in pub["steps"] if f"/actions/publish-{kind}s@" in x.get("uses", "")][0]
-        assert truthy(ev(st["with"]["staging"], inp, ref_type=rt)) == want_stg, f"{path}: publish-{kind}s staging for {name}"
+    sst = [x for x in pub["steps"] if x.get("id") == "staged"][0]
+    dst = [x for x in pub["steps"] if x.get("id") == "dry"][0]
+    assert sst["with"]["sign"] == "true" and sst["with"]["staging"] == "true", f"{path}: the staged publish is not sign true, staging true"
+    assert dst["with"]["sign"] == "false" and dst["with"]["staging"] == "false", f"{path}: the dry assembly is not sign false, staging false"
+    for name, inp, rt, want_stage, want_dry in (("staged", staged, "branch", True, False), ("a dry run", dry, "branch", False, True),
+                                                ("staging", staging, "branch", False, True)):
+        assert truthy(ev(sst["if"], inp, ref_type=rt)) == want_stage, f"{path}: the staged publish step for {name}"
+        assert truthy(ev(dst["if"], inp, ref_type=rt)) == want_dry, f"{path}: the dry assembly step for {name}"
         group = ev(pub["concurrency"]["group"], inp, ref_type=rt)
-        assert group.endswith("-live") == (want_do or inp is tag), f"{path}: {name} publishes in group {group}"
-    st = [x for x in pub["steps"] if f"/actions/publish-{kind}s@" in x.get("uses", "")][0]
+        assert group.endswith("-live") == want_stage, f"{path}: {name} publishes in group {group}"
+    st = sst
     assert "5f455d37cfb5" in ev(st["with"]["tag"], staged), f"{path}: the staged commit message does not name the commit"
     rels = ev(st["with"]["releases" if kind == "rpm" else "suites"], staged)
     assert rels == " ".join(json.loads(base["fedora-versions" if kind == "rpm" else "suite-matrix"])), \
         f"{path}: the staging skeleton is {rels!r}, not every release of the matrix"
     if kind == "deb":
         assert ev(st["with"]["changelogs-url"], staged).endswith("/staging/deb/changelogs"), f"{path}: staged changelogs URL"
-        assert ev(st["with"]["changelogs-url"], tag, ref_type="tag").endswith("/deb/changelogs") and \
-            "staging" not in ev(st["with"]["changelogs-url"], tag, ref_type="tag"), f"{path}: release changelogs URL"
+        assert ev(rst["with"]["changelogs-url"], tag, ref_type="tag").endswith("/deb/changelogs") and \
+            "staging" not in ev(rst["with"]["changelogs-url"], tag, ref_type="tag"), f"{path}: release changelogs URL"
         sep = steps[bld[0]]["with"].get("separator")
         assert ev(sep, staged) == "+git" and ev(sep, dry) == "~git", f"{path}: the staged DEB snapshot separator"
 
     # the install check: from staging after a staged publish, from the real channel alone after a release
     v = jobs["verify"]
-    ok_pub = O(publish=O(result="success"))
-    assert ev(v["if"], staged, needs=ok_pub), f"{path}: no install check after a staged publish"
-    assert ev(v["if"], tag, needs=ok_pub, ref_type="tag"), f"{path}: no install check after a release"
-    assert not ev(v["if"], dry, needs=ok_pub), f"{path}: an install check on a dry run"
-    assert not ev(v["if"], dict(staged, **{"verify-install": False}), needs=ok_pub), f"{path}: verify-install false ignored"
+    ok_stage = O(publish=O(result="success"), publish_release=O(result="skipped"))
+    ok_rel = O(publish=O(result="skipped"), publish_release=O(result="success"))
+    ok_none = O(publish=O(result="success"), publish_release=O(result="skipped"))
+    assert ev(v["if"], staged, needs=ok_stage), f"{path}: no install check after a staged publish"
+    assert ev(v["if"], tag, needs=ok_rel, ref_type="tag"), f"{path}: no install check after a release"
+    assert not ev(v["if"], dry, needs=ok_none), f"{path}: an install check on a dry run"
+    assert not ev(v["if"], dict(staged, **{"verify-install": False}), needs=ok_stage), f"{path}: verify-install false ignored"
     # the install check runs for the built cells, no others
     assert v["strategy"]["matrix"] == m, f"{path}: the install check has a matrix of its own: {v['strategy']['matrix']}"
     a = [x for x in v["steps"] if "/actions/add-openmixer@" in x.get("uses", "")]
@@ -256,13 +270,13 @@ for kind in ("rpm", "deb"):
     # every name of the channel tree goes through the variable: no literal build/channel/<kind> left
     assert not re.search(rf"build/(channel|repo)/{kind}\b(?!/)", text.replace(f"build/channel/{kind}/RPM-GPG-KEY", "").replace(f"build/channel/{kind}/openmixer.asc", "")
                          .replace("REQUIRES_TREE=build/channel/deb", "")), f"{p}: a literal build/channel/{kind} is left"
-    push = [s for s in steps if "/actions/channel-push@" in s.get("uses", "")][0]
-    w = push["with"]
-    for flag, want in (("true", f"staging/{kind}"), ("false", kind)):
-        got = w["what"].replace("${{", "").replace("}}", "").strip()
-        got = eval(got.replace("inputs.staging", repr(flag)).replace("&&", " and ").replace("||", " or "), {})
-        assert got == want, f"{p}: channel-push adds {got} with staging {flag}, want {want}"
-    assert f'"build/channel/${var}"' in w["rebuild"], f"{p}: the lost-race rebuild does not assemble the same tree"
+    # the push is two steps with literal paths, so the gate can prove by exact match which one writes staging/
+    pushes = {x["id"]: x for x in steps if "/actions/channel-push@" in x.get("uses", "")}
+    assert set(pushes) == {"push-staging", "push-real"}, f"{p}: the pushes are {sorted(pushes)}"
+    assert pushes["push-staging"]["with"]["what"] == f"staging/{kind}" and pushes["push-staging"]["if"] == "inputs.sign == 'true' && inputs.staging == 'true'", f"{p}: the staging push"
+    assert pushes["push-real"]["with"]["what"] == kind and pushes["push-real"]["if"] == "inputs.sign == 'true' && inputs.staging != 'true'", f"{p}: the real push"
+    for w in (pushes["push-staging"]["with"], pushes["push-real"]["with"]):
+        assert f'"build/channel/${var}"' in w["rebuild"], f"{p}: the lost-race rebuild does not assemble the same tree"
     pull = [s for s in steps if "/actions/channel-pull@" in s.get("uses", "")][0]
     if kind == "rpm":
         # a catch-up strips nothing: it keeps the served metadata of the directories it places nothing into (tests/catch-up-publish.sh)
@@ -320,9 +334,12 @@ for name, job in d["jobs"].items():
 assert sorted(kinds) == ["deb", "rpm"], kinds
 a = yaml.safe_load(open(act))
 steps = a["runs"]["steps"]
-push = [x for x in steps if "/actions/channel-push@" in x.get("uses", "")][0]
-assert push["with"]["what"] == "staging/${{ inputs.kind }}", f"{act}: the purge commits {push['with']['what']}"
-assert "purge-staging.sh" in push["with"]["rebuild"], f"{act}: a lost race does not purge again"
+pushes = {x["id"]: x for x in steps if "/actions/channel-push@" in x.get("uses", "")}
+assert set(pushes) == {"push-rpm", "push-deb"}, f"{act}: the purge pushes are {sorted(pushes)}"
+for kind in ("rpm", "deb"):
+    push = pushes["push-" + kind]
+    assert push["with"]["what"] == f"staging/{kind}", f"{act}: the purge commits {push['with']['what']}"
+    assert "purge-staging.sh" in push["with"]["rebuild"], f"{act}: a lost race does not purge again"
 pull = [x for x in steps if "/actions/channel-pull@" in x.get("uses", "")][0]
 assert pull["with"]["strip"] == "${{ inputs.kind == 'rpm' && 'staging/rpm' || 'none' }}", f"{act}: the pull strips {pull['with']['strip']}"
 run = [x for x in steps if x.get("name") == "Purge the staging tree"][0]["run"]

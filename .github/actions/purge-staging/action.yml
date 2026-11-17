@@ -40,7 +40,7 @@ inputs:
 outputs:
   commit:
     description: the commit pushed to the channel; empty when nothing was pushed
-    value: ${{ steps.push.outputs.commit }}
+    value: ${{ steps.push-rpm.outputs.commit || steps.push-deb.outputs.commit }}
 
 runs:
   using: composite
@@ -103,14 +103,26 @@ runs:
         outside=$(git -C build/channel status --porcelain --untracked-files=all -- . ":(exclude)staging/$KIND")
         [ -z "$outside" ] || { echo "::error::the purge changed paths outside staging/$KIND:"; echo "$outside"; exit 1; }
 
-    - id: push
+    - id: push-rpm
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true'
+      if: inputs.sign == 'true' && inputs.kind == 'rpm'
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.reason }}
-        what: staging/${{ inputs.kind }}
+        what: staging/rpm
+        rebuild: 'COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
+
+    - id: push-deb
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.kind == 'deb'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.reason }}
+        what: staging/deb
         rebuild: 'COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'

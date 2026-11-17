@@ -391,28 +391,32 @@ jobs:
           if-no-files-found: ${{ matrix.arch == needs.preflight.outputs.first-arch && 'error' || 'ignore' }}
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
-  publish:
-    name: Sign and publish
+  publish-go:
+    name: Release publish gate
     needs: [preflight, build]
-    # the publish stage takes the packages a build stage of this run left; channel-installability inside the
-    # publish action refuses a release that would leave a package of the channel uninstallable
-    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) }}
+    # the conditions of the publish stage live here, so that the job which signs and pushes can carry the tag condition alone
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "the release publish of this stage may run"
+
+  publish-release:
+    name: Sign and publish
+    needs: [preflight, publish-go]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 30
     container:
       image: fedora:${{ fromJSON(inputs.fedora-versions)[0] }}
-    # The tree of the target repository is shared by every package and race-protected only by git's
-    # refusal of a non-fast-forward push; one group per target serialises this organisation's runs.
-    # A dry run (publish false) pushes nothing, so it gets a group of its own: sharing the live group made
-    # concurrent pull-request dry runs cancel each other's pending job.
+    # one group per target serialises this organisation's runs: the tree is shared by every package
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ (inputs.publish || inputs.staged) && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-live
       cancel-in-progress: false
     env:
-      # a release (publish on a tag) to the real channel, or a staged run to the staging channel
-      DO_PUBLISH: ${{ (inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -425,20 +429,92 @@ jobs:
         with:
           same-pass: ${{ inputs.same-pass }}
           rpm-dir: collected
-          tag: ${{ inputs.staged && format('staged {0}', github.sha) || inputs.source-ref || github.ref_name }}
-          sign: ${{ env.DO_PUBLISH }}
+          tag: ${{ inputs.source-ref || github.ref_name }}
+          sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
-          staging: ${{ inputs.staged }}
+          staging: 'false'
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}
           releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
 
+
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH == 'true'
+        with:
+          name: ${{ inputs.package-name }}-rpms-signed
+          path: signed/*.rpm
+          if-no-files-found: error
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
+
+  publish:
+    name: Stage the build, or assemble the unsigned tree (a release is publish-release)
+    needs: [preflight, build]
+    # the publish stage takes the packages a build stage of this run left; channel-installability inside the
+    # publish action refuses a release that would leave a package of the channel uninstallable
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && !(inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
+    outputs:
+      commit: ${{ steps.staged.outputs.commit }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: fedora:${{ fromJSON(inputs.fedora-versions)[0] }}
+    # The tree of the target repository is shared by every package and race-protected only by git's
+    # refusal of a non-fast-forward push; one group per target serialises this organisation's runs.
+    # A dry run (publish false) pushes nothing, so it gets a group of its own: sharing the live group made
+    # concurrent pull-request dry runs cancel each other's pending job.
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ inputs.staged && 'live' || github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.package-name }}-rpms-fc*
+          merge-multiple: true
+          path: collected
+
+      - id: staged
+        if: inputs.staged
+        uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
+        with:
+          same-pass: ${{ inputs.same-pass }}
+          rpm-dir: collected
+          tag: ${{ format('staged {0}', github.sha) }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          staging: 'true'
+          # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
+          matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
+          catch-up: ${{ inputs.catch-up }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+
+
+      - id: dry
+        if: ${{ !inputs.staged }}
+        uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
+        with:
+          same-pass: ${{ inputs.same-pass }}
+          rpm-dir: collected
+          tag: ${{ inputs.source-ref || github.ref_name }}
+          sign: 'false'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          staging: 'false'
+          # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
+          matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
+          catch-up: ${{ inputs.catch-up }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.staged
         with:
           name: ${{ inputs.package-name }}-rpms-signed
           path: signed/*.rpm
@@ -446,7 +522,7 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
+        if: ${{ !inputs.staged }}
         with:
           name: ${{ inputs.package-name }}-unsigned-tree
           path: build/repo/**
@@ -454,14 +530,14 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: env.DO_PUBLISH != 'true'
+        if: ${{ !inputs.staged }}
         run: |
           echo "::warning::dry run: nothing was signed or published. The unsigned tree is attached to this run."
 
   release:
     name: GitHub release
-    needs: publish
-    if: inputs.publish && inputs.create-github-release && github.ref_type == 'tag'
+    needs: publish-release
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 10
     permissions:
@@ -469,22 +545,26 @@ jobs:
     steps:
       # the release notes are the commit subjects since the previous tag, not GitHub's list of merged pull requests
       - uses: actions/checkout@v4
+        if: ${{ inputs.publish && inputs.create-github-release }}
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - uses: Open-Mixer/.github/.github/actions/changelog@openmixer-v1
+        if: ${{ inputs.publish && inputs.create-github-release }}
         with:
           mode: notes
           tag: ${{ github.ref_name }}
           notes-file: ${{ runner.temp }}/release-notes.md
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.publish && inputs.create-github-release }}
         with:
           name: ${{ inputs.package-name }}-rpms-signed
           path: signed
 
       - name: Attach the signed RPMs to the release
+        if: ${{ inputs.publish && inputs.create-github-release }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -505,15 +585,15 @@ jobs:
   # after 30 minutes.
   live:
     name: Pages deployment
-    needs: publish
-    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.commit != '' }}
+    needs: [publish, publish-release]
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && (needs.publish.outputs.commit || needs.publish-release.outputs.commit) != '' }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 40
     steps:
       - uses: Open-Mixer/.github/.github/actions/pages-live@openmixer-v1
         with:
           channel: ${{ inputs.target-repo }}
-          commit: ${{ needs.publish.outputs.commit }}
+          commit: ${{ needs.publish.outputs.commit || needs.publish-release.outputs.commit }}
           token: ${{ secrets.PAGES_TOKEN }}
 
   # The last proof: the version the tag names installs from the channel, in a fedora that holds nothing else.
@@ -521,8 +601,8 @@ jobs:
   # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
-    needs: [preflight, publish, release, live]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
+    needs: [preflight, publish, publish-release, release, live]
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || inputs.staged) }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -590,8 +670,8 @@ jobs:
   # calls this workflow). Without it the step fails loudly with an error naming the missing permission.
   report-failure:
     name: Report a failed release
-    needs: [preflight, build, publish, release, live, verify]
-    if: ${{ always() && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    needs: [preflight, build, publish-go, publish, publish-release, release, live, verify]
+    if: ${{ always() && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     permissions:
@@ -610,10 +690,19 @@ jobs:
   # used only when DISPATCH_TOKEN is unset, and the notice says so: its scope is not recorded, so a 403 there
   # is expected and not a release failure. With verify-install false the install check is skipped and the
   # dispatch still goes out once the publish succeeded.
+  notify-go:
+    name: Worker image gate
+    needs: [publish-release, verify]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "the worker image build may be told"
+
   notify-worker-image:
     name: Tell the worker image build
-    needs: [publish, verify]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
+    needs: [notify-go]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     continue-on-error: true

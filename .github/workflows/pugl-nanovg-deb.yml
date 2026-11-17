@@ -5,18 +5,17 @@ name: pugl and nanovg DEBs
 # Builds libpugl0, libpugl-dev, libnanovg0 and libnanovg-dev, which Debian does not package, from .github/actions/
 # deb-deps/pugl and nanovg at the commits of .github/pins.txt (nanovg with packaging/nanovg/overlay, the build the RPM
 # uses), for every Debian release and architecture, and publishes them into deb/ of the Pages repository: omx-panel's
-# renderer Build-Depends on libpugl-dev and libnanovg-dev for its window. Run by hand, once per change: a published
+# renderer Build-Depends on libpugl-dev and libnanovg-dev for its window. Released by a tag, once per change: a published
 # version is never rebuilt with new bytes, so a moved pin needs a new changelog entry with it.
 #
-# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+# A push of a tag `pugl-nanovg-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
+# artifact and signs and pushes nothing (docs/release-operations.md, "Publish only by tagging").
 
 on:
+  push:
+    tags: ['pugl-nanovg-*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Sign and publish; only a run on the main branch publishes'
-        type: boolean
-        default: false
       matrix:
         description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
         type: string
@@ -31,15 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse to publish from anywhere but main
-        if: inputs.publish && github.ref != 'refs/heads/main'
-        run: echo "::error::publish is only for a run on main"; exit 1
-
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/release-preflight
         with:
-          publish: ${{ inputs.publish }}
+          publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           require-tag: 'false'
           target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -105,11 +100,12 @@ jobs:
           name: pugl-nanovg-debs-${{ matrix.suite }}-${{ matrix.arch }}
           path: out
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   publish:
     name: Sign and publish
     needs: [plan, build]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -118,7 +114,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -132,7 +128,39 @@ jobs:
         with:
           deb-dir: collected
           tag: pugl-nanovg
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          # the original key co-signs the apt index while installs may hold only it (publish-debs)
+          cosign-key: ${{ secrets.RPM_GPG_KEY }}
+          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+
+  publish-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [plan, build]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pugl-nanovg-debs-*
+          merge-multiple: true
+          path: collected
+
+      - uses: ./.github/actions/publish-debs
+        with:
+          deb-dir: collected
+          tag: pugl-nanovg
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           # the original key co-signs the apt index while installs may hold only it (publish-debs)
           cosign-key: ${{ secrets.RPM_GPG_KEY }}
@@ -141,9 +169,8 @@ jobs:
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: pugl-nanovg-unsigned-apt-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
