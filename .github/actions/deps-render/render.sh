@@ -59,10 +59,10 @@ spec_names() { grep -E '^(Build)?Requires:' "$1" | grep -oE '[A-Za-z0-9_.+()-]+ 
 ctl_fields() { awk '
   /^#/ { next }
   /^[ \t]/ { if (inf) cur = cur " " $0; next }
-  { if (inf) print cur; inf = ($0 ~ /^(Build-Depends|Depends|Pre-Depends):/); cur = inf ? $0 : "" }
+  { if (inf) print cur; inf = ($0 ~ /^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/); cur = inf ? $0 : "" }
   END { if (inf) print cur }' "$1"; }
 # the same field extent for sed -i: runs the sed commands $1 on the header and continuation lines of a dependency field
-ctl_sed() { sed -i -E "/^(Build-Depends|Depends|Pre-Depends):/{x;s/.*/1/;x;b r}
+ctl_sed() { sed -i -E "/^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/{x;s/.*/1/;x;b r}
 /^[^[:space:]]/{x;s/.*//;x;b}
 x;/1/{x;b r};x;b
 :r
@@ -112,20 +112,20 @@ run() { # <mode> <root>
     # control
     if [ -f "$ctl" ]; then
       e="$(esc "${DEB[$i]}")"; cf="$(ctl_fields "$ctl")"
-      if grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(>= [0-9]" <<<"$cf"; then
+      if grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(>= [0-9]" <<<"$cf"; then
         if [ "$mode" = write ]; then ctl_sed "s/($e \(>= )[0-9][0-9.]*/\1${FLOOR[$i]}/g"
-        elif grep -E "^(Build-Depends|Depends|Pre-Depends):" <<<"$cf" | grep -oE "$e \(>= [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
+        elif grep -E "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):" <<<"$cf" | grep -oE "$e \(>= [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} at a floor other than ${FLOOR[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (>= ${FLOOR[$i]})" >&2; bad=1; fi
       if [ -z "${CEIL[$i]}" ]; then
-        if grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" <<<"$cf"; then
+        if grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(<< [0-9]" <<<"$cf"; then
           if [ "$mode" = write ]; then
             ctl_sed "s/, *$e \(<< [0-9][0-9.]*~?\)//g; s/$e \(<< [0-9][0-9.]*~?\), *//g;"
           else echo "deps-render: debian/control states a ceiling for ${DEB[$i]}, which $DEPS declares floor-only" >&2; bad=1; fi
         fi
-      elif grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" <<<"$cf"; then
+      elif grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(<< [0-9]" <<<"$cf"; then
         if [ "$mode" = write ]; then ctl_sed "s/($e \(<< )[0-9][0-9.]*/\1${CEIL[$i]}/g"
-        elif grep -E "^(Build-Depends|Depends|Pre-Depends):" <<<"$cf" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
+        elif grep -E "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):" <<<"$cf" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} below a ceiling other than ${CEIL[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (<< ${CEIL[$i]}): a dependency needs a ceiling" >&2; bad=1; fi
     else echo "deps-render: $ctl is missing" >&2; bad=1; fi
@@ -211,6 +211,9 @@ if [ "${1:-}" = --self-test ]; then
   sed -i 's/libother (>= 0\.4\.0~)/libother (>= 0.1.0~)/' "$S/t/debian/control"
   run write "$S/t" >/dev/null 2>&1 || true
   if run check "$S/t" >/dev/null 2>&1; then echo "WRITE repairs a continued floor: ok"; else echo "WRITE left a continued floor"; fail=1; fi
+  # every dependency field is read, not only Depends and Build-Depends
+  sab control-recommends-le    debian/control   '$a Recommends: libownb (<= 3~)'
+  sab control-indep-unlisted   debian/control   '1a Build-Depends-Indep: libextra (>= 1.0~)'
   # a FLOOR-ONLY row (our own packages, .github#102): '>= floor' and no upper bound anywhere
   sab floor-only-floor-drift   packaging/t.spec '/^Requires: ownb/ s/1\.4/1.3/'
   sab floor-only-spec-ceiling  packaging/t.spec '$a Requires: ownb < 2'
