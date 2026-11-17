@@ -54,10 +54,24 @@ wf_files()    { ls "$1"/.github/workflows/*.yml 2>/dev/null || true; }
 
 # lines of a spec that state a versioned requirement: "<name> >= <floor>" after Requires: or BuildRequires:
 spec_names() { grep -E '^(Build)?Requires:' "$1" | grep -oE '[A-Za-z0-9_.+()-]+ *>= *[0-9][0-9.]*' | sed 's/ *>=.*//' || true; }
-ctl_names()  { grep -E '^(Build-Depends|Depends|Pre-Depends):' "$1" | grep -oE '[a-z0-9.+-]+ \(>= [0-9][0-9.]*\)' | sed 's/ .*//' || true; }
+# debian/control: a field continues on every following line that starts with white space (comment lines are skipped);
+# ctl_fields prints each dependency field as ONE line, so every reader below sees a dependency wherever it is written
+ctl_fields() { awk '
+  /^#/ { next }
+  /^[ \t]/ { if (inf) cur = cur " " $0; next }
+  { if (inf) print cur; inf = ($0 ~ /^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/); cur = inf ? $0 : "" }
+  END { if (inf) print cur }' "$1"; }
+# the same field extent for sed -i: runs the sed commands $1 on the header and continuation lines of a dependency field
+ctl_sed() { sed -i -E "/^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/{x;s/.*/1/;x;b r}
+/^[^[:space:]]/{x;s/.*//;x;b}
+x;/1/{x;b r};x;b
+:r
+$1" "$ctl"; }
+# the Debian floor form is `(>= 1.2.3~)`: the `~` is part of it
+ctl_names()  { ctl_fields "$1" | grep -oE '[a-z0-9.+-]+ \(>= [0-9][0-9.]*~?\)' | sed 's/ .*//' || true; }
 
 run() { # <mode> <root>
-  local mode="$1" root="$2" i n bad=0 f e spec ctl
+  local mode="$1" root="$2" i n bad=0 f e spec ctl cf
   load "$root" || return 1
   ctl="$root/debian/control"
   for i in "${!RPM[@]}"; do
@@ -97,21 +111,21 @@ run() { # <mode> <root>
     fi
     # control
     if [ -f "$ctl" ]; then
-      e="$(esc "${DEB[$i]}")"
-      if grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(>= [0-9]" "$ctl"; then
-        if [ "$mode" = write ]; then sed -i -E "/^(Build-Depends|Depends|Pre-Depends):/ s/($e \(>= )[0-9][0-9.]*/\1${FLOOR[$i]}/g" "$ctl"
-        elif grep -E "^(Build-Depends|Depends|Pre-Depends):" "$ctl" | grep -oE "$e \(>= [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
+      e="$(esc "${DEB[$i]}")"; cf="$(ctl_fields "$ctl")"
+      if grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(>= [0-9]" <<<"$cf"; then
+        if [ "$mode" = write ]; then ctl_sed "s/($e \(>= )[0-9][0-9.]*/\1${FLOOR[$i]}/g"
+        elif grep -E "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):" <<<"$cf" | grep -oE "$e \(>= [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} at a floor other than ${FLOOR[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (>= ${FLOOR[$i]})" >&2; bad=1; fi
       if [ -z "${CEIL[$i]}" ]; then
-        if grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" "$ctl"; then
+        if grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(<< [0-9]" <<<"$cf"; then
           if [ "$mode" = write ]; then
-            sed -i -E "/^(Build-Depends|Depends|Pre-Depends):/ { s/, *$e \(<< [0-9][0-9.]*~?\)//g; s/$e \(<< [0-9][0-9.]*~?\), *//g; }" "$ctl"
+            ctl_sed "s/, *$e \(<< [0-9][0-9.]*~?\)//g; s/$e \(<< [0-9][0-9.]*~?\), *//g;"
           else echo "deps-render: debian/control states a ceiling for ${DEB[$i]}, which $DEPS declares floor-only" >&2; bad=1; fi
         fi
-      elif grep -qE "^(Build-Depends|Depends|Pre-Depends):.*$e \(<< [0-9]" "$ctl"; then
-        if [ "$mode" = write ]; then sed -i -E "/^(Build-Depends|Depends|Pre-Depends):/ s/($e \(<< )[0-9][0-9.]*/\1${CEIL[$i]}/g" "$ctl"
-        elif grep -E "^(Build-Depends|Depends|Pre-Depends):" "$ctl" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
+      elif grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(<< [0-9]" <<<"$cf"; then
+        if [ "$mode" = write ]; then ctl_sed "s/($e \(<< )[0-9][0-9.]*/\1${CEIL[$i]}/g"
+        elif grep -E "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):" <<<"$cf" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} below a ceiling other than ${CEIL[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (<< ${CEIL[$i]}): a dependency needs a ceiling" >&2; bad=1; fi
     else echo "deps-render: $ctl is missing" >&2; bad=1; fi
@@ -140,6 +154,11 @@ run() { # <mode> <root>
       case " ${DEB[*]} " in *" $n "*) ;; *) echo "deps-render: debian/control requires $n with a floor deps.txt does not list" >&2; bad=1 ;; esac
     done
   fi
+  # floors only: no `<=` ceiling anywhere, whether deps.txt lists the package or not
+  for f in $(spec_files "$root"); do
+    if grep -E '^(Build)?Requires:' "$f" | grep -qE '<=|=<'; then echo "deps-render: $f states a <= ceiling: floors only" >&2; bad=1; fi
+  done
+  if [ -f "$ctl" ] && ctl_fields "$ctl" | grep -qE '\(<= '; then echo "deps-render: debian/control states a <= ceiling: floors only" >&2; bad=1; fi
   [ "$bad" = 0 ] || return 1
   [ "$mode" = check ] && echo "deps-render: spec, debian/control and workflows carry the floors of $DEPS"
   return 0
@@ -175,6 +194,26 @@ if [ "${1:-}" = --self-test ]; then
   sab spec-ceiling-differs packaging/t.spec '/^Requires: lib-devel </ s/2/3/'
   sab control-no-ceiling debian/control   's/, libother \(<< 0\.5~\)//'
   sab control-ceiling-differs debian/control '/^Depends/ s/<< 2~/<< 5~/'
+  # the Debian floor form carries a `~` (`(>= 1.2.3~)`): an unlisted dependency written that way is drift too
+  sab control-unlisted-tilde   debian/control   '/^Depends/ s/libx-dev \(>=/libz (>= 3.0~), libx-dev (>=/'
+  # floors only: a `<=` ceiling is refused, in the spec and in the control file, listed package or not
+  sab spec-le-ceiling          packaging/t.spec '$a Requires: ownb <= 2'
+  sab spec-le-ceiling-listed   packaging/t.spec 's/^Requires: lib-devel < 2/Requires: lib-devel <= 2/'
+  sab control-le-ceiling       debian/control   '/^Depends/ s/libownb \(>= 1\.4~\)/libownb (>= 1.4~), libownb (<= 3~)/'
+  # a field continues on every following line that starts with white space: a dependency there is read
+  sab control-continued-unlisted debian/control 's/libown-dev \(>= 0\.3\.0~\)/libown-dev (>= 0.3.0~),\n libextra (>= 1.0~)/'
+  sab control-continued-le       debian/control 's/libown-dev \(>= 0\.3\.0~\)/libown-dev (>= 0.3.0~),\n libownb (<= 1~)/'
+  sab control-continued-floor    debian/control 's/, libown-dev \(>= 0\.3\.0~\)/,\n libown-dev (>= 0.2.0~)/'
+  # ... and the same tree written with continuation lines, all floors true, is GREEN (no false red)
+  mk; sed -i -E 's/, libother \(>= 0\.4\.0~\), libother \(<< 0\.5~\), libown-dev \(>= 0\.3\.0~\)/,\n libother (>= 0.4.0~), libother (<< 0.5~),\n libown-dev (>= 0.3.0~)/' "$S/t/debian/control"
+  if run check "$S/t" >/dev/null 2>&1; then echo "continued fields, true floors: green"; else echo "continued fields, true floors: FALSE RED"; fail=1; fi
+  # --write reaches a floor on a continuation line too
+  sed -i 's/libother (>= 0\.4\.0~)/libother (>= 0.1.0~)/' "$S/t/debian/control"
+  run write "$S/t" >/dev/null 2>&1 || true
+  if run check "$S/t" >/dev/null 2>&1; then echo "WRITE repairs a continued floor: ok"; else echo "WRITE left a continued floor"; fail=1; fi
+  # every dependency field is read, not only Depends and Build-Depends
+  sab control-recommends-le    debian/control   '$a Recommends: libownb (<= 3~)'
+  sab control-indep-unlisted   debian/control   '1a Build-Depends-Indep: libextra (>= 1.0~)'
   # a FLOOR-ONLY row (our own packages, .github#102): '>= floor' and no upper bound anywhere
   sab floor-only-floor-drift   packaging/t.spec '/^Requires: ownb/ s/1\.4/1.3/'
   sab floor-only-spec-ceiling  packaging/t.spec '$a Requires: ownb < 2'
