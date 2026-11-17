@@ -81,7 +81,7 @@ def ev(expr, inputs, needs=None, matrix=None, ref_type="branch"):
            "format": lambda f, *a: re.sub(r"\{(\d+)\}", lambda m: str(a[int(m.group(1))]), f),
            "contains": lambda a, b: b in a,
            "github": O(ref_type=ref_type, ref_name="v1.2.0" if ref_type == "tag" else "main", sha="5f455d37cfb5" + "0" * 28, run_id="4242",
-                       event_name="workflow_dispatch", ref="refs/heads/x", repository="o/r",
+                       event_name="push" if ref_type == "tag" else "workflow_dispatch", ref="refs/tags/v1.2.0" if ref_type == "tag" else "refs/heads/x", repository="o/r",
                        event=O(pull_request=O(head=O(repo=O(full_name="o/r"))))),
            "needs": needs or O(), "matrix": matrix or O(), "vars": O(), "secrets": O(), "runner": O(temp="/tmp"),
            "env": O(), "startsWith": lambda a, b: str(a).startswith(b)}
