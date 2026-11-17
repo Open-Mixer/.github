@@ -150,8 +150,8 @@ jobs:
         env:
           TAGGED: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           REF_NAME: ${{ github.ref_name }}
-          IN_VERSION: ${{ steps.ver.outputs.version }}
-          IN_COMMIT: ${{ steps.ver.outputs.commit }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
           if [ "$TAGGED" = true ]; then

@@ -124,7 +124,11 @@ Nothing reaches the channel root (the Pages repository), npm or a GitHub release
 signs or pushes there runs only when `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`. A run
 by hand (`workflow_dispatch`) may build and dry-run, never publish, and no workflow has a `publish` input to switch
 that on. Re-running a failed tag run keeps its event `push`, so it still publishes. `tests/publish-only-by-tag.sh`
-(run by ci.yml) fails by name on a publishing job without that condition.
+(run by ci.yml) reads what every step of every workflow and composite action DOES (`gh release`, `npm publish`, an
+upload, any `git push`, a `gh api` write, the channel push helper) and fails, by file, job and step, on a publish whose
+conditions are not all false when the tag condition is false (so `x || TAG` and `always() || TAG` fail), and on one
+whose conditions can never be true on a tag push. It proves itself on planted trees first. A build with `staged: true`
+and the purge of staging are named in it as staging-only.
 
 A `staged: true` build is outside the rule, on purpose: it writes `staging/` of the channel repository only, which no
 client installs from, so it is the stage flow of a release wave and not a channel release. The release itself is a
@@ -441,12 +445,14 @@ and `quick-deps.sh` on trees of its own.
 A cell that joins the quick set (trixie amd64, 2026-11-13) has no build of the versions already tagged and served.
 `republish` cannot fill it alone: it rebuilds every cell of the run, and its rebuilt arch-independent packages
 (`all`, `noarch`) and source rpms carry other bytes under the names the channel serves. A **catch-up** fills only
-what is missing:
+what is missing.
 
-```
-gh workflow run release.yml -R Open-Mixer/<repository> --ref main \
-  -f source-ref=v<version> -f publish=true -f catch-up=true
-```
+A catch-up used to be started by hand: `gh workflow run release.yml ... -f source-ref=v<version> -f publish=true
+-f catch-up=true`. **That recipe is retired** by "Publish only by tagging": a dispatch publishes nothing, and a re-run of
+a tag run repeats the inputs of the tag push, which carry no `catch-up`. A catch-up can be a dry run by dispatch (the
+plan and the assembled tree are the proof), and the publish of a missing cell waits for a design that is a tag push
+(the open question is which tag; until then a new version tag fills the cell). The plan, the refusals and the
+publish rules below are unchanged and still tested.
 
 - **The plan.** The first job (`release-matrix`, `matrix.sh`) takes the set's cells as above, reads `<kind>/cells.tsv`
   from the channel repository (the API, not the Pages site, which lags a push), and leaves out every cell the tag's

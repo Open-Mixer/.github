@@ -145,6 +145,31 @@ assert "merge-base --is-ancestor" in find and "secrets." not in find, "the find 
 PY
 python3 -I "$t/wf.py" "$wf" || fail "the workflow is not the promotion its header describes"
 ok "workflow: nothing builds or signs a package; a run that is not a tag push pushes and releases nothing and no job creates the tag; the release waits for the served bytes and the install checks"
+# ---- the dry-run path: the `ver` step reads the INPUTS (a step cannot read its own outputs), and the three cases run
+cat > "$t/ver.py" <<'PY'
+import os, subprocess, sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+st = [x for x in d["jobs"]["find"]["steps"] if x.get("id") == "ver"][0]
+assert st["env"]["IN_VERSION"] == "${{ inputs.version }}" and st["env"]["IN_COMMIT"] == "${{ inputs.commit }}", \
+    f"the ver step reads {st['env']['IN_VERSION']!r} / {st['env']['IN_COMMIT']!r}, not the version and commit inputs"
+def run(tagged, ref, ver, commit):
+    out = os.path.join(sys.argv[2], "out"); open(out, "w").close()
+    env = dict(PATH=os.environ["PATH"], TAGGED=tagged, REF_NAME=ref, IN_VERSION=ver, IN_COMMIT=commit, GITHUB_OUTPUT=out, GITHUB_SHA="abc1234")
+    r = subprocess.run(["bash", "-c", st["run"]], env=env, capture_output=True, text=True)
+    return r.returncode, open(out).read().split()
+assert run("false", "main", "3.14.0", "5f455d3") == (0, ["version=3.14.0", "commit=5f455d3"]), "a dry run does not take the inputs"
+assert run("false", "main", "", "")[0] != 0, "a dry run with no version is not refused"
+assert run("true", "v3.14.0", "", "") == (0, ["version=3.14.0", "commit=abc1234"]), "a tag push does not take the tag and its commit"
+assert run("true", "v3.14.0", "3.15.0", "")[0] != 0, "a version input that is not the tag is not refused"
+assert run("true", "nightly", "", "")[0] != 0, "a tag that is not v<version> is not refused"
+PY
+mkdir -p "$t/verout"
+python3 -I "$t/ver.py" "$wf" "$t/verout" || fail "the dry-run path of the find job is broken"
+ok "find job: a dry run takes version and commit from the inputs, a tag push from the tag and its commit; a mismatch or a bad tag is refused"
+sed 's/IN_VERSION: ${{ inputs.version }}/IN_VERSION: ${{ steps.ver.outputs.version }}/' "$wf" > "$t/sabv.yml"
+! cmp -s "$wf" "$t/sabv.yml" || fail "sabotage: ver step read changed nothing"
+if python3 -I "$t/ver.py" "$t/sabv.yml" "$t/verout" >/dev/null 2>&1; then fail "sabotage: a ver step reading its own outputs passes"; fi
+ok "sabotage: a ver step that reads its own outputs is red"
 sab() { # <what> <sed expression>
     sed "$2" "$wf" > "$t/sab.yml"
     ! cmp -s "$wf" "$t/sab.yml" || fail "sabotage: $1 changed nothing"
