@@ -11,14 +11,9 @@ import sys, glob, os, re, json, yaml
 TAG = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
 # what makes a job a publisher: the signing/pushing actions, a release upload, an npm publish
 PUBLISHER = re.compile(r"actions/(publish-rpms|publish-debs|release-attach)\b|gh release (create|upload)|npm publish")
-# promote-staged.yml publishes a staged build by dispatch and then tags it: the owner's staged-wave flow, which the
-# rule of tagging first has not ruled on yet (see docs/release-operations.md, Publish only by tagging). Named here,
-# so the exception is one line to find and to delete. A staged build (inputs.staged) writes staging/ only.
-EXEMPT = {'promote-staged.yml'}
 bad = []
 for path in sorted(glob.glob(os.path.join(sys.argv[1], '*.yml'))):
     name = os.path.basename(path)
-    if name in EXEMPT: continue
     doc = yaml.safe_load(open(path))
     on = doc.get(True, doc.get('on')) or {}
     if isinstance(on, dict) and 'workflow_dispatch' in on:

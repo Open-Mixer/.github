@@ -2,37 +2,40 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: Promote a staged version
 
-# A release wave builds each library once, staged (build-rpm.yml and build-deb.yml with staged: true), and the next
-# layer builds against that. This workflow makes the staged build the release: it copies the packages one staged commit
-# left under staging/ of the channel repository to the channel root, for every Fedora and Debian release, regenerates
-# and signs the repository metadata with the publish's own actions, and, once the channel serves the same bytes and
-# they install from the channel root alone, tags v<version> on the commit the staged build recorded and creates the
-# GitHub release from the promoted files. Nothing is rebuilt and no package is signed: what the layers above were
-# built against is what ships.
+# A release wave builds each library once, staged (build-rpm.yml and build-deb.yml with staged: true; a staged build
+# writes staging/ of the channel repository only, which no client installs from, so it is the stage flow and not a
+# release), and the next layer builds against that. This workflow makes the staged build the release, and ONLY A TAG
+# PUSH RUNS IT FOR REAL: pushing v<version> on the commit the staged build recorded copies the packages that commit
+# left under staging/ to the channel root, for every Fedora and Debian release, regenerates and signs the repository
+# metadata with the publish's own actions, and, once the channel serves the same bytes and they install from the
+# channel root alone, creates the GitHub release of the tag from the promoted files. It never creates the tag. Nothing
+# is rebuilt and no package is signed: what the layers above were built against is what ships. Any run that is not a
+# tag push (a dispatch of the caller) is a dry run: it finds, checks and assembles from the version and commit inputs
+# and publishes nothing.
 #
 # It refuses, before anything is written:
 #   - a staged tree that lacks the build for any release or architecture of the matrix, or a source package, or that
 #     does not cover a release the channel root serves the package for (actions/promote-staged/collect.py);
 #   - a package the release key does not already vouch for: an RPM without a good signature by a key the channel
 #     serves, a DEB that is not in the signed staging index (actions/promote-staged/vouch.sh);
-#   - a commit that is not on the default branch of the calling repository, or a v<version> tag on another commit.
-# After the publish it fails, and tags nothing, when the channel root does not hold or serve the bytes staging held
-# (the checksums are in the run log), or when an install check fails.
+#   - a commit that is not on the default branch of the calling repository.
+# After the publish it fails when the channel root does not hold or serve the bytes staging held (the checksums are in
+# the run log), or when an install check fails.
 #
 # The promoted packages keep the version string of the staged build (<release>.git<commit time>.<sha> and +git<commit time>.<sha>): the bytes
-# are the same, so the name is. The tag is created by the workflow's token, so it starts no tag-triggered release
-# workflow of the caller. The staged files stay under staging/ until the wave's purge (purge-staging.yml).
+# are the same, so the name is. The staged files stay under staging/ until the wave's purge (purge-staging.yml).
 #
-# The caller, in the repository that owns the version (GitHub dispatches only workflows of the default branch):
+# The caller, in the repository that owns the version:
 #
 #   on:
-#     workflow_dispatch:
+#     push:
+#       tags: ['v*']
+#     workflow_dispatch:       # a dry run only
 #       inputs:
-#         version: { type: string, required: true }
+#         version: { type: string, default: '' }
 #         commit: { type: string, default: '' }
-#         dry-run: { type: boolean, default: false }
 #   permissions:
-#     contents: write        # the tag and the GitHub release; a called workflow cannot raise the caller's token
+#     contents: write        # the GitHub release; a called workflow cannot raise the caller's token
 #   jobs:
 #     promote:
 #       uses: Open-Mixer/.github/.github/workflows/promote-staged.yml@openmixer-v1
@@ -41,7 +44,6 @@ name: Promote a staged version
 #         binary-names: omx-contract-devel
 #         version: ${{ inputs.version }}
 #         commit: ${{ inputs.commit }}
-#         dry-run: ${{ inputs.dry-run }}
 #       secrets: inherit
 #
 # Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY,
@@ -60,12 +62,12 @@ on:
         description: 'The packages every release and architecture must hold and the install check installs, space separated; empty means package-name'
       version:
         type: string
-        required: true
-        description: 'The staged version to promote, without the v'
+        default: ''
+        description: 'A dry run only (a run that is not a tag push): the staged version to look for, without the v. A tag push takes it from the tag v<version>'
       commit:
         type: string
         default: ''
-        description: 'The commit of the staged build, short or full; needed when staging holds builds of more than one commit of the version'
+        description: 'A dry run only: the commit of the staged build, short or full. A tag push uses the commit the tag is on'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -110,10 +112,6 @@ on:
         type: string
         default: 'ubuntu-latest'
         description: 'Runner label for the x86 jobs, GitHub-hosted by default (a caller that needs a private runner passes it, e.g. arc-freemixer; the organisation variable OMX_RUNNER is not read; a pull request from a fork always runs on GitHub-hosted runners)'
-      dry-run:
-        type: boolean
-        default: false
-        description: 'Find, check and assemble only: nothing is signed, pushed, tagged or released'
     secrets:
       OPENMIXER_PACKAGES_SIGNING_KEY:
         required: false
@@ -137,6 +135,7 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 15
     outputs:
+      version: ${{ steps.ver.outputs.version }}
       short: ${{ steps.commit.outputs.short }}
       commit: ${{ steps.commit.outputs.commit }}
     steps:
@@ -145,17 +144,36 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # the tag is the release: a tag push promotes the staged build of the commit the tag is on, and the version is
+      # the tag's; any other run is a dry run that takes both from the inputs and publishes nothing
+      - id: ver
+        env:
+          TAGGED: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+          REF_NAME: ${{ github.ref_name }}
+          IN_VERSION: ${{ steps.ver.outputs.version }}
+          IN_COMMIT: ${{ steps.ver.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ "$TAGGED" = true ]; then
+            case "$REF_NAME" in v[0-9]*) ;; *) echo "::error::the tag $REF_NAME is not v<version>"; exit 1 ;; esac
+            [ -z "$IN_VERSION" ] || [ "$IN_VERSION" = "${REF_NAME#v}" ] || { echo "::error::version $IN_VERSION is not the tag $REF_NAME"; exit 1; }
+            echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"; echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            [ -n "$IN_VERSION" ] || { echo "::error::a run that is not a tag push is a dry run and needs the version input"; exit 1; }
+            echo "version=$IN_VERSION" >> "$GITHUB_OUTPUT"; echo "commit=$IN_COMMIT" >> "$GITHUB_OUTPUT"
+          fi
+
       - id: rpm
         if: inputs.rpm
         uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
         with:
           kind: rpm
           name: ${{ inputs.package-name }}
-          version: ${{ inputs.version }}
+          version: ${{ steps.ver.outputs.version }}
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
           arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
-          commit: ${{ inputs.commit }}
+          commit: ${{ steps.ver.outputs.commit }}
           channel: ${{ inputs.target-repo }}
           channel-dir: ${{ runner.temp }}/channel
           out: ${{ runner.temp }}/found-rpm
@@ -167,22 +185,22 @@ jobs:
         with:
           kind: deb
           name: ${{ inputs.package-name }}
-          version: ${{ inputs.version }}
+          version: ${{ steps.ver.outputs.version }}
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
           arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
-          commit: ${{ inputs.commit }}
+          commit: ${{ steps.ver.outputs.commit }}
           channel: ${{ inputs.target-repo }}
           channel-dir: ${{ runner.temp }}/channel
           out: ${{ runner.temp }}/found-deb
           vouch: 'false'
 
       - id: commit
-        name: The commit is on the default branch and the tag is free
+        name: The commit is on the default branch
         env:
           RPM_COMMIT: ${{ steps.rpm.outputs.commit }}
           DEB_COMMIT: ${{ steps.deb.outputs.commit }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.ver.outputs.version }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -o pipefail
@@ -195,8 +213,7 @@ jobs:
           git merge-base --is-ancestor "$full" "origin/$DEFAULT_BRANCH" ||
             { echo "::error::$full is not on $DEFAULT_BRANCH of $GITHUB_REPOSITORY: a staged build of a commit that never landed is not promoted"; exit 1; }
           if at=$(git rev-parse --verify --quiet "refs/tags/v$VERSION^{commit}"); then
-            [ "$at" = "$full" ] || { echo "::error::v$VERSION is already a tag, on $at, and the staged build is of $full"; exit 1; }
-            echo "v$VERSION is already on $full"
+            [ "$at" = "$full" ] || { echo "::error::v$VERSION is on $at, and the staged build is of $full"; exit 1; }
           fi
           echo "promoting $VERSION of $full"
           { echo "short=$short"; echo "commit=$full"; } >> "$GITHUB_OUTPUT"
@@ -216,7 +233,7 @@ jobs:
       image: fedora:${{ fromJSON(inputs.fedora-versions)[0] }}
     # the group of every publish to this channel; a dry run pushes nothing and gets a group of its own
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ !inputs.dry-run && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && 'live' || github.run_id }}
       cancel-in-progress: false
     steps:
       # read inside the publish group: nothing else writes the channel between this read and the push
@@ -224,7 +241,7 @@ jobs:
         with:
           kind: rpm
           name: ${{ inputs.package-name }}
-          version: ${{ inputs.version }}
+          version: ${{ needs.find.outputs.version }}
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
           arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
@@ -236,8 +253,8 @@ jobs:
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
           rpm-dir: promote/rpm
-          tag: promote v${{ inputs.version }} ${{ needs.find.outputs.short }}
-          sign: ${{ !inputs.dry-run }}
+          tag: promote v${{ needs.find.outputs.version }} ${{ needs.find.outputs.short }}
+          sign: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
@@ -248,7 +265,7 @@ jobs:
 
       - name: The channel root holds the bytes staging held
         env:
-          DRY_RUN: ${{ inputs.dry-run }}
+          DRY_RUN: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         run: |
           set -o pipefail
           if [ "$DRY_RUN" = true ]; then tree=build/repo; else tree=build/channel; fi
@@ -263,12 +280,12 @@ jobs:
             promote/rpm/*.rpm
             promote/rpm.sha256
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || !inputs.dry-run) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: inputs.dry-run
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         run: |
-          echo "::warning::dry run: the staged RPMs were found, checked and assembled; nothing was signed, pushed, tagged or released."
+          echo "::warning::dry run: the staged RPMs were found, checked and assembled; nothing was signed, pushed or released."
 
   # The DEBs the same way, through publish-debs: the packages unchanged, the index regenerated and signed.
   deb:
@@ -282,14 +299,14 @@ jobs:
     container:
       image: debian:trixie
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ !inputs.dry-run && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && 'live' || github.run_id }}
       cancel-in-progress: false
     steps:
       - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
         with:
           kind: deb
           name: ${{ inputs.package-name }}
-          version: ${{ inputs.version }}
+          version: ${{ needs.find.outputs.version }}
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
           arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
@@ -301,8 +318,8 @@ jobs:
         uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
         with:
           deb-dir: promote/deb
-          tag: promote v${{ inputs.version }} ${{ needs.find.outputs.short }}
-          sign: ${{ !inputs.dry-run }}
+          tag: promote v${{ needs.find.outputs.version }} ${{ needs.find.outputs.short }}
+          sign: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           cosign-key: ${{ secrets.RPM_GPG_KEY }}
           cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
@@ -317,7 +334,7 @@ jobs:
 
       - name: The channel root holds the bytes staging held
         env:
-          DRY_RUN: ${{ inputs.dry-run }}
+          DRY_RUN: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         run: |
           set -o pipefail
           if [ "$DRY_RUN" = true ]; then tree=build/repo; else tree=build/channel; fi
@@ -332,19 +349,19 @@ jobs:
             promote/deb/*/*.deb
             promote/deb.sha256
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || !inputs.dry-run) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: inputs.dry-run
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         run: |
-          echo "::warning::dry run: the staged DEBs were found, checked and assembled; nothing was signed, pushed, tagged or released."
+          echo "::warning::dry run: the staged DEBs were found, checked and assembled; nothing was signed, pushed or released."
 
   # The proof a reader of the run log can repeat: every promoted file, fetched from where the channel is served, has
   # the checksum the staged file had.
   served:
     name: The channel serves the same bytes
     needs: [find, rpm, deb]
-    if: ${{ !cancelled() && !inputs.dry-run && needs.find.result == 'success' && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') && (needs.deb.result == 'success' || needs.deb.result == 'skipped') }}
+    if: ${{ !cancelled() && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && needs.find.result == 'success' && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') && (needs.deb.result == 'success' || needs.deb.result == 'skipped') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -402,7 +419,7 @@ jobs:
 
       - name: Install the promoted version from the channel
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.find.outputs.version }}
           SHORT: ${{ needs.find.outputs.short }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
@@ -444,7 +461,7 @@ jobs:
 
       - name: Install the promoted version from the channel
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.find.outputs.version }}
           SHORT: ${{ needs.find.outputs.short }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
@@ -467,12 +484,12 @@ jobs:
             [ -n "$ok" ] || { echo "::error::$bin $VERSION+git$SHORT does not install from $URL in a clean debian $SUITE"; exit 1; }
           done
 
-  # Last, and only after the channel serves the bytes and they install: the tag on the commit the staged build
-  # recorded, and the GitHub release with the promoted files. The calling workflow grants contents: write.
+  # Last, and only after the channel serves the bytes and they install: the GitHub release of the tag that started
+  # this run, with the promoted files. The calling workflow grants contents: write.
   release:
-    name: Tag and GitHub release
+    name: GitHub release
     needs: [find, served, verify-rpm, verify-deb]
-    if: ${{ !cancelled() && !inputs.dry-run && needs.served.result == 'success' && (needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped') && (needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped') }}
+    if: ${{ !cancelled() && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && needs.served.result == 'success' && (needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped') && (needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 15
     permissions:
@@ -483,26 +500,11 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Tag the commit the staged build recorded
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: v${{ inputs.version }}
-          COMMIT: ${{ needs.find.outputs.commit }}
-        run: |
-          set -o pipefail
-          if at=$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}"); then
-            [ "$at" = "$COMMIT" ] || { echo "::error::$TAG is on $at, not on $COMMIT"; exit 1; }
-            echo "$TAG is already on $COMMIT"
-          else
-            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$COMMIT" --jq .ref
-            git fetch --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
-          fi
-
       - uses: Open-Mixer/.github/.github/actions/changelog@openmixer-v1
         if: inputs.create-github-release
         with:
           mode: notes
-          tag: v${{ inputs.version }}
+          tag: v${{ needs.find.outputs.version }}
           notes-file: ${{ runner.temp }}/release-notes.md
 
       - uses: actions/download-artifact@v4
@@ -517,7 +519,7 @@ jobs:
         if: inputs.create-github-release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v${{ inputs.version }}
+          TAG: v${{ needs.find.outputs.version }}
         run: |
           set -o pipefail
           mkdir assets

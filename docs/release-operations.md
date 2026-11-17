@@ -30,7 +30,7 @@ the one expression form
 
 A release run keeps 30 days; every other run (pull request, lane, dry-run dispatch) keeps 2. The release condition is
 the workflow's own sign that it publishes: `inputs.publish` (and `inputs.staged` in build-rpm.yml and build-deb.yml)
-where the workflow has them, `!inputs.dry-run` in promote-staged.yml, and the tag alone in release-package.yml. A
+where the workflow has them, the tag push in promote-staged.yml, and the tag alone in release-package.yml. A
 reusable workflow reads the caller's `github.ref`, so a caller changes nothing. A repository that calls these and
 uploads its own artifacts uses the same form with its own release condition.
 
@@ -126,9 +126,10 @@ by hand (`workflow_dispatch`) may build and dry-run, never publish, and no workf
 that on. Re-running a failed tag run keeps its event `push`, so it still publishes. `tests/publish-only-by-tag.sh`
 (run by ci.yml) fails by name on a publishing job without that condition.
 
-Two things are outside the rule, and the gate names them. A `staged: true` build writes `staging/` of the channel
-repository only, which no client installs from. `promote-staged.yml` publishes a staged build by dispatch and then
-creates the tag, the reverse of tagging first: it is exempt in the gate until the owner rules on it.
+A `staged: true` build is outside the rule, on purpose: it writes `staging/` of the channel repository only, which no
+client installs from, so it is the stage flow of a release wave and not a channel release. The release itself is a
+tag: `promote-staged.yml` runs for real only on a tag push, promotes the staged build of the commit the tag is on,
+and never creates the tag.
 
 `publish-fedora.yml` and `publish-freereac.yml` are removed: they republished an existing tag by hand, which this
 rule forbids. A new Fedora release gets the packages by re-running the tag run of each repository (in dependency
@@ -239,13 +240,13 @@ staged.
 ### Promoting a staged version
 
 `promote-staged.yml` makes a staged build the release without building it again, so what the layers above were built
-and verified against is what ships. A repository calls it from a `promote.yml` of its own (dispatched by hand, with
-`contents: write`; the header of `promote-staged.yml` has the caller), with the staged `version` and, when staging
-holds builds of more than one commit of that version, the `commit`.
+and verified against is what ships. A repository calls it from a `promote.yml` of its own (triggered by the push of the tag `v<version>`, with
+`contents: write`; the header of `promote-staged.yml` has the caller). The version is the tag's and the commit is the
+one the tag is on; a dispatch of the caller is a dry run that takes `version` and `commit` as inputs.
 
 1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
    architecture of the matrix, with its source package, and must cover every release the channel root serves the
-   package for. The commit must be on the default branch, and `v<version>` must be free or already on that commit.
+   package for. The commit must be on the default branch.
    A staged build of the quick set does not hold every cell, so it is refused here by name: a version is promoted
    from a staged run of the full matrix, or released from its tag.
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
@@ -256,11 +257,11 @@ holds builds of more than one commit of that version, the `commit`.
 4. **Prove.** Every promoted file is fetched from the served channel and its SHA256 compared with the staged one
    (`same bytes <sha256> <path>` lines in the run log), then the version installs from the channel root alone in a
    clean container of every release and architecture.
-5. **Tag and release.** Only then: `v<version>` on the commit the staged build recorded, and the GitHub release with
-   the promoted files. The tag is made by the workflow's token, so it starts no tag-triggered release run.
+5. **Release.** Only then: the GitHub release of the tag that started the run, with the promoted files. The workflow
+   never creates the tag.
 
-Any refusal in 1 or 2 leaves the channel as it was. `dry-run: true` stops after assembling an unsigned tree: nothing
-is pushed, tagged or released. A promoted package keeps the version string of its staged build
+Any refusal in 1 or 2 leaves the channel as it was. A run that is not a tag push stops after assembling an unsigned tree: nothing
+is pushed or released. A promoted package keeps the version string of its staged build
 (`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
 
