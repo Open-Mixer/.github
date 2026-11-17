@@ -99,7 +99,7 @@
 # ---- 7: a backgrounded &
 - {arm: 7, name: a backgrounded command, want: {runs: always, gates: false}, run: "tests/x.sh &\n"}
 - {arm: 7, name: "backgrounded, then a bare wait", want: {runs: always, gates: false}, run: "tests/x.sh &\nwait\n"}
-- {arm: 7, name: a backgrounded list, want: {runs: always, gates: false}, run: "true && tests/x.sh &\nwait\n"}
+- {arm: 7, name: a backgrounded list, want: {runs: always, gates: false}, run: "tests/x.sh && true &\nwait\n"}
 - {arm: 7, name: "2>&1 is a redirection", want: {runs: always, gates: true}, run: "tests/x.sh 2>&1\ntrue\n"}
 - {arm: 7, name: "&> is a redirection", want: {runs: always, gates: true}, run: "tests/x.sh &>log\ntrue\n"}
 - {arm: 7, name: "the command after a backgrounded one", want: {runs: always, gates: true}, run: "sleep 0 & tests/x.sh\ntrue\n"}

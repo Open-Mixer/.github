@@ -19,6 +19,7 @@ import time
 
 import yaml
 
+sys.dont_write_bytecode = True  # the reader is loaded from its file: leave no cache beside it
 HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET = "tests/x.sh"
 # the stub the oracle runs as tests/x.sh: it leaves a mark, and its last command's status is X_STATUS (so it fails the
