@@ -276,3 +276,31 @@
 - {arm: 21, name: "set -n in the step itself", want: {runs: never, gates: false}, run: "set -n\ntests/x.sh\n"}
 - {arm: 21, name: "sh -c", want: {runs: always, gates: true}, run: "sh -c 'tests/x.sh'\n"}
 - {arm: 21, name: "bash -c through env and timeout", want: {runs: always, gates: false}, run: "timeout 60 env X=1 bash -c 'tests/x.sh || true'\n"}
+
+# ---- 22: an `if:` on github.event_name that is false on every trigger of the workflow cannot run; one that cannot be decided is conditional
+- {arm: 22, name: "schedule-only step in an on: push workflow never runs", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n", oracle: false}
+- {arm: 22, name: "the same step with the ${{ }} wrapper", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "${{ github.event_name == 'schedule' }}"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "on: as a list", want: {runs: never, gates: false}, workflow: {on: [push, pull_request]}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "on: as a map", want: {runs: never, gates: false}, workflow: {on: {push: {branches: [main]}, pull_request: null}}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a trigger that matches the comparison keeps it conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule'"]}, workflow: {on: [push, schedule]}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "!= true on every trigger is not a condition that can fail, so it stays conditional", want: {runs: always, gates: true, when: ["github.event_name != 'schedule'"]}, workflow: {on: push}, step: {if: "github.event_name != 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "!= false on the only trigger never runs", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name != 'push'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "the literal on the left", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "'schedule' == github.event_name"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "|| of comparisons all false", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "|| with one comparison true on a trigger", want: {runs: always, gates: true, when: ["github.event_name == 'schedule' || github.event_name == 'push'"]}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' || github.event_name == 'push'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "&& with a false comparison is false whatever the other term", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' && github.ref == 'refs/heads/main'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "|| with an undecidable term stays conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule' || github.ref == 'refs/heads/main'"]}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' || github.ref == 'refs/heads/main'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a function call cannot be decided", want: {runs: always, gates: true, when: ["always() && github.event_name == 'schedule'"]}, workflow: {on: push}, step: {if: "always() && github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a negation cannot be decided", want: {runs: always, gates: true, when: ["!(github.event_name == 'push')"]}, workflow: {on: push}, step: {if: "!(github.event_name == 'push')"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a job-level if is judged the same", want: {runs: never, gates: false}, workflow: {on: push}, job: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "workflow_call: the event is the caller's, so conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule'"]}, workflow: {on: {workflow_call: null}}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "no on: at all: conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule'"]}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+
+# ---- 23: an input too big or too deep is refused by name, within a bound of memory and time, never crashes the reader
+#   `gen: [text, times, tail]` is the script text repeated times, then tail
+- {arm: 23, name: "substitutions nested 3000 deep", want: unread, gen: ["$(", 3000, ")"], oracle: false}
+- {arm: 23, name: "groups nested 3000 deep", want: unread, gen: ["{ ", 3000, "true;}"], oracle: false}
+- {arm: 23, name: "an and-or list 3000 long", want: unread, gen: ["false || ", 3000, "true"], oracle: false}
+- {arm: 23, name: "ifs nested 1500 deep", want: unread, gen: ["if true; then ", 1500, "true; fi"], oracle: false}
+- {arm: 23, name: "a script of 400000 lines", want: unread, gen: ["echo a\n", 400000, ""], oracle: false}
+- {arm: 23, name: "a modest nesting is read", want: {runs: always, gates: true}, run: "echo $(echo $(echo $(echo a)))\ntests/x.sh\n"}

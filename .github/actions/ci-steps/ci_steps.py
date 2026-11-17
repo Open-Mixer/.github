@@ -19,7 +19,9 @@ under. arms.yml beside this file is the table that holds the reader to its rules
   ci_steps.py --json WORKFLOW...                 the same as JSON, for a check that asks its own question
   ci_steps.py --require 'CMD [ARG...]' ... WORKFLOW...
         exit 1 unless, in one of the workflows, a command whose command word is CMD (a path may be longer on the left)
-        and whose arguments hold every ARG runs always and gates; --conditional also takes one that runs conditionally
+        and whose arguments hold every ARG runs always and gates; --conditional also takes one that runs conditionally.
+        A step whose `if:` compares github.event_name and is false on every event of the workflow's `on:` runs never,
+        and is refused by name; an `if:` that cannot be decided stays conditional.
 
 Exit 0, 1 (a requirement is not met), 2 (usage, or a workflow that cannot be read).
 """
@@ -55,6 +57,9 @@ PREFIXES = {
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*(\[[^\]]*\])?\+?=")
 REDIRECTION = re.compile(r"(\d+|\{\w+\})?(&>>|&>|<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)")
 OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "&", "|", "(", ")")
+# the bounds: a step's script past them is reported unread by name; the reader never needs more than a few MiB
+MAX_SCRIPT = 1 << 18
+MAX_DEPTH = 64
 CLOSERS = ("then", "elif", "else", "fi", "do", "done", "esac", "}")
 
 
@@ -66,8 +71,10 @@ class Lexer:
     """The script as the shell's tokens: words (with what they hold once quotes are removed, and the substitutions
     inside them), operators, redirections (a heredoc with its body) and newlines."""
 
-    def __init__(self, text, start=0, line=1, until_paren=False):
-        self.s, self.i, self.line, self.until_paren = text, start, line, until_paren
+    def __init__(self, text, start=0, line=1, until_paren=False, depth=0):
+        self.s, self.i, self.line, self.until_paren, self.depth = text, start, line, until_paren, depth
+        if depth > MAX_DEPTH:
+            raise Unread("line %d: substitutions nested deeper than %d" % (line, MAX_DEPTH))
         self.toks, self.pending, self.delimiter_for = [], [], None
 
     def fail(self, what):
@@ -81,7 +88,7 @@ class Lexer:
     def run(self):
         s, depth, cases = self.s, 0, []
         while self.i < len(s):
-            c = s[self.i]
+            c, before = s[self.i], self.i
             if s.startswith("\\\n", self.i):
                 self.i += 2
                 self.line += 1
@@ -95,9 +102,7 @@ class Lexer:
             elif c == "#":
                 while self.i < len(s) and s[self.i] != "\n":
                     self.i += 1
-            elif s.startswith("((", self.i) and self.arithmetic():
-                pass
-            elif self.redirection():
+            elif (s.startswith("((", self.i) and self.arithmetic()) or self.redirection():
                 pass
             elif c in ";&|()":
                 op = next(o for o in OPERATORS if s.startswith(o, self.i))
@@ -119,6 +124,8 @@ class Lexer:
                     cases.append(depth)
                 elif tok.bare and tok.text == "esac" and cases:
                     cases.pop()
+            if self.i == before:
+                self.fail("the lexer made no progress at `%s`" % c)
         if self.until_paren:
             self.fail("a `$(` that never closes")
         return self
@@ -252,7 +259,7 @@ class Lexer:
 
     def substitution(self):
         """The tokens of a `$( ... )` whose first character is at the cursor; the cursor ends after its parenthesis."""
-        sub = Lexer(self.s, self.i, self.line, until_paren=True).run()
+        sub = Lexer(self.s, self.i, self.line, until_paren=True, depth=self.depth + 1).run()
         self.i, self.line = sub.i, sub.line
         return sub.toks
 
@@ -264,7 +271,7 @@ class Lexer:
         if j >= len(s):
             self.fail("a backtick that never closes")
         value.append(s[at:j + 1])
-        toks = Lexer(re.sub(r"\\([`\\$])", r"\1", s[at + 1:j]), 0, self.line).run().toks
+        toks = Lexer(re.sub(r"\\([`\\$])", r"\1", s[at + 1:j]), 0, self.line, depth=self.depth + 1).run().toks
         self.line += s.count("\n", at, j)
         self.i = j + 1
         return toks
@@ -383,7 +390,7 @@ class Parser:
     """Tokens to lists of and-or lists of pipelines of commands, compound commands with their bodies."""
 
     def __init__(self, toks):
-        self.t, self.p = toks, 0
+        self.t, self.p, self.depth = toks, 0, 0
         self.end = NS(kind="eof", text="the end of the script", line=toks[-1].line if toks else 1, bare=False)
 
     def peek(self):
@@ -404,7 +411,8 @@ class Parser:
 
     def expect_word(self, word):
         if not self.is_word(word):
-            raise Unread("line %d: `%s` where `%s` belongs" % (self.peek().line, self.peek().text.strip() or "newline", word))
+            raise Unread("line %d: `%s` where `%s` belongs"
+                         % (self.peek().line, self.peek().text.strip() or "newline", word))
         self.p += 1
 
     def newlines(self):
@@ -422,6 +430,15 @@ class Parser:
 
     def items(self):
         """Commands up to a word or operator that closes the enclosing construct: [(and-or list, backgrounded)]."""
+        self.depth += 1
+        if self.depth > MAX_DEPTH:
+            raise Unread("line %d: constructs nested deeper than %d" % (self.peek().line, MAX_DEPTH))
+        try:
+            return self.list_items()
+        finally:
+            self.depth -= 1
+
+    def list_items(self):
         out = []
         while True:
             while self.peek().kind == "nl" or self.is_op(";"):
@@ -651,7 +668,13 @@ class Script:
         self.commands = []
 
     def read(self, text, shell, ctx, line=1):
-        self.body(Parser(Lexer(text, 0, line).run().toks).script(), shell, ctx)
+        self.depth = getattr(self, "depth", 0) + 1
+        if self.depth > MAX_DEPTH:
+            raise Unread("line %d: scripts quoted inside scripts nested deeper than %d" % (line, MAX_DEPTH))
+        try:
+            self.body(Parser(Lexer(text, 0, line).run().toks).script(), shell, ctx)
+        finally:
+            self.depth -= 1
 
     def body(self, items, shell, ctx):
         """A list of commands: only the last one's status is the list's."""
@@ -978,14 +1001,69 @@ def shell_of(step, job, doc):
     return template, said
 
 
-def conditions(holder, what, commands):
+def triggers(doc):
+    """The event names a workflow's `on:` lists (a string, a list or a map), or None when they cannot be told: no `on:`,
+    or `workflow_call`, whose event_name is the caller's. PyYAML reads the key `on` as the boolean true."""
+    on = doc.get("on", doc.get(True)) if isinstance(doc, dict) else None
+    if isinstance(on, str):
+        names = [on]
+    elif isinstance(on, list):
+        names = on
+    elif isinstance(on, dict):
+        names = list(on)
+    else:
+        return None
+    names = [str(n) for n in names]
+    return None if not names or "workflow_call" in names else names
+
+
+EVENT_TEST = re.compile(r"""\s*(?:github\.event_name\s*(==|!=)\s*'([^']*)'|'([^']*)'\s*(==|!=)\s*github\.event_name)\s*""")
+
+
+def holds_on(cond, event):
+    """Whether an `if:` expression holds when github.event_name is `event`: True, False, or None when not decidable. Only
+    `github.event_name ==` and `!=` against a string, joined by `&&` and `||`, are decided; anything else is None."""
+    text = str(cond).strip()
+    m = re.fullmatch(r"\$\{\{(.*)\}\}", text, re.S)
+    text = (m.group(1) if m else text).strip()
+    if "(" in text or "!" in text.replace("!=", ""):
+        return None
+    result = False
+    for conj in text.split("||"):
+        value = True
+        for atom in conj.split("&&"):
+            m = EVENT_TEST.fullmatch(atom)
+            if not m:
+                got = None
+            else:
+                op, name = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
+                got = (event == name) == (op == "==")
+            value = False if (value is False or got is False) else (None if (value is None or got is None) else True)
+        result = True if (result is True or value is True) else (None if (result is None or value is None) else False)
+    return result
+
+
+def never_on(cond, events):
+    """The events when `if:` is false on every trigger of the workflow, else None."""
+    if events and all(holds_on(cond, e) is False for e in events):
+        return events
+    return None
+
+
+def conditions(holder, what, commands, events=None):
     """Apply a job's or a step's `if:` and `continue-on-error:` to commands. -> the conditions it runs under."""
     when = []
     cond = holder.get("if")
     if cond is not None:
+        dead = never_on(cond, events)
         if literal(cond, "false"):
             for cmd in commands:
                 cmd["runs"], cmd["gates"], cmd["why"] = "never", False, ["its %s has `if: %s`" % (what, cond)]
+        elif dead:
+            for cmd in commands:
+                cmd["runs"], cmd["gates"] = "never", False
+                cmd["why"] = ["its %s has `if: %s`, false on every trigger of the workflow (%s)"
+                              % (what, str(cond).strip(), ", ".join(dead))]
         elif not literal(cond, "true"):
             when.append(str(cond).strip())
     carry_on = holder.get("continue-on-error")
@@ -1011,11 +1089,16 @@ def read_step(step, job, doc):
         shell, _, _ = new_shell(words[0].rsplit("/", 1)[-1], words[1:], said)
         ctx = NS(reach="always", reach_why="", ignored="", status=True, status_why="", exits=True, exits_why="", lost="")
         script = Script()
+        text = str(step["run"])
         try:
-            script.read(str(step["run"]), shell, ctx)
+            if len(text) > MAX_SCRIPT:
+                raise Unread("the script is %d bytes, longer than the %d the reader reads" % (len(text), MAX_SCRIPT))
+            script.read(text, shell, ctx)
             out["commands"] = script.commands
         except Unread as e:
             unread = str(e)
+        except RecursionError:
+            unread = "commands chained or nested deeper than the reader follows"
     if unread:
         out["read"], out["unread"] = False, unread
     return out
@@ -1025,17 +1108,18 @@ def read(doc, path=""):
     """The report of a parsed workflow: {workflow, jobs: [{id, name, when, uses?, steps: [{index, name, read, unread?,
     shell?, uses?, when, commands: [{line, command, words, text, runs, gates, why}]}]}]}."""
     jobs = []
+    events = triggers(doc or {})
     for job_id, job in ((doc or {}).get("jobs") or {}).items():
         job = job or {}
         steps = []
         for index, step in enumerate(job.get("steps") or [], 1):
             out = dict(index=index, **read_step(step or {}, job, doc))
-            out["when"] = conditions(step or {}, "step", out["commands"])
+            out["when"] = conditions(step or {}, "step", out["commands"], events)
             steps.append(out)
         entry = {"id": str(job_id), "name": str(job.get("name", "")), "steps": steps}
         if "uses" in job:
             entry["uses"] = str(job["uses"])
-        entry["when"] = conditions(job, "job", [c for s in steps for c in s["commands"]])
+        entry["when"] = conditions(job, "job", [c for s in steps for c in s["commands"]], events)
         jobs.append(entry)
     return {"workflow": path, "jobs": jobs}
 

@@ -7,11 +7,15 @@
                         only a script, what the real shell does with it against the same `want` (the oracle), so the
                         table states the shell's behaviour and not an opinion of it. Exit 1 naming each row that fails.
   arms.py --reader F    the same rows against another reader file
+  arms.py --sabotage    the sabotage rows (sabotage.yml): each breaks the reader's handling of an arm in a copy of the
+                        reader, and the table must go red in that arm; exit 1 naming each break the table did not see
 """
 import argparse
 import importlib.util
 import os
+import resource
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -25,6 +29,27 @@ TARGET = "tests/x.sh"
 # the stub the oracle runs as tests/x.sh: it leaves a mark, and its last command's status is X_STATUS (so it fails the
 # same way executed, sourced or exec'd)
 STUB = '#!/bin/sh\necho ran >> "$MARK"\n[ "${X_STATUS:-0}" = 0 ]\n'
+
+
+MEMORY, SECONDS = 256 << 20, 10  # what reading one step may use: an input past it is to be refused by name
+
+
+def guarded(fn, *args):
+    """fn(*args) with the address space capped at MEMORY above what the process holds and SECONDS of wall time."""
+    def late(signum, frame):
+        raise TimeoutError()
+    held = resource.getrlimit(resource.RLIMIT_AS)
+    with open("/proc/self/statm", encoding="ascii") as f:
+        used = int(f.read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
+    resource.setrlimit(resource.RLIMIT_AS, (used + MEMORY, held[1]))
+    old = signal.signal(signal.SIGALRM, late)
+    signal.alarm(SECONDS)
+    try:
+        return fn(*args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+        resource.setrlimit(resource.RLIMIT_AS, held)
 
 
 def load_reader(path):
@@ -41,6 +66,9 @@ def rows():
 
 def workflow_of(row):
     step = dict(row.get("step") or {})
+    if "gen" in row:  # an adversarial input too big or deep to write out: `gen: [text, times, tail]`
+        text, times, tail = row["gen"]
+        row = dict(row, run=text * times + tail)
     if "run" in row:
         step["run"] = row["run"]
     job = dict({"runs-on": "ubuntu-latest"}, **(row.get("job") or {}))
@@ -50,7 +78,11 @@ def workflow_of(row):
 
 def said(reader, row):
     """What the reader says of the target in the row's workflow, in the shape of `want`."""
-    report = reader.read(workflow_of(row))
+    try:
+        report = guarded(reader.read, workflow_of(row))
+    except (MemoryError, RecursionError, TimeoutError) as e:
+        return "died: %s (the reader must refuse by name, within %d MiB and %d s)" % (
+            type(e).__name__, MEMORY >> 20, SECONDS)
     hits, unread = [], False
     for job in report["jobs"]:
         for step in job["steps"]:
@@ -129,7 +161,7 @@ def oracle(reader, row):
     return ""
 
 
-def run_table(reader, quiet=False):
+def run_table(reader, quiet=False, with_oracle=True):
     """-> the rows that failed, as (arm, name, what)."""
     failed = []
     for row in rows():
@@ -138,7 +170,7 @@ def run_table(reader, quiet=False):
         problems = []
         if got != row["want"]:
             problems.append("the reader says %s, the table wants %s" % (got, row["want"]))
-        if oracle_applies(row):
+        if with_oracle and oracle_applies(row):
             did = oracle(reader, row)
             if did:
                 problems.append("ORACLE: the table wants %s, but %s" % (row["want"], did))
@@ -149,10 +181,50 @@ def run_table(reader, quiet=False):
     return failed
 
 
+def sabotage(source):
+    """Each break of sabotage.yml on a copy of the reader's source.
+    -> the rows the table did not see, as (arm, name, why)."""
+    with open(os.path.join(HERE, "sabotage.yml"), encoding="utf-8") as f:
+        breaks = yaml.safe_load(f)
+    missed = []
+    for b in breaks:
+        label = "arm %-2s %s" % (b["arm"], b["name"])
+        edits = b.get("edits") or [[b["old"], b["new"]]]
+        bad = [old for old, _ in edits if source.count(old) != 1]
+        if bad:
+            missed.append((b["arm"], b["name"], "the text to break occurs not once"))
+            print("FAIL " + label + "\n       the text to break occurs not once: %r" % bad[0])
+            continue
+        broken = source
+        for old, new in edits:
+            broken = broken.replace(old, new)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ci_steps_broken.py")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(broken)
+            try:
+                red = sorted({r[0] for r in run_table(load_reader(path), quiet=True, with_oracle=False)})
+            except Exception as e:  # a break that crashes the reader is red too, but say so
+                red = [b["arm"]]
+                label += " (the reader raised %s)" % type(e).__name__
+        if b["arm"] in red:
+            print("red  %s  [arms red: %s]" % (label, ", ".join(map(str, red))))
+        else:
+            missed.append((b["arm"], b["name"], "the table stayed green in the arm"))
+            print("FAIL %s\n       the table stayed green in the arm (red: %s)" % (label, red or "none"))
+    return missed
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reader", default=os.path.join(HERE, "ci_steps.py"))
+    ap.add_argument("--sabotage", action="store_true")
     args = ap.parse_args()
+    if args.sabotage:
+        with open(args.reader, encoding="utf-8") as f:
+            missed = sabotage(f.read())
+        print("ci-steps sabotage: %d breaks not seen" % len(missed))
+        sys.exit(1 if missed else 0)
     table = rows()
     failed = run_table(load_reader(args.reader))
     arms = sorted({r["arm"] for r in table})
