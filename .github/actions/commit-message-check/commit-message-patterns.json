@@ -38,6 +38,14 @@
    "pattern": "\\[[^\\]\\r\\n]*\\]\\([^\\S\\r\\n]*<?https?://claude\\.ai/code[^)\\s]*>?[^\\S\\r\\n]*\\)|<?https?://claude\\.ai/code\\b[^\\s)>`]*>?"
   }
  ],
+ "prose": {
+  "comment": "The AI tool named in words, in a commit message, a PR title or a PR body (Python re, IGNORECASE). A token that is path-like (see path-like) is not judged here: a path into a private tree is private-refs-check's job. Edit here only.",
+  "path-like": "[^\\s]*/[^\\s]*|[^\\s]*\\.(?:md|sh|json|ya?ml|toml|txt|conf|cfg|ini|py|[cm]?[jt]sx?|vue|html?|css|c|h|hpp|cpp|rs|go|lock|log|service|rules|spec|pub|asc)",
+  "patterns": [
+   {"name": "prose-tool-name", "pattern": "\\b(?:claude|anthropi\u0063)\\b"},
+   {"name": "prose-ai-wording", "pattern": "\\bAI[-\\s]+(?:generated|assisted|written|authored|produced)\\b|\\b(?:generated|written|authored|produced|assisted|co-written)[-\\s]+(?:by|with)[-\\s]+(?:an?[-\\s]+)?(?:AI|artificial[-\\s]+intelligence|LLM)\\b"}
+  ]
+ },
  "identity": {
   "comment": "Matched against the author and committer name and email of each commit (Python re, IGNORECASE).",
   "pattern": "anthropi\u0063|claude"
