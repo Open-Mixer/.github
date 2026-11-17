@@ -3,7 +3,10 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # commit-message-check.sh: fail when a commit message carries an attribution line, when its author or committer
-# name or email matches the identity pattern, or when a merge subject names a branch under claude/.
+# name or email matches the identity pattern, when a merge subject names a branch under claude/, or when a message of
+# more than one line has no blank line after its subject (git reads everything up to the first blank line as the
+# subject, so a body line on line 2 publishes a whole paragraph as the subject). That last rule is one function,
+# blank_hit(), read by both commit doors: the range and the commit-msg hook.
 #
 #   commit-message-check.sh <range>          every commit in the range (e.g. origin/main..HEAD)
 #   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped), and
@@ -68,6 +71,35 @@ def report(label, text, markers):
     for n, name, line in h:
         print(f"{label}: line {n} [{name}]: {line}")
     return len(h)
+
+
+BLANK_RULE = "the subject is not followed by a blank line"
+SCISSORS = "# ------------------------ >8 ------------------------"
+
+
+def blank_hit(text):
+    """Line 2 of a commit message when it is not blank, else None. Read as git reads a message: the blank lines above
+    the subject are not lines of it, a line of only spaces is blank, and the newline that ends the message is not a line."""
+    lines = text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    return lines[1].strip() if len(lines) > 1 and lines[1].strip() else None
+
+
+def report_blank(label, text):
+    line = blank_hit(text)
+    if line is None:
+        return 0
+    print(f"{label}: [subject-blank-line]: {BLANK_RULE} (line 2: {line})")
+    return 1
+
+
+def message_of_file(text):
+    """A message file as git will commit it: nothing from the scissors line of commit -v down, and no comment line."""
+    lines = text.splitlines()
+    if SCISSORS in lines:
+        lines = lines[:lines.index(SCISSORS)]
+    return "\n".join(l for l in lines if not l.startswith("#"))
 
 
 HOUSE_ORIGIN = re.compile(r"github\.com[:/](Open-Mixer|FreeMixer)/", re.I)
@@ -169,7 +201,20 @@ def selftest():
     blind = [k for k in new if k not in sab2]
     print("sabotage (the assisted-by, generated and model co-author patterns removed):",
           "RED as expected" if not blind else f"still GREEN for {blind}: blind")
-    return 0 if not first and sab and not blind and not ibad and isab else 1
+    # the blank line after the subject: text -> refused
+    bfx = [
+        ("no-blank", "Fix x\nthe body starts on line 2\n", True),
+        ("blank", "Fix x\n\nthe body\n", False),
+        ("one-line", "Fix x\n", False),
+        ("one-line-bare", "Fix x", False),
+        ("github-merge", "Merge pull request #1 from Open-Mixer/fix/a\n\nthe title\n", False),
+        ("comments", message_of_file("Fix x\n# Please enter the commit message\n#\n"), False),
+        ("scissors", message_of_file("Fix x\n" + SCISSORS + "\n# Do not modify\ndiff --git a/x b/x\n"), False),
+        ("comment-between", message_of_file("Fix x\n# a comment\nthe body\n"), True),
+    ]
+    bbad = [k for k, v, want in bfx if (blank_hit(v) is not None) != want]
+    print("selftest subject-blank-line:", "GREEN" if not bbad else f"RED {bbad}")
+    return 0 if not first and sab and not blind and not ibad and isab and not bbad else 1
 
 
 def main(a):
@@ -178,13 +223,14 @@ def main(a):
     markers = load()
     if len(a) == 2 and a[0] == "--msg-file":
         try:
-            text = open(a[1], encoding="utf-8", errors="replace").read()
+            raw = text = open(a[1], encoding="utf-8", errors="replace").read()
         except OSError as e:
             print(f"commit-message-check: {e}", file=sys.stderr)
             return 2
         # lines git adds as comments are not part of the message
         text = "\n".join(l for l in text.splitlines() if not l.startswith("#"))
         bad = report("commit message", text, markers)
+        bad += report_blank("commit message", message_of_file(raw))
         refs = private_refs(a[1])
         if refs not in (0, 1):
             return 2
@@ -204,7 +250,9 @@ def main(a):
         bad = 0
         ident, branch = load_ident()
         for sha in shas:
-            bad += report(sha[:12], git("log", "-1", "--format=%B", sha), markers)
+            msg = git("log", "-1", "--format=%B", sha)
+            bad += report(sha[:12], msg, markers)
+            bad += report_blank(sha[:12], msg)
             for _, name, line in commit_ident_hits(sha, ident, branch):
                 print(f"{sha[:12]}: [{name}]: {line}")
                 bad += 1
