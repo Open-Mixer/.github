@@ -39,6 +39,8 @@ no dated document, no dated folder and no folder of evidence or notes), `ci-node
 its base, like every compare gate's, resolved by `.github/actions/resolve-base`: `docs/doc-gate.md`). Each documents its
 inputs at its top. A repository whose every tracked file carries its licence runs `.github/actions/spdx-check`: the
 rule is the format of the file, a format with no comment syntax carries no header, and there is no list of files.
+A check a repository relies on is run by a step that enforces it: `.github/actions/ci-steps` reads the workflow
+files and goes red when a required command is in no step that runs it and fails the job (its README holds the arms).
 
 Call the shared workflows and actions by the `v1` tag, never by `main`:
 

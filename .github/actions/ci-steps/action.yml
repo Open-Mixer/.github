@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: ci-steps
+description: Fail when a command a repository's checks depend on is in no step that runs it and fails the job
+
+# One reader for every repository (README beside this file). The caller has checked the repository out. The action first
+# holds the reader to its table and its sabotage rows, then asks the caller's workflows what it requires. It needs
+# python3 with PyYAML, which the hosted ubuntu runners carry.
+
+inputs:
+  workflows:
+    description: The workflow files to read, one per line, relative to the workspace
+    required: true
+  require:
+    description: One command per line, as 'CMD [ARG...]', each of which must run always and gate in one of the workflows
+    required: true
+  conditional:
+    description: 'true to take a command that runs conditionally'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WORKFLOWS: ${{ inputs.workflows }}
+        REQUIRE: ${{ inputs.require }}
+        CONDITIONAL: ${{ inputs.conditional }}
+      run: |
+        python3 -c 'import yaml' || { echo "ci-steps: python3 has no PyYAML" >&2; exit 2; }
+        python3 -I "$GITHUB_ACTION_PATH/arms.py"
+        python3 -I "$GITHUB_ACTION_PATH/arms.py" --sabotage > /dev/null
+        args=()
+        while IFS= read -r line; do
+          [ -n "$line" ] && args+=(--require "$line")
+        done <<< "$REQUIRE"
+        [ "${#args[@]}" -gt 0 ] || { echo "ci-steps: no command is required" >&2; exit 2; }
+        [ "$CONDITIONAL" = true ] && args+=(--conditional)
+        files=()
+        while IFS= read -r line; do
+          [ -n "$line" ] && files+=("$GITHUB_WORKSPACE/$line")
+        done <<< "$WORKFLOWS"
+        [ "${#files[@]}" -gt 0 ] || { echo "ci-steps: no workflow is named" >&2; exit 2; }
+        python3 -I "$GITHUB_ACTION_PATH/ci_steps.py" "${args[@]}" "${files[@]}"

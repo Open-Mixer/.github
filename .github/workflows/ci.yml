@@ -60,6 +60,7 @@ jobs:
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
+      - run: tests/ci-steps.sh
       - run: tests/no-retired-debian-release.sh
       - run: tests/resolve-base.sh
       - name: The layout check proves itself, then reads this repository
