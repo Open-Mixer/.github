@@ -226,7 +226,7 @@ gate() {
     awk '/\/\*\*/ { doc = 1 } /^[ \t]*\/\/\// { doc = 1; line = 1 } doc && /[@\\]file([^A-Za-z_]|$)/ { found = 1 } /\*\// || line { doc = 0; line = 0 } END { exit !found }' "$h" || echo "$h"
   done < "$tmp/headers")
   if [ -n "$nofile" ]; then echo "$nofile" | list; finding "a header with no @file in a doc comment (/** @file or /// @file): doxygen reports none of its undocumented members without one"; fi
-  hidden=$(xargs grep -nHE '[@\\](cond|endcond|internal|endinternal|private|privatesection|if|ifnot|endif)([[:space:]]|$)' < "$tmp/headers" || true)
+  hidden=$(xargs grep -nHE '[@\\](cond|endcond|internal|endinternal|private|privatesection|if|ifnot|endif)([^A-Za-z]|$)' < "$tmp/headers" || true)
   if [ -n "$hidden" ]; then echo "$hidden" | list; finding "a header hides code from doxygen (@cond, @internal, @private, @if): document it instead"; fi
   [ "$RED" = 0 ] || exit 1
 
@@ -427,6 +427,8 @@ SH
   red "a header hiding code with @internal is red, by name" 1 "src/a.h:3" "${G[@]}"; reset
   printf '/** @file\n * @brief A.\n */\nint A;\n/** @private */\nint B;\n' > "$t/src/a.h"
   red "a header hiding a declaration with @private is red, by name" 1 "src/a.h:5" "${G[@]}"; reset
+  printf '/** @file\n * @brief A.\n */\nint A;\n/** \\private*/\nint B;\n' > "$t/src/a.h"
+  red "a \\private closed by the comment end with no blank is red, by name" 1 "src/a.h:5" "${G[@]}"; reset
   # shellcheck disable=SC2016 # the Doxyfile line is literal
   printf 'EXCLUDE_SYMBOLS = $(HIDE)\n' >> "$t/Doxyfile"
   red "a compared setting read from an environment variable is red, by key" 1 "sets EXCLUDE_SYMBOLS from an environment variable" "${G[@]}"; reset
