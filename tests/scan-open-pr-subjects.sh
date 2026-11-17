@@ -61,9 +61,9 @@ commits "$tmp/fx/api_repos_OrgA_one_pulls_7_commits" "$bad:a change"$'\n'"its bo
 rm "$tmp/fx/api_repos_OrgB_two_pulls_9_commits"
 run OrgA OrgB
 [ "$rc" = 2 ] || fail "an API error gave $rc, not 2"
-grep -q 'OrgB/two#9' "$tmp/err" && grep -q 'rate limit' "$tmp/err" || fail "the unread call was not named: $(cat "$tmp/err")"
+{ grep -q 'OrgB/two#9' "$tmp/err" && grep -q 'rate limit' "$tmp/err"; } || fail "the unread call was not named: $(cat "$tmp/err")"
 grep -q "OrgA/one#7 ${bad:0:12}" <<<"$out" || fail "the offender read before the error was not named"
 rm "$tmp/fx/repos_OrgB"
 run OrgA OrgB
-[ "$rc" = 2 ] && grep -q 'OrgB' "$tmp/err" || fail "an unreadable organisation gave $rc, not 2"
+{ [ "$rc" = 2 ] && grep -q 'OrgB' "$tmp/err"; } || fail "an unreadable organisation gave $rc, not 2"
 echo "scan-open-pr-subjects: ok"

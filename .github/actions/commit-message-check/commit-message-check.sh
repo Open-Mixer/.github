@@ -14,6 +14,8 @@
 #                                            message patterns beside this action, and the commit's author and
 #                                            committer against the house identity in the pattern list
 #   commit-message-check.sh --text-file FILE any text, every line judged (PR titles and bodies)
+#   commit-message-check.sh --subject-blank-file FILE  one committed message, verbatim, judged by the blank line rule
+#                                            alone, as the range reads it (the scan of open pull request commits)
 #   commit-message-check.sh --selftest       fixtures plus a sabotage run
 #
 # Exit 0 clean, 1 a hit (each commit and offending line is named), 2 a range, file or pattern list that cannot be read
@@ -245,6 +247,13 @@ def main(a):
             print(f"commit-message-check: {e}", file=sys.stderr)
             return 2
         return 1 if report("text", text, markers) else 0
+    if len(a) == 2 and a[0] == "--subject-blank-file":
+        try:
+            text = open(a[1], encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            print(f"commit-message-check: {e}", file=sys.stderr)
+            return 2
+        return 1 if report_blank("commit message", text) else 0
     if len(a) == 1 and not a[0].startswith("-"):
         shas = git("rev-list", a[0]).split()
         bad = 0
@@ -258,7 +267,7 @@ def main(a):
                 bad += 1
         print(f"commit-message-check: {len(shas)} commits, {bad} offending lines")
         return 1 if bad else 0
-    print(__doc__ if False else "usage: commit-message-check.sh <range> | --msg-file FILE | --text-file FILE | --selftest", file=sys.stderr)
+    print(__doc__ if False else "usage: commit-message-check.sh <range> | --msg-file FILE | --text-file FILE | --subject-blank-file FILE | --selftest", file=sys.stderr)
     return 2
 
 
