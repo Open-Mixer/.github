@@ -38,6 +38,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: tests/commit-message-check.sh
+      - run: tests/scan-open-pr-subjects.sh
       - run: tests/fedora-cells.sh
       - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
@@ -61,6 +62,7 @@ jobs:
       - run: tests/catch-up-plan.sh
       - run: tests/ci-steps.sh
       - run: tests/no-retired-debian-release.sh
+      - run: tests/resolve-base.sh
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test
@@ -463,6 +465,18 @@ jobs:
           [ "$(dpkg-query -W -f='${Version}' mod-host)" = "$ver" ]
           dpkg --compare-versions "$ver" gt 0.1.0-8~omx
           dpkg --compare-versions "$ver" ge 0.1.0-6~fmx
+
+  # The shared documentation gate (actions/doc-gate, docs/doc-gate.md), with resolve-base under it: every arm of its
+  # self-test on planted trees, under the stand-in doxygen and the runner's real 1.9.8, and ruff.
+  doc-gate:
+    name: doc-gate and resolve-base engines, sabotaged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends doxygen && pipx install ruff==0.17.5
+      - run: tests/resolve-base.sh
+      - run: tests/doc-gate.sh
 
   # The checks repositories run from here: dependency floors from one packaging/deps.txt, no tracked file pointing
   # into a private repository, and a licence header wherever a format can hold one. Each engine proves itself red on
