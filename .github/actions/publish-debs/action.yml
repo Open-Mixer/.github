@@ -78,7 +78,7 @@ inputs:
 outputs:
   commit:
     description: the commit pushed to the channel; empty when nothing was pushed (a dry run, or the channel already carried the tree)
-    value: ${{ steps.push.outputs.commit }}
+    value: ${{ steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
 
 runs:
   using: composite
@@ -201,16 +201,29 @@ runs:
       shell: bash
       run: echo "PUBLISH_DEBS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
-    - id: push
+    - id: push-staging
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true'
+      if: inputs.sign == 'true' && inputs.staging == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.tag }}
-        what: ${{ inputs.staging == 'true' && 'staging/deb' || 'deb' }}
+        what: staging/deb
+        # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+
+    - id: push-real
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.staging != 'true'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.tag }}
+        what: deb
         # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
         rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 

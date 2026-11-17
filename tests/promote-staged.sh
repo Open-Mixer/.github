@@ -115,10 +115,13 @@ for j, pub in (("rpm", "publish-rpms"), ("deb", "publish-debs")):
     assert c["commit"] == "${{ needs.find.outputs.short }}", f"job {j} does not promote the commit the find job checked"
     w = uses(j, pub)[0]["with"]
     assert w["staging"] is False, f"job {j} publishes to staging"
-    assert w["sign"] == "${{ " + TAG + " }}", f"job {j}: a run that is not a tag push signs and pushes"
+    assert w["sign"] == "true" and jobs[j]["if"] == "${{ " + TAG[1:-1] + " }}", f"job {j}: not sign true under the tag condition alone"
     assert w[f"{j}-dir"] == c["out"], f"job {j} publishes another directory than the collected one"
-    assert jobs[j]["concurrency"] == {"group": "publish-${{ inputs.target-repo }}-${{ " + TAG + " && 'live' || github.run_id }}",
+    assert jobs[j]["concurrency"] == {"group": "publish-${{ inputs.target-repo }}-live",
                                       "cancel-in-progress": False}, f"job {j} is not in the publish group of the channel"
+    dj = jobs[j + "-dry-run"]
+    dw = uses(j + "-dry-run", pub)[0]["with"]
+    assert dw["sign"] == "false" and "!" + TAG in dj["if"] and "concurrency" not in dj, f"job {j}-dry-run signs or pushes, or shares the live group"
     after = steps[names.index(pub) + 1]
     assert "sha256sum -c" in after.get("run", ""), f"job {j} does not compare the tree with the staged checksums right after the publish"
 need = lambda j: set(jobs[j]["needs"] if isinstance(jobs[j]["needs"], list) else [jobs[j]["needs"]])
@@ -126,8 +129,9 @@ assert {"rpm", "deb"} <= need("served") and TAG in jobs["served"]["if"], "the se
 for j in ("verify-rpm", "verify-deb"):
     assert "served" in need(j) and "needs.served.result == 'success'" in jobs[j]["if"], f"{j} runs without the served bytes"
     assert all("staging" not in (s.get("with") or {}) for s in uses(j, "add-openmixer")), f"{j} adds the staging channel"
-r = jobs["release"]
-assert {"served", "verify-rpm", "verify-deb"} <= need("release"), "the tag does not wait for the served bytes and the install checks"
+r = jobs["release-go"]
+assert jobs["release"]["if"] == "${{ " + TAG[1:-1] + " }}" and "release-go" in need("release"), "the release job is not the tag condition alone behind its gate"
+assert {"served", "verify-rpm", "verify-deb"} <= need("release-go"), "the tag does not wait for the served bytes and the install checks"
 want = ["!cancelled()", TAG, "needs.served.result == 'success'",
         "(needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped')",
         "(needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped')"]
@@ -176,12 +180,13 @@ sab() { # <what> <sed expression>
     if python3 -I "$t/wf.py" "$t/sab.yml" >/dev/null 2>&1; then fail "sabotage: $1 passes"; fi
     ok "sabotage: $1 is red"
 }
-sab "a release job that runs on a dispatch" '/^  release:/,$ s/ \&\& (github.event_name == .push. \&\& startsWith(github.ref, .refs\/tags\/.))//'
-sab "a dispatch-triggered promote (a publish that signs on any event)" 's/sign: ${{ .* }}/sign: true/'
+sab "a release job that runs on a dispatch" '/^  release-go:/,/^  release:/ s/ \&\& (github.event_name == .push. \&\& startsWith(github.ref, .refs\/tags\/.))//'
+sab "a release job whose condition is not the tag alone" '/^  release:/,$ s/^    if: .*/    if: ${{ always() }}/'
+sab "a dispatch-triggered promote (a publish that signs on any event)" 's/sign: .true./sign: ${{ inputs.rpm }}/'
 sab "a publish to staging" 's/staging: false/staging: true/'
 sab "a tag that does not wait for the install checks" 's/needs: \[find, served, verify-rpm, verify-deb\]/needs: [find, served]/'
 sab "a publish without the signature check" "s/^          out: promote\/rpm$/&\n          vouch: 'false'/"
 sab "a release job that creates the tag" 's/^      - uses: Open-Mixer\/.github\/.github\/actions\/changelog@openmixer-v1$/      - run: gh api repos\/x\/git\/refs -f ref=refs\/tags\/v1\n&/'
-sab "a publish outside the channel's group" "s/&& 'live' || github.run_id/\&\& 'promote' || github.run_id/"
+sab "a publish outside the channel's group" "s/target-repo }}-live/target-repo }}-other/"
 sab "a find job that skips the default branch check" '/merge-base --is-ancestor/d'
 echo "promote-staged: all passed"

@@ -284,6 +284,7 @@ jobs:
   publish-rpm:
     name: Sign and publish the RPM
     needs: [preflight, rpm-plan, rpm, deb, deb-install, installability-rpm, installability-deb]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -292,7 +293,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ needs.preflight.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+      DO_PUBLISH: 'true'
       # the stable name is the build of the oldest release of the set: a noarch package installs on every release, and a
       # machine then updates from its own release's tree
       RELEASES: ${{ needs.rpm-plan.outputs.releases }}
@@ -320,7 +321,7 @@ jobs:
         with:
           rpm-dir: collected
           tag: openmixer-release-${{ needs.preflight.outputs.evr }}
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
@@ -344,8 +345,59 @@ jobs:
           what: rpm
           rebuild: 'install -m 0644 signed/${{ env.STABLE }} build/channel/rpm/openmixer-release.noarch.rpm'
 
+
+  publish-rpm-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [preflight, rpm-plan, rpm, deb, deb-install, installability-rpm, installability-deb]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: fedora:${{ fromJSON(needs.rpm-plan.outputs.cells)[0].fedora }}
+    env:
+      DO_PUBLISH: 'false'
+      # the stable name is the build of the oldest release of the set: a noarch package installs on every release, and a
+      # machine then updates from its own release's tree
+      RELEASES: ${{ needs.rpm-plan.outputs.releases }}
+      EVR: ${{ needs.preflight.outputs.evr }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openmixer-release-rpm-*
+          merge-multiple: true
+          path: collected
+
+      - name: Every release of the set has its build
+        run: |
+          set -euo pipefail
+          ls collected
+          for rel in $RELEASES; do
+            ls collected/openmixer-release-"$EVR".fc"$rel".noarch.rpm >/dev/null || { echo "::error::no build for fc$rel in collected/"; exit 1; }
+          done
+          first=${RELEASES%% *}
+          echo "STABLE=openmixer-release-$EVR.fc$first.noarch.rpm" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: openmixer-release-${{ needs.preflight.outputs.evr }}
+          sign: 'false'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ env.CHANNEL }}
+
+      # the stable name is the signed copy the repository serves, replaced at each release: the oldest release's build
+      - name: Place the stable name
+        run: |
+          set -euo pipefail
+          if [ "$DO_PUBLISH" = true ]; then src=signed tree=build/channel/rpm; else src=collected tree=build/repo/rpm; fi
+          install -m 0644 "$src/$STABLE" "$tree/openmixer-release.noarch.rpm"
+          rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH} %{SIGPGP:pgpsig}\n' "$tree/openmixer-release.noarch.rpm"
+
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: openmixer-release-unsigned-rpm-tree
           path: build/repo/**
@@ -355,6 +407,7 @@ jobs:
   publish-deb:
     name: Sign and publish the DEB
     needs: [preflight, plan, rpm, deb, deb-install, installability-rpm, installability-deb]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -363,7 +416,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io-${{ needs.preflight.outputs.publish == 'true' && 'live' || github.run_id }}
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ needs.preflight.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -388,7 +441,7 @@ jobs:
         with:
           deb-dir: collected
           tag: openmixer-release-${{ needs.preflight.outputs.evr }}
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
@@ -411,8 +464,55 @@ jobs:
           what: deb
           rebuild: 'install -m 0644 built/openmixer-release_*_all.deb build/channel/deb/openmixer-release.deb'
 
+
+  publish-deb-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [preflight, plan, rpm, deb, deb-install, installability-rpm, installability-deb]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: debian:trixie
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openmixer-release-deb
+          path: built
+
+      # one Architecture: all package, the same file in the tree of every Debian release the set builds
+      - name: Lay the package out by Debian release
+        env:
+          SUITES: ${{ needs.plan.outputs.releases }}
+        run: |
+          set -euo pipefail
+          for suite in $SUITES; do
+            mkdir -p "collected/$suite"
+            cp built/openmixer-release_*_all.deb "collected/$suite/"
+          done
+          find collected -name '*.deb' | sort
+
+      - uses: ./.github/actions/publish-debs
+        with:
+          deb-dir: collected
+          tag: openmixer-release-${{ needs.preflight.outputs.evr }}
+          sign: 'false'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ env.CHANNEL }}
+
+      - name: Place the stable name
+        run: |
+          set -euo pipefail
+          if [ "$DO_PUBLISH" = true ]; then tree=build/channel/deb; else tree=build/repo/deb; fi
+          install -m 0644 built/openmixer-release_*_all.deb "$tree/openmixer-release.deb"
+          dpkg-deb -f "$tree/openmixer-release.deb" Package Version Architecture
+
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: openmixer-release-unsigned-apt-tree
           path: build/repo/**
@@ -420,13 +520,13 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: env.DO_PUBLISH != 'true'
         run: |
           echo "::warning::dry run: nothing was signed or published. The unsigned trees are attached to this run."
 
   # The last proof: a machine that holds nothing installs the stable name the channel now serves, and gets the
   # release the tag names, the repository it adds, and a package of the channel through it. Pages serves the
   # push a little late, so the check waits for the stable name to carry the release before it calls it broken.
+
   verify:
     name: Install check from the channel (${{ matrix.image }})
     needs: [preflight, verify-plan, publish-rpm, publish-deb]

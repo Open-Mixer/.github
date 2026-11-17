@@ -220,7 +220,7 @@ for kind, (path, rel_in, key) in WF.items():
     d = docs[kind]
     on = d.get(True) or d.get("on")
     base = {k: v.get("default") for k, v in on["workflow_call"]["inputs"].items()}
-    pub = d["jobs"]["publish"]
+    pub = d["jobs"]["publish-release"]
     assert "preflight" in pub["needs"], f"{path}: publish reads the set of a job it does not need"
     st = [s for s in pub["steps"] if f"/actions/publish-{kind}s@" in s.get("uses", "")][0]
     # the set of the run, except on a catch-up, which keeps the set the version was published for (tests/catch-up-plan.sh)
@@ -252,7 +252,7 @@ for kind, (path, rel_in, key) in WF.items():
     assert not runs({"publish": True, "channel-deps": False}, "tag", "full"), f"{path}: a build that takes nothing from the channel asks the channel"
 pro = yaml.safe_load(open(f"{here}/.github/workflows/promote-staged.yml"))
 sets = [s["with"].get("matrix-set") for j in pro["jobs"].values() for s in j.get("steps", []) if re.search(r"/actions/publish-(rpm|deb)s@", s.get("uses", ""))]
-assert sets == ["full", "full"], f"promote-staged.yml records {sets}: a promotion holds every cell of the matrix"
+assert sets and set(sets) == {"full"}, f"promote-staged.yml records {sets}: a promotion holds every cell of the matrix"
 print("ok   the publish is told the set and writes cells.tsv; a full release checks its dependencies, nothing else does; a promotion is full")
 PY
 

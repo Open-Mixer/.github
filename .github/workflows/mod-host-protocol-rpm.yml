@@ -125,6 +125,7 @@ jobs:
   publish:
     name: Sign and publish
     needs: [plan, build]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -133,7 +134,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -150,7 +151,48 @@ jobs:
         with:
           rpm-dir: collected
           tag: mod-host-${{ env.EVR }}
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+      # the release record: where each Fedora release's source package is served and its sha256, for a consumer to pin
+      - name: Record the source packages
+        run: |
+          set -euo pipefail
+          # a signed publish serves the signed copy, whose bytes differ from the built file's
+          if [ "$DO_PUBLISH" = true ]; then dir=signed; else dir=collected; fi
+          ./.github/actions/publish-rpms/record-srpm.sh "$dir" mod-host | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "- published: $DO_PUBLISH ($dir copy)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+
+  publish-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [plan, build]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:44
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mod-host-rpms-*
+          merge-multiple: true
+          path: collected
+
+      - name: Read the version the packages carry
+        run: echo "EVR=$(rpm -qp --qf '%{VERSION}-%{RELEASE}\n' collected/mod-host-protocol-[0-9]*.rpm | sort -u | head -1)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: mod-host-${{ env.EVR }}
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
@@ -165,7 +207,6 @@ jobs:
           echo "- published: $DO_PUBLISH ($dir copy)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: mod-host-unsigned-rpm-tree
           path: build/repo/**

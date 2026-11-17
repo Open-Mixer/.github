@@ -6,5 +6,5 @@
 # planted trees first (every way of publishing it must see red, the guarded ones green). Argument: a repository root.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-python3 -I "$here/tests/publish_only_by_tag.py" --selftest
+python3 -I "$here/tests/publish_only_by_tag.py" --selftest "$here"
 python3 -I "$here/tests/publish_only_by_tag.py" "${1:-$here}"

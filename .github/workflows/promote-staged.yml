@@ -224,17 +224,77 @@ jobs:
   rpm:
     name: Promote the RPMs
     needs: find
-    if: inputs.rpm
     outputs:
       pushed: ${{ steps.publish.outputs.commit }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 30
     container:
       image: fedora:${{ fromJSON(inputs.fedora-versions)[0] }}
     # the group of every publish to this channel; a dry run pushes nothing and gets a group of its own
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-live
       cancel-in-progress: false
+    steps:
+      # read inside the publish group: nothing else writes the channel between this read and the push
+      - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
+        if: ${{ inputs.rpm }}
+        with:
+          kind: rpm
+          name: ${{ inputs.package-name }}
+          version: ${{ needs.find.outputs.version }}
+          binaries: ${{ inputs.binary-names }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+          arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
+          commit: ${{ needs.find.outputs.short }}
+          channel: ${{ inputs.target-repo }}
+          out: promote/rpm
+
+      - id: publish
+        if: ${{ inputs.rpm }}
+        uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
+        with:
+          rpm-dir: promote/rpm
+          tag: promote v${{ needs.find.outputs.version }} ${{ needs.find.outputs.short }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          staging: false
+          # a promotion holds every release and architecture of the matrix (collect.py refuses less)
+          matrix-set: full
+
+      - name: The channel root holds the bytes staging held
+        if: ${{ inputs.rpm }}
+        env:
+          DRY_RUN: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+        run: |
+          set -o pipefail
+          if [ "$DRY_RUN" = true ]; then tree=build/repo; else tree=build/channel; fi
+          sums=$PWD/promote/rpm.sha256
+          (cd "$tree" && sha256sum -c "$sums") ||
+            { echo "::error::a promoted RPM is not the file staging held"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.rpm }}
+        with:
+          name: ${{ inputs.package-name }}-promoted-rpms
+          path: |
+            promote/rpm/*.rpm
+            promote/rpm.sha256
+          if-no-files-found: error
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && 30 || 2 }}
+
+
+  rpm-dry-run:
+    name: Assemble the unsigned RPM tree, nothing is published
+    needs: find
+    if: ${{ inputs.rpm && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: fedora:${{ fromJSON(inputs.fedora-versions)[0] }}
     steps:
       # read inside the publish group: nothing else writes the channel between this read and the push
       - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
@@ -254,7 +314,7 @@ jobs:
         with:
           rpm-dir: promote/rpm
           tag: promote v${{ needs.find.outputs.version }} ${{ needs.find.outputs.short }}
-          sign: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
@@ -283,24 +343,87 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         run: |
           echo "::warning::dry run: the staged RPMs were found, checked and assembled; nothing was signed, pushed or released."
 
   # The DEBs the same way, through publish-debs: the packages unchanged, the index regenerated and signed.
+
   deb:
     name: Promote the DEBs
     needs: [find, rpm]
-    if: ${{ !cancelled() && inputs.deb && needs.find.result == 'success' && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') }}
     outputs:
       pushed: ${{ steps.publish.outputs.commit }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 30
     container:
       image: debian:trixie
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-live
       cancel-in-progress: false
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
+        if: ${{ inputs.deb }}
+        with:
+          kind: deb
+          name: ${{ inputs.package-name }}
+          version: ${{ needs.find.outputs.version }}
+          binaries: ${{ inputs.binary-names }}
+          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
+          commit: ${{ needs.find.outputs.short }}
+          channel: ${{ inputs.target-repo }}
+          out: promote/deb
+
+      - id: publish
+        if: ${{ inputs.deb }}
+        uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
+        with:
+          deb-dir: promote/deb
+          tag: promote v${{ needs.find.outputs.version }} ${{ needs.find.outputs.short }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          cosign-key: ${{ secrets.RPM_GPG_KEY }}
+          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          requires: ${{ inputs.requires }}
+          changelogs-url: ${{ inputs.base-url }}/deb/changelogs
+          staging: false
+          # a promotion holds every release and architecture of the matrix (collect.py refuses less)
+          matrix-set: full
+
+      - name: The channel root holds the bytes staging held
+        if: ${{ inputs.deb }}
+        env:
+          DRY_RUN: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+        run: |
+          set -o pipefail
+          if [ "$DRY_RUN" = true ]; then tree=build/repo; else tree=build/channel; fi
+          sums=$PWD/promote/deb.sha256
+          (cd "$tree" && sha256sum -c "$sums") ||
+            { echo "::error::a promoted DEB is not the file staging held"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.deb }}
+        with:
+          name: ${{ inputs.package-name }}-promoted-debs
+          path: |
+            promote/deb/*/*.deb
+            promote/deb.sha256
+          if-no-files-found: error
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && 30 || 2 }}
+
+
+  deb-dry-run:
+    name: Assemble the unsigned DEB tree, nothing is published
+    needs: find
+    if: ${{ inputs.deb && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
     steps:
       - uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
         with:
@@ -319,7 +442,7 @@ jobs:
         with:
           deb-dir: promote/deb
           tag: promote v${{ needs.find.outputs.version }} ${{ needs.find.outputs.short }}
-          sign: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           cosign-key: ${{ secrets.RPM_GPG_KEY }}
           cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
@@ -352,12 +475,12 @@ jobs:
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
         run: |
           echo "::warning::dry run: the staged DEBs were found, checked and assembled; nothing was signed, pushed or released."
 
   # The proof a reader of the run log can repeat: every promoted file, fetched from where the channel is served, has
   # the checksum the staged file had.
+
   served:
     name: The channel serves the same bytes
     needs: [find, rpm, deb]
@@ -486,10 +609,20 @@ jobs:
 
   # Last, and only after the channel serves the bytes and they install: the GitHub release of the tag that started
   # this run, with the promoted files. The calling workflow grants contents: write.
+  release-go:
+    name: Release gate
+    needs: [find, served, verify-rpm, verify-deb]
+    # the conditions of the release live here, so that the job which creates it can carry the tag condition alone
+    if: ${{ !cancelled() && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && needs.served.result == 'success' && (needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped') && (needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "the GitHub release may be created"
+
   release:
     name: GitHub release
-    needs: [find, served, verify-rpm, verify-deb]
-    if: ${{ !cancelled() && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && needs.served.result == 'success' && (needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped') && (needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped') }}
+    needs: [find, release-go]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 15
     permissions:

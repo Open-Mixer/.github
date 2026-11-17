@@ -120,30 +120,33 @@ Use a throwaway Pages repository, never the live channel.
 
 ## Publish only by tagging
 
-Nothing reaches the channel root (the Pages repository), npm or a GitHub release except from a tag push. Every job that
-signs or pushes there runs only when `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')`. A run
-by hand (`workflow_dispatch`) may build and dry-run, never publish, and no workflow has a `publish` input to switch
-that on. Re-running a failed tag run keeps its event `push`, so it still publishes. `tests/publish-only-by-tag.sh`
-(run by ci.yml) reads what every step of every workflow and composite action DOES (`gh release`, `npm publish`, an
-upload, any `git push`, a `gh api` write, the channel push helper) and fails, by file, job and step, on a publish whose
-conditions are not all false when the tag condition is false (so `x || TAG` and `always() || TAG` fail), and on one
-whose conditions can never be true on a tag push. It proves itself on planted trees first. It reads `curl` uploads (`-T`,
-`--upload-file`, a POST or PUT to a releases or uploads API) too, and every step of an action, a second unguarded publish
-included.
+Nothing reaches the channel root (the Pages repository), npm or a GitHub release except from a tag push. A run by hand
+(`workflow_dispatch`) may build and dry-run, never publish, and no workflow has a `publish` input to switch that on.
+Re-running a failed tag run keeps its event `push`, so it still publishes.
 
-The gate exempts exactly what the push WRITES, never an input name: a push whose written path (the `what` of
-`channel-push`, followed through the actions that call it) is under `staging/` in every case it runs outside a tag
-push. Two things are therefore allowed, by the owner's staged release cadence rule (stage builds feed the next layer;
-they are not the release channel consumers install from): the stage builds (`staged: true`) and `purge-staging`, which
-deletes staging only. An action handed `staging: inputs.staged` that writes elsewhere is refused.
+The rule is decided by EXACT MATCH, never by evaluating an expression (`tests/publish-only-by-tag.sh`, run by ci.yml,
+which proves itself first on planted trees: every way of publishing red, the allowed shapes green):
 
-Limit: a script of the repository itself (not of an action directory) that does the `git push` or the upload is
-invisible to the gate; the shared workflows have none, and a caller repository's own scripts are not scanned (Open-Mixer/.github#132).
+1. A job with a publishing step carries the job-level `if:` that is exactly
+   `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')` (whitespace and the `${{ }}` aside). An extra
+   `||` or `&&`, `always()`, an input, or the condition on a step instead of the job is refused, by job name. A step
+   publishes by what it does (`gh release`, `npm publish`, an upload, `curl -T`, a POST or PUT to a releases or uploads
+   API, any `git push`, a `gh api` write, the channel push helper, or a composite action that contains one), not by its
+   name. That is why a job that must also wait on the outcome of jobs that may be skipped has a gate job beside it
+   (`publish-go`, `release-go`, `notify-go`) holding those conditions, and the publishing job needs the gate.
+2. What is not publishing, by proof: a push whose `what` is a literal path under `staging/` (no expression, no `..`,
+   no `//`): the stage builds and the purge of staging. By the owner's staged release cadence rule they feed the next
+   layer and are not the release channel consumers install from. And a call of a composite action whose publishing
+   steps carry one of the three canonical sign gates, when the caller gives it a literal `sign: 'false'` (the dry run,
+   an unsigned tree) or `staging: 'true'` with the staging gate. Any expression where a literal is needed is not a
+   proof and the job needs the exact tag condition.
 
-A `staged: true` build is outside the rule, on purpose: it writes `staging/` of the channel repository only, which no
-client installs from, so it is the stage flow of a release wave and not a channel release. The release itself is a
-tag: `promote-staged.yml` runs for real only on a tag push, promotes the staged build of the commit the tag is on,
-and never creates the tag.
+So `build-rpm.yml` and `build-deb.yml` have `publish-release` (the tag condition alone, sign true, staging false), and
+`publish`, which stages (`staged: true`, `staging: 'true'`) or assembles the unsigned tree (`sign: 'false'`). The package
+workflows (surge-xt, pugl-nanovg, clap, rncbc-v1, mod-host-protocol), `release-package.yml` and `promote-staged.yml` have
+a publishing job under the tag condition and a `-dry-run` job beside it under its negation. Limit: a script of the
+repository itself (not of an action directory) that does the `git push` or the upload is invisible to the gate; the
+shared workflows have none, and a caller repository's own scripts are not scanned (Open-Mixer/.github#132).
 
 `publish-fedora.yml` and `publish-freereac.yml` are removed: they republished an existing tag by hand, which this
 rule forbids. A new Fedora release gets the packages by re-running the tag run of each repository (in dependency
