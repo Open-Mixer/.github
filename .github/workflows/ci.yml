@@ -64,6 +64,7 @@ jobs:
       - run: tests/ci-steps.sh
       - run: tests/no-retired-debian-release.sh
       - run: tests/resolve-base.sh
+      - run: tests/v1-not-behind.sh
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test
@@ -71,6 +72,21 @@ jobs:
       - name: The action reads this pull request's own commits
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/commit-message-check
+
+  v1-not-behind:
+    name: openmixer-v1 is not behind main
+    # The ff rule as a gate: a pull request cannot merge while openmixer-v1 lacks a commit of main. Only on pull
+    # requests into main (the base the rule is about): after a merge to main, v1 is behind until it is fast-forwarded, which is the step the gate forces.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - env:
+          BASE_REF: ${{ github.base_ref }}
+        run: .github/scripts/v1-not-behind.sh origin "$BASE_REF" openmixer-v1
 
   key-transition:
     name: Key transition (${{ matrix.kind }})
