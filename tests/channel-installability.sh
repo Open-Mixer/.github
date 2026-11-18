@@ -426,7 +426,7 @@ arm_external_deb() {
 arm_external_rpm() {
   for tool in rpmbuild createrepo_c dnf; do command -v $tool >/dev/null || { bad "external rpm: $tool is not installed"; return; }; done
   dnf repoclosure --help >/dev/null 2>&1 || { bad 'external rpm: dnf repoclosure is not installed (dnf5-plugins)'; return; }
-  local d=$t/extrpm; mkdir -p "$d/top" "$d/channel/fedora/44/x86_64" "$d/channel/fedora/44/noarch" "$d/new" "$d/empty" "$d/ext/rpm/fedora/44/x86_64" "$d/ext-none/rpm"
+  local d=$t/extrpm; mkdir -p "$d/top" "$d/channel/fedora/44/x86_64" "$d/channel/fedora/44/noarch" "$d/new" "$d/empty" "$d/ext/rpm/fedora/44/x86_64" "$d/ext/rpm/fedora/44/noarch" "$d/ext-none/rpm"
   mk() { # name version requires... ; a noarch package with a .fc44 dist tag
     local n=$1 v=$2; shift 2
     { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\nBuildArch: noarch\n' "$n" "$v"
@@ -436,10 +436,11 @@ arm_external_rpm() {
     find "$d/top/RPMS" -name "$n-$v-1.fc44.noarch.rpm"
   }
   mv "$(mk openmixer-release 1)" "$d/channel/fedora/44/noarch/"
-  mv "$(mk freereac-release 1)" "$d/ext/rpm/fedora/44/x86_64/"
+  # as the FreeREAC channel serves it: the release package is in its noarch tree, and the architecture tree holds other packages
+  mv "$(mk freereac-release 1)" "$d/ext/rpm/fedora/44/noarch/"
   mv "$(mk ext-broken 1.0 'nothing-provides-this')" "$d/ext/rpm/fedora/44/x86_64/"
   mv "$(mk openmixer-release 2 'freereac-release')" "$d/new/"
-  createrepo_c -q "$d/channel/fedora/44/x86_64"; createrepo_c -q "$d/channel/fedora/44/noarch"; createrepo_c -q "$d/ext/rpm/fedora/44/x86_64"
+  createrepo_c -q "$d/channel/fedora/44/x86_64"; createrepo_c -q "$d/channel/fedora/44/noarch"; createrepo_c -q "$d/ext/rpm/fedora/44/x86_64"; createrepo_c -q "$d/ext/rpm/fedora/44/noarch"
   printf '%s\n' '# test declaration' "freereac $d/ext" > "$d/declared"
   printf '%s\n' "freereac $d/ext-none" > "$d/declared-empty"
   printf '%s\n' 'not a declaration' > "$d/malformed"

@@ -6,7 +6,7 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        7%{?dist}
+Release:        8%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
 License:        MIT
 URL:            https://www.openmixer.org
@@ -33,6 +33,9 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
+* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-8
+- The package of 1-7, released: the 1-7 run was refused by the installability gate, which read the FreeREAC channel without its noarch tree where freereac-release lives. Requires freereac-release >= 1-2: the floor the gate asks of every dependency between our own packages, now that this channel serves freereac-release (the mirror).
+
 * Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-7
 - Requires freereac-release: reac-pw comes from the FreeREAC channel, whose repository and one key that package installs.
 
