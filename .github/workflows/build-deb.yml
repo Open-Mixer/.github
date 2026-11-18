@@ -166,6 +166,10 @@ on:
         type: string
         default: 'openmixer-package-published'
         description: 'event_type of that repository_dispatch; the worker image build listens for it (client_payload: package, tag, format)'
+      release-package:
+        type: string
+        default: openmixer-release
+        description: "The release package that adds the channel's repository to a build container: openmixer-release, or freereac-release for FreeREAC's channel"
       key-file:
         type: string
         default: ''
@@ -339,6 +343,7 @@ jobs:
         if: inputs.channel-deps || inputs.staged || inputs.staging
         with:
           base-url: ${{ inputs.base-url }}
+          release-package: ${{ inputs.release-package }}
           staging: ${{ inputs.staged || inputs.staging }}
           staging-bootstrap: ${{ inputs.staging-bootstrap }}
 
@@ -656,6 +661,7 @@ jobs:
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
           base-url: ${{ inputs.base-url }}
+          release-package: ${{ inputs.release-package }}
           staging: ${{ inputs.staged }}
 
       - name: Install the new version from the channel
