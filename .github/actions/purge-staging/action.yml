@@ -17,11 +17,6 @@ inputs:
     default: 'false'
   gpg-key:
     default: ''
-  cosign-key:
-    description: deb only, a second key that also signs the apt index, as publish-debs co-signs it; empty for none
-    default: ''
-  cosign-passphrase:
-    default: ''
   publish-token:
     default: ''
   site-gpg-key:
@@ -62,13 +57,6 @@ runs:
         gpg-key: ${{ inputs.gpg-key }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
-      if: inputs.sign == 'true' && inputs.kind == 'deb' && inputs.cosign-key != ''
-      with:
-        gpg-key: ${{ inputs.cosign-key }}
-        gpg-passphrase: ${{ inputs.cosign-passphrase }}
-        id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
-
     # read only: a pull request run clones the public channel and pushes nothing
     - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       with:
@@ -85,8 +73,7 @@ runs:
       run: |
         set -o pipefail
         if [ "$KIND" = rpm ]; then keys=build/channel/rpm/RPM-GPG-KEY-openmixer; else keys=build/channel/deb/openmixer.asc; fi
-        # shellcheck disable=SC2086 # the co-signer is one fingerprint or empty
-        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID" ${OPENMIXER_GPG_COSIGN_KEY_ID:-}
+        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID"
 
     - name: Purge the staging tree
       shell: bash
@@ -97,7 +84,7 @@ runs:
         set -o pipefail
         echo "PURGE_STAGING_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
         echo "SKELETON=$SKELETON" >> "$GITHUB_ENV"
-        COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/purge-staging.sh" "$KIND" build/channel ${OPENMIXER_GPG_KEY_ID:+"$OPENMIXER_GPG_KEY_ID"}
+        "$GITHUB_ACTION_PATH/purge-staging.sh" "$KIND" build/channel ${OPENMIXER_GPG_KEY_ID:+"$OPENMIXER_GPG_KEY_ID"}
         git -C build/channel status --short -- "staging/$KIND" | tail -40
         # nothing outside staging/<kind> changed in the checkout: the real channel is untouched
         outside=$(git -C build/channel status --porcelain --untracked-files=all -- . ":(exclude)staging/$KIND")
@@ -113,7 +100,7 @@ runs:
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.reason }}
         what: staging/rpm
-        rebuild: 'COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
+        rebuild: '"$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
 
     - id: push-deb
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
@@ -125,4 +112,4 @@ runs:
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.reason }}
         what: staging/deb
-        rebuild: 'COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
+        rebuild: '"$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
