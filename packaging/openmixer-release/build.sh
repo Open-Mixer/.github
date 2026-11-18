@@ -34,12 +34,10 @@ primaries=$(gpg --batch --with-colons --import-options show-only --import < "$ke
 mkdir -p "$out"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-# what ships is the served file plus the public keys committed to this repository (a new signing key reaches a
-# machine here, before it meets a package that key signed; the old key stays in the served file)
-"$here/../../.github/actions/import-gpg-key/channel-keys.sh" emit "$key" |
-    GNUPGHOME=$(mkdir -m 700 "$work/gnupg" && echo "$work/gnupg") gpg --batch --quiet --import 2>/dev/null || true
-GNUPGHOME=$work/gnupg gpg --batch --armor --export > "$work/keys.asc" 2>/dev/null || true
-[ -s "$work/keys.asc" ] || { echo "no public key to ship from $key" >&2; exit 1; }
+# what ships is the ONE release signing key, the one committed to this repository (channel-keys.sh ship, which
+# refuses anything but exactly one key with the release uid), whatever the served file still holds
+"$here/../../.github/actions/import-gpg-key/channel-keys.sh" ship "$key" > "$work/keys.asc"
+"$here/../../.github/actions/import-gpg-key/channel-keys.sh" single "$work/keys.asc" > /dev/null
 primaries=$(gpg --batch --with-colons --import-options show-only --import < "$work/keys.asc" 2>/dev/null |
     awk -F: '/^pub:/ {p = 1; next} /^fpr:/ && p {print $10; p = 0}')
 key=$work/keys.asc
