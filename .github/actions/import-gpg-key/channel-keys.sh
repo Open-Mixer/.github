@@ -7,6 +7,7 @@
 #   channel-keys.sh serve <key file> <key id>...        the file becomes what it served plus these keys
 #   channel-keys.sh pinned <key file> [<key id>...]     every primary the file serves, and every key named, is pinned
 #   channel-keys.sh emit <key file>                     the armored keys of the file plus the committed keys, on stdout
+#   channel-keys.sh single <key file>                   the file holds exactly ONE key, whose uids are all packages@openmixer.org
 #
 # THE TRUST ROOT IS NOT THE CHANNEL. pinned-fingerprints.txt (committed beside this script, in the repository the
 # action is checked out from) lists the primaries OpenMixer signs with. A served key file holding any other
@@ -80,12 +81,31 @@ primary_of() { gpg --batch --with-colons --fingerprint "$1" 2>/dev/null | awk -F
 cmd=${1:?usage: channel-keys.sh check|serve|pinned <key file> <key>...}
 file=${2:?usage: channel-keys.sh check|serve|pinned <key file> <key>...}
 shift 2
-[ "$#" -gt 0 ] || [ "$cmd" = pinned ] || [ "$cmd" = emit ] || { echo "channel-keys.sh $cmd: no key named" >&2; exit 2; }
+[ "$#" -gt 0 ] || [ "$cmd" = pinned ] || [ "$cmd" = emit ] || [ "$cmd" = single ] || { echo "channel-keys.sh $cmd: no key named" >&2; exit 2; }
 
 # a committed key that is not pinned stops the command here, in this shell, not in a substitution below
 case "$cmd" in emit | check | serve) committed_files > /dev/null ;; esac
 
 case "$cmd" in
+single)
+    # The end state of every published key file: one release key, the release identity, nothing personal.
+    # Not yet wired into a publish: the live files hold three keys until the re-sign and trim steps are done.
+    [ -s "$file" ] || { echo "::error::$file is empty or missing: there is no key file to judge" >&2; exit 1; }
+    listing=$(gpg --batch --with-colons --import-options show-only --import < "$file" 2>/dev/null) || true
+    n=$(awk -F: '/^pub:/ {n++} END {print n + 0}' <<< "$listing")
+    served=$(primaries < "$file")
+    [ "$n" = 1 ] || {
+        echo "::error::$file holds $n keys, not one: $(tr '\n' ' ' <<< "$served")" >&2
+        exit 1
+    }
+    bad=$(awk -F: '/^uid:/ && $10 !~ /<packages@openmixer\.org>$/ {print $10}' <<< "$listing")
+    [ -z "$bad" ] || {
+        echo "::error::$file: the key $served has a uid that is not packages@openmixer.org: $bad" >&2
+        exit 1
+    }
+    require_pinned "the key file $file" $served
+    echo "$file holds the one release key $served"
+    ;;
 emit)
     if [ -s "$file" ]; then
         served=$(primaries < "$file")
