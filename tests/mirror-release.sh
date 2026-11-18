@@ -46,6 +46,10 @@ rpm)
     # unsigned
     uns=$w/uns; mkdir -p "$uns/rpm"; cp "$good/rpm/RPM-GPG-KEY-freereac" "$uns/rpm/"; mk 44 "$uns" ""; mk 45 "$uns" ""
     refused 'unsigned rpm' 'no good signature' -- "$mirror" rpm "$uns" freereac-release 1-1 "$w/out-uns"
+    # a signed rpm under the requested name whose version-release is not the requested one (the file name lies about its content)
+    liar=$w/liar; mkdir -p "$liar/rpm"; cp "$good/rpm/RPM-GPG-KEY-freereac" "$liar/rpm/"; mk 44 "$liar" "$A"; mk 45 "$liar" "$A"
+    for rel in 44 45; do mv "$liar/rpm/fedora/$rel/noarch/freereac-release-1-1.fc$rel.noarch.rpm" "$liar/rpm/fedora/$rel/noarch/freereac-release-2-1.fc$rel.noarch.rpm"; done
+    refused "an rpm whose version-release is not the requested one" "is 1-1.fc44, not the requested 2-1.fc44" -- "$mirror" rpm "$liar" freereac-release 2-1 "$w/out-liar"
     # a key file with a second key, and a key that is not the pinned one
     two=$w/two; cp -r "$good" "$two"; gpg --armor --export "$A" "$B" > "$two/rpm/RPM-GPG-KEY-freereac"
     refused 'a key file with two keys' 'serves 2 keys' -- "$mirror" rpm "$two" freereac-release 1-1 "$w/out-two"

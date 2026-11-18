@@ -57,6 +57,8 @@ rpm)
         res=$(rpmkeys --root "$work/root" --checksig "$work/$f" 2>&1) || true
         grep -q 'digests signatures OK' <<< "$res" || fail "$f has no good signature by the pinned FreeREAC key: $res"
         [ "$(rpm -qp --qf '%{NAME}' "$work/$f")" = "$pkg" ] || fail "$f is not the package $pkg"
+        vr=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$work/$f")
+        [ "$vr" = "$ver.fc$rel" ] || fail "$f is $vr, not the requested $ver.fc$rel"
         rpmsign --delsign "$work/$f" > /dev/null
         install -m 0644 "$work/$f" "$out/$f"
         echo "mirrored $f (verified against $want, signature header removed)"
