@@ -515,6 +515,14 @@ one no served architecture's binary matches, which the release gate's newest-onl
 (deb), `tests/arch-all-served-pin.sh` (deb, served pinners) and `tests/noarch-pin.sh` (rpm) reproduce the case on a fixture channel, with the passing arms (every
 architecture built, an older package, the catch-up, a package nothing pins exactly) and a sabotage.
 
+The guard judges only the architectures the release matrix publishes (Open-Mixer/.github#135). It reads them from
+`release-matrix/matrix.sh`, the script the releases take their cells from: `MATRIX_SET` when the run has one, else the
+organisation variable `OMX_RELEASE_MATRIX` (a regeneration such as the prune of the channel repository has no
+`MATRIX_SET` and passes the variable through; without it the matrix is full and every architecture is judged). While the
+matrix is quick no aarch64 rpm is published, so a quick release's noarch packages in the x86_64 trees are not refused
+for aarch64; a skew inside a published architecture stays refused, an empty set is refused by name, and no kept package
+is relabelled in `cells.tsv`. `tests/noarch-pin-matrix-arches.sh` proves each arm, with the architecture filter as its sabotage.
+
 ### A quick release writes the quick trees alone
 
 While the set is `quick` the platforms are the quick cells and nothing else: every other tree keeps what it serves

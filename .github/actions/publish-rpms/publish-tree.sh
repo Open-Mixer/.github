@@ -35,6 +35,10 @@
 #               directories that received a package get their metadata made again, from the packages they hold; every
 #               other directory keeps its metadata and its signature byte for byte, and the repository file is not
 #               rewritten.
+#   OMX_RELEASE_MATRIX  the organisation variable the releases read (quick while a release wave is open, full or unset otherwise):
+#               with no MATRIX_SET (a regeneration such as the prune of the channel repository), the pin guard judges the
+#               architectures release-matrix/matrix.sh says that matrix publishes, and a caller that wants the open wave's
+#               set passes the variable through. With MATRIX_SET, that set is the matrix.
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -125,6 +129,27 @@ noarch_dirs() { # <releasever>: the architecture directories a noarch package of
     fi
 }
 
+# THE PIN GUARD JUDGES ONLY THE ARCHITECTURES THE RELEASE MATRIX PUBLISHES (Open-Mixer/.github#135). While the matrix is
+# quick no aarch64 rpm is built, and a quick release placed its noarch packages in the x86_64 trees; a regeneration over
+# that tree must not refuse them for an architecture nobody publishes. The set is read from release-matrix/matrix.sh, the
+# script the release workflows take their cells from (the caller's architectures, which are the ones this script lays
+# out below, narrowed by quick.txt while the matrix is quick): no list of architectures is written here a second time.
+# Kept packages are never relabelled. An architecture inside the set that is skewed stays refused, and an empty set is
+# refused by name rather than judged as nothing to check.
+repo_arches="x86_64 aarch64"
+published_arches() { # <releasever>: the architectures the release matrix publishes for that Fedora release, one line
+    local out cells a list=
+    out=$(mktemp)
+    for a in $repo_arches; do list+="${list:+,}\"$a\""; done
+    KIND=rpm RELEASES="[\"$1\"]" ARCHES="[$list]" MATRIX="${MATRIX_SET:-}" WAVE="${OMX_RELEASE_MATRIX:-}" REF_TYPE=tag \
+        GITHUB_OUTPUT="$out" "$here/../release-matrix/matrix.sh" >&2 ||
+        { rm -f "$out"; echo "the release matrix could not be read for fc$1 (release-matrix/matrix.sh failed): the pin guard will not guess the architectures" >&2; return 1; }
+    cells=$(sed -n 's/^cells=//p' "$out")
+    rm -f "$out"
+    # no cell for the release is an empty answer, which the caller refuses by name
+    printf '%s\n' "$cells" | { grep -oE '"fedora":"'"$1"'","arch":"[A-Za-z0-9_]+"' || true; } | sed 's/.*"arch":"//; s/"$//' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
 rpm_cmp() { # <e> <v> <r> <e> <v> <r>: -1, 0 or 1 by rpm's own ordering
     python3 -I -c 'import sys, rpm; print(rpm.labelCompare(tuple(sys.argv[1:4]), tuple(sys.argv[4:7])))' "$@"
 }
@@ -145,6 +170,8 @@ for q in ${found[@]+"${found[@]}"}; do
         if [ "$(rpm_cmp "$oe" "$ov" "$or" "$qepoch" "$qver" "$qrel")" = 1 ]; then newest=; break; fi
     done
     [ -n "$newest" ] || continue
+    judged=$(published_arches "$releasever") || exit 1
+    [ -n "$judged" ] || { echo "refused $(basename "$q") in fedora/$releasever: the release matrix publishes no architecture for fc$releasever, and an empty set is not 'nothing to check': the pin guard will not judge it (nothing was placed or signed)" >&2; exit 1; }
     # the packages of this run, of the same source and release, that pin it exactly: the architectures the run builds each for
     declare -A pinners=()
     for p in ${found[@]+"${found[@]}"}; do
@@ -159,6 +186,8 @@ for q in ${found[@]+"${found[@]}"}; do
         for archdir in "$tree/fedora/$releasever"/*/; do
             a=$(basename "$archdir")
             [ "$a" != noarch ] && [ "$a" != SRPMS ] || continue
+            # an architecture the release matrix does not publish is not judged
+            case " $judged " in *" $a "*) ;; *) continue ;; esac
             # an architecture that never served the pinning package has nothing to leave behind
             serves=
             for s in "$archdir"*.rpm; do
@@ -288,7 +317,7 @@ fi
 # its arch directories, with metadata even when empty, or dnf stops on a 404 for the one nothing was published into
 for rel in "$tree"/fedora/*/; do
     [ -d "$rel" ] || continue
-    for arch in noarch x86_64 aarch64 SRPMS; do
+    for arch in noarch $repo_arches SRPMS; do
         # a catch-up keeps a directory that exists, with its metadata; one the release lacks is made, with metadata
         [ "${CATCH_UP:-}" = true ] && [ -d "$rel$arch" ] && continue
         mkdir -p "$rel$arch"
