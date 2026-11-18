@@ -18,6 +18,9 @@ inputs:
   base-url:
     description: where the channel is served
     default: https://www.openmixer.org
+  release-package:
+    description: "the release package of the channel to install, at its stable name (rpm/<name>.noarch.rpm, deb/<name>.deb): openmixer-release for the OpenMixer channel, freereac-release for FreeREAC's (its repository is freereac, one dnf repository)"
+    default: openmixer-release
   suite:
     description: Debian release whose index a system the channel does not serve (an Ubuntu) takes; empty installs the release package as it is
     default: ''
@@ -35,25 +38,31 @@ runs:
       env:
         BASE_URL: ${{ inputs.base-url }}
         SUITE: ${{ inputs.suite }}
+        RELEASE_PACKAGE: ${{ inputs.release-package }}
       run: |
         set -euo pipefail
+        [[ $RELEASE_PACKAGE =~ ^[a-z0-9]+-release$ ]] || { echo "::error::release-package '$RELEASE_PACKAGE' is not <channel>-release"; exit 1; }
+        channel=${RELEASE_PACKAGE%-release}
         if command -v dnf >/dev/null; then
           grep -qx 'retries=10' /etc/dnf/dnf.conf || echo 'retries=10' >> /etc/dnf/dnf.conf
-          dnf install -y --setopt=install_weak_deps=False "$BASE_URL/rpm/openmixer-release.noarch.rpm"
-          # a repository that does not load is skipped by default; here it fails the step
-          dnf -y --setopt=skip_if_unavailable=False makecache --repo openmixer --repo openmixer-noarch
+          dnf install -y --setopt=install_weak_deps=False "$BASE_URL/rpm/$RELEASE_PACKAGE.noarch.rpm"
+          # a repository that does not load is skipped by default; here it fails the step (the noarch repository only where the repository file has one)
+          repos=(--repo "$channel"); ! grep -qx "\[$channel-noarch\]" "/etc/yum.repos.d/$channel.repo" || repos+=(--repo "$channel-noarch")
+          dnf -y --setopt=skip_if_unavailable=False makecache "${repos[@]}"
         else
-          echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80openmixer-retries
+          echo 'Acquire::Retries "5";' > "/etc/apt/apt.conf.d/80$channel-retries"
           command -v curl >/dev/null || { apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates; }
           dir=$(mktemp -d)
           chmod 755 "$dir" # apt reads a local package as _apt
-          deb=$dir/openmixer-release.deb
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o "$deb" "$BASE_URL/deb/openmixer-release.deb"
+          deb=$dir/$RELEASE_PACKAGE.deb
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o "$deb" "$BASE_URL/deb/$RELEASE_PACKAGE.deb"
           if [ -n "$SUITE" ]; then
             # a system the channel does not serve: the package refuses it, so take its key and the source of $SUITE
             dpkg-deb -x "$deb" "$dir/pkg"
-            install -D -m 644 "$dir/pkg/usr/share/keyrings/openmixer-archive-keyring.asc" /usr/share/keyrings/openmixer-archive-keyring.asc
-            install -D -m 644 "$dir/pkg/usr/share/openmixer-release/openmixer-$SUITE.sources" /etc/apt/sources.list.d/openmixer.sources
+            install -D -m 644 "$dir/pkg/usr/share/keyrings/$channel-archive-keyring.asc" "/usr/share/keyrings/$channel-archive-keyring.asc"
+            src=$dir/pkg/usr/share/$RELEASE_PACKAGE/$channel-$SUITE.sources
+            [ -f "$src" ] || src=$dir/pkg/etc/apt/sources.list.d/$channel.sources # a channel serving one suite ships its source as it is
+            install -D -m 644 "$src" "/etc/apt/sources.list.d/$channel.sources"
           else
             apt-get install -y --no-install-recommends "$deb"
           fi
