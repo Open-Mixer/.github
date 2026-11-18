@@ -334,9 +334,27 @@ def release_version(version):
     return m.group("release") + (m.group("revision") or "") if m else version
 
 
+EPOCH = re.compile(r"^(\d+):")
+
+
+def epoch_reds(kind, published, new):
+    """No epochs on our packages (owner rule, while developing): an rpm Epoch other than 0 (dnf's %{evr} spells it
+    N:) or a Debian version N:... on a package staged by this release or served by the channel is RED, by name. A
+    mistaken release is fixed by pruning it and releasing a new version, never by an epoch."""
+    reds = []
+    for where, pkgs in (("served", published), ("staged", new)):
+        for p in sorted({(p.name, p.version, p.arch) for p in pkgs}):
+            m = EPOCH.match(p[1])
+            if m and int(m.group(1)):
+                what = f"Epoch {m.group(1)}" if kind == "rpm" else f"Debian epoch {m.group(1)}"
+                reds.append(f"{kind}: {p[0]} {p[1]} ({p[2]}, {where}) carries {what}: no epochs (owner rule); "
+                            f"prune and release a new version")
+    return reds
+
+
 def ceiling_check(kind, published, new, same_pass=()):
     """Returns (reds, warnings, notes): lists of lines."""
-    reds, warns, notes = [], [], []
+    reds, warns, notes = epoch_reds(kind, published, new), [], []
     same_pass = set(same_pass)
     new_keys = {(p.name, p.version, p.arch) for p in new}
     pub = latest(kind, [p for p in published if (p.name, p.version, p.arch) not in new_keys])
