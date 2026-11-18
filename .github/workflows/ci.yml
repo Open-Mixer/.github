@@ -143,6 +143,10 @@ jobs:
         shell: bash
         run: tests/channel-profile.sh ${{ matrix.kind }}
 
+      - name: The mirror of freereac-release verifies its source and refuses every lie
+        shell: bash
+        run: tests/mirror-release.sh ${{ matrix.kind }}
+
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}

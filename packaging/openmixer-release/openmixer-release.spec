@@ -14,7 +14,7 @@ Source0:        openmixer.repo
 Source1:        RPM-GPG-KEY-openmixer
 BuildArch:      noarch
 # OpenMixer installs reac-pw (floor only, in each package that needs it) and does not carry it: the FreeREAC repository that does comes with this package
-Requires:       freereac-release
+Requires:       freereac-release >= 1-2
 
 %description
 Adds the OpenMixer repository, which carries the OpenMixer console and its plugin hosts, to dnf, with the
