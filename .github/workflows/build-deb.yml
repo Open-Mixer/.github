@@ -42,8 +42,8 @@ name: Build DEB (reusable)
 # (plugin-hostd-dev) comes from the channel's apt source, added inside the build container only.
 #
 # Secrets (organisation secrets, passed by `secrets: inherit`): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN,
-# and the original key RPM_GPG_KEY, RPM_GPG_PASSPHRASE. The packages key signs the apt index as it signs the
-# RPMs; the original key co-signs the index while apt installs may hold only it in their signed-by file.
+# and RPM_GPG_KEY, RPM_GPG_PASSPHRASE, no longer read (declared optional so a caller that still passes them does not fail).
+# The packages key signs the apt index as it signs the RPMs, alone.
 
 on:
   workflow_call:
@@ -412,9 +412,6 @@ jobs:
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
@@ -468,9 +465,6 @@ jobs:
           tag: ${{ format('staged {0}', github.sha) }}
           sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
@@ -492,9 +486,6 @@ jobs:
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}

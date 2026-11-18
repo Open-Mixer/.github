@@ -13,10 +13,7 @@
 # for every suite and architecture this run places a package into, so a package is never published without
 # a dependency of it that no repository serves.
 #
-# COSIGN names a second key that also signs Release.gpg and InRelease (apt verifies with any key of the
-# signed-by file, and one good signature from it is enough). It carries a key change: apt users hold the
-# key file they saved at install time, so while it holds only the old key the index keeps a signature by
-# that key. Only the apt index is co-signed; packages and the dnf metadata carry the signing key alone.
+# Release.gpg and InRelease carry ONE signature, the signing key's.
 #
 # THE SIGNED INDEX VOUCHES ONLY FOR WHAT IS ALREADY VOUCHED FOR. A .deb carries no signature of its own: the
 # signed Release covers every package through Packages. The tree is pulled from the channel, and anyone who
@@ -52,12 +49,10 @@ tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}
 src=${2:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}
 key=${3:-}
 requires=${REQUIRES:-}
-cosign=${COSIGN:-}
 # CHANGELOGS_URL is where the tree's changelogs/ directory is served; empty leaves the Release file without a Changelogs field
 changelogs=${CHANGELOGS_URL:+${CHANGELOGS_URL%/}/@CHANGEPATH@_changelog}
-[ -z "$cosign" ] || [ -n "$key" ] || { echo "COSIGN needs a signing key" >&2; exit 1; }
 signers=()
-for k in $key $cosign; do signers+=(--local-user "$k"); done
+for k in $key; do signers+=(--local-user "$k"); done
 
 # apt changelog for a version that is not installed yet asks the Changelogs: URL of the Release file for
 # <source>_<version>_changelog under CHANGEPATH (prefix/source (a flat repository has no component)). The text is the package's own
@@ -262,7 +257,7 @@ vouched() {
     local dir=$1 keyring=$2 release want got
     [ -f "$dir/InRelease" ] && [ -f "$dir/Packages" ] || return 0
     release=$(mktemp)
-    # gpgv exits non-zero when one of the signatures is by a key it lacks (a co-signed index): read its status
+    # gpgv exits non-zero when one of the signatures is by a key it lacks (an index with a signature by a key outside the keyring): read its status
     { gpgv --status-fd 3 --keyring "$keyring" --output "$release" "$dir/InRelease" 3>&1 1>/dev/null 2>/dev/null || true; } |
         awk '/BADSIG/ {b = 1} /VALIDSIG/ {g = 1} END {exit !(g && !b)}' || { rm -f "$release"; return 0; }
     want=$(awk '/^SHA256:/ {s = 1; next} /^[^ ]/ {s = 0} s && $3 == "Packages" {print $1}' "$release")
@@ -278,12 +273,10 @@ if [ -n "$key" ]; then
     command -v gpgv >/dev/null || { echo "gpgv is not installed: the channel's signed index cannot be read, so nothing can be vouched for and nothing was signed" >&2; exit 1; }
     # the key file is the channel's to write: it is read only if every primary in it, and every key this run signs
     # with, is on the list committed in this repository (channel-keys.sh)
-    # shellcheck disable=SC2086 # cosign is one key id or empty
-    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/openmixer.asc" $key $cosign ||
+    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/openmixer.asc" $key ||
         { echo "the channel's key file is not one this repository pins: nothing was signed" >&2; exit 1; }
     keyring=$(mktemp)
-    # shellcheck disable=SC2086 # cosign is one key id or empty
-    { "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" emit "$tree/openmixer.asc"; gpg --batch --armor --export $key $cosign; } |
+    { "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" emit "$tree/openmixer.asc"; gpg --batch --armor --export $key; } |
         gpg --batch --yes --dearmor > "$keyring"
     refused=0
     for suitedir in "$tree"/debian/*/; do
@@ -352,8 +345,7 @@ if [ -n "$key" ]; then
     keyfile="$tree/openmixer.asc"
     # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
     [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
-    # shellcheck disable=SC2086 # cosign is one key id or empty
-    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key" $cosign
+    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"
     if [ -f "$keyfile.keep" ]; then
         if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
             "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" ]; then
