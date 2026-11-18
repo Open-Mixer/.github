@@ -27,6 +27,19 @@ OTHER=$(gpg --with-colons --fingerprint other@example.org | awk -F: '/^fpr:/ {pr
 printf '%s packages throwaway\n' "$OTHER" >> "$PINNED_FINGERPRINTS"
 gpg --batch --armor --export "$OTHER" > "$work/committed/other.asc"
 
+# the signing fingerprint a channel names: another key is refused by name and nothing is signed, the named one passes, and a channel
+# with no committed keys that names none is refused
+cf=$actions/import-gpg-key/check-fingerprint.sh
+"$cf" key "$KEY" "$KEY" || fail "the named key was refused"
+"$cf" key "$KEY" "${KEY,,}" || fail "the named key was refused in lower case"
+"$cf" key "$KEY" "" || fail "no fingerprint named must check none"
+if out=$("$cf" key "$OTHER" "$KEY" 2>&1); then fail "a key that is not the named one was accepted"; fi
+grep -q "the signing key is $OTHER, not the $KEY" <<< "$out" || fail "the refusal does not name both keys: $out"
+if "$cf" want false "" 2>/dev/null; then fail "committed-keys=false with no fingerprint was accepted"; fi
+if "$cf" want false "not-a-fingerprint" 2>/dev/null; then fail "committed-keys=false with a malformed fingerprint was accepted"; fi
+"$cf" want false "$KEY" || fail "committed-keys=false with a fingerprint was refused"
+"$cf" want true "" || fail "the default (committed keys) must not need a fingerprint"
+
 case "${1:?usage: channel-profile.sh rpm|deb}" in
 rpm)
     mkdir -p "$work/src" && printf '%s\n' 'Name: pkg-a' 'Version: 1' 'Release: 1.fc44' 'Summary: t' 'License: MIT' \

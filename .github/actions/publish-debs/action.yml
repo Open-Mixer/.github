@@ -109,12 +109,18 @@ runs:
         SUITES: ${{ inputs.suites }}
         KEY_FILE_IN: ${{ inputs.key-file }}
         COMMITTED_KEYS: ${{ inputs.committed-keys }}
+        SIGNING_FPR: ${{ inputs.signing-fingerprint }}
         LABEL_IN: ${{ inputs.label }}
       run: |
         set -o pipefail
         # the channel profile: another project's key file, label and committed keys, for the tree script and the lost-race rebuild alike
         [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
-        [ "$COMMITTED_KEYS" = false ] && echo "SERVED_KEYS_DIR=none" >> "$GITHUB_ENV" || true
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" want "$COMMITTED_KEYS" "$SIGNING_FPR"
+        if [ "$COMMITTED_KEYS" = false ]; then
+          # the trust root of another project's channel is the one fingerprint its caller names, not OpenMixer's pinned list
+          pins=$(mktemp -d)/pinned.txt; printf '%s packages the channel key named by the caller\n' "${SIGNING_FPR^^}" > "$pins"
+          { echo "SERVED_KEYS_DIR=none"; echo "PINNED_FINGERPRINTS=$pins"; } >> "$GITHUB_ENV"
+        fi
         [ -z "$LABEL_IN" ] || [ "$STAGING" = true ] || echo "LABEL=$LABEL_IN" >> "$GITHUB_ENV"
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
@@ -150,10 +156,7 @@ runs:
       env:
         WANT: ${{ inputs.signing-fingerprint }}
       run: |
-        [ "${OPENMIXER_GPG_KEY_ID^^}" = "${WANT^^}" ] || {
-          echo "::error::the signing key is $OPENMIXER_GPG_KEY_ID, not the $WANT this channel signs with: a secret is mapped to another channel's key; nothing was signed"
-          exit 1
-        }
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" key "$OPENMIXER_GPG_KEY_ID" "$WANT"
 
     - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
