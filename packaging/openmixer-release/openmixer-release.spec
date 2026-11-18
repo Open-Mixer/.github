@@ -6,7 +6,7 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        6%{?dist}
+Release:        7%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
 License:        MIT
 URL:            https://www.openmixer.org
@@ -33,8 +33,11 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
-* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-6
+* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-7
 - Requires freereac-release: reac-pw comes from the FreeREAC channel, whose repository and one key that package installs.
+
+* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-6
+- Ships exactly one key, the OpenMixer release signing key; the personal key and the retired release key are no longer shipped.
 
 * Sun Nov 15 2026 Pau Aliagas <linuxnow@gmail.com> - 1-5
 - Built and served for every Fedora release of the set: fc45 beside fc44 (the fc44 build alone was served before).
