@@ -74,9 +74,44 @@ jobs:
       - uses: actions/checkout@v4
       - run: tests/mirror-release.sh ${{ matrix.kind }}
 
+  # The cells to mirror come from release-matrix, the one source the release workflows read (quick set while OMX_RELEASE_MATRIX is quick, the
+  # whole matrix with full): a Fedora release or a Debian suite added there is mirrored with no edit here, and mirror.sh refuses to run
+  # without them. The package is noarch / all: one architecture stands for each release.
+  rpm-plan:
+    name: Plan the Fedora releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      releases: ${{ steps.matrix.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: rpm
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["44", "45"]'
+          arches: '["x86_64"]'
+
+  deb-plan:
+    name: Plan the Debian releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      releases: ${{ steps.matrix.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: deb
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["trixie"]'
+          arches: '["amd64"]'
+
   rpm:
     name: Fetch and verify the RPMs
-    needs: [preflight, checks]
+    needs: [preflight, checks, rpm-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
@@ -84,7 +119,9 @@ jobs:
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-sign gnupg2 findutils curl
       - uses: actions/checkout@v4
-      - run: .github/actions/mirror-release/mirror.sh rpm "$FREEREAC_URL" freereac-release "${{ needs.preflight.outputs.evr }}" rpms
+      - env:
+          RELEASES: ${{ needs.rpm-plan.outputs.releases }}
+        run: .github/actions/mirror-release/mirror.sh rpm "$FREEREAC_URL" freereac-release "${{ needs.preflight.outputs.evr }}" rpms
       - uses: actions/upload-artifact@v4
         with:
           name: mirror-freereac-release-rpm
@@ -94,7 +131,7 @@ jobs:
 
   deb:
     name: Fetch and verify the DEB
-    needs: [preflight, checks]
+    needs: [preflight, checks, deb-plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
@@ -102,7 +139,9 @@ jobs:
     steps:
       - run: apt-get update -qq && apt-get install -y --no-install-recommends gnupg gpgv curl ca-certificates
       - uses: actions/checkout@v4
-      - run: .github/actions/mirror-release/mirror.sh deb "$FREEREAC_URL" freereac-release "${{ needs.preflight.outputs.evr }}" debs
+      - env:
+          SUITES: ${{ needs.deb-plan.outputs.releases }}
+        run: .github/actions/mirror-release/mirror.sh deb "$FREEREAC_URL" freereac-release "${{ needs.preflight.outputs.evr }}" debs
       - uses: actions/upload-artifact@v4
         with:
           name: mirror-freereac-release-deb

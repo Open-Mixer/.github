@@ -5,8 +5,11 @@
 # Requires: freereac-release resolves from the OpenMixer channel alone on a machine that has only that channel enabled (the upgrade path
 # of an existing client), after which the FreeREAC repository it installs serves reac-pw. Nothing else of FreeREAC's is ever mirrored.
 #
-#   mirror.sh rpm <FreeREAC channel URL|DIR> <package> <version-release> <out dir>     one unsigned rpm per Fedora release in RELEASES
-#   mirror.sh deb <FreeREAC channel URL|DIR> <package> <version> <out dir>              <out dir>/<suite>/<file>.deb, SUITES
+#   mirror.sh rpm <FreeREAC channel URL|DIR> <package> <version-release> <out dir>     one unsigned rpm per Fedora release in RELEASES (space separated, required)
+#   mirror.sh deb <FreeREAC channel URL|DIR> <package> <version> <out dir>              <out dir>/<suite>/<file>.deb per suite in SUITES (space separated, required)
+#
+# The cells are the caller's, never this script's: RELEASES (rpm) or SUITES (deb) comes from release-matrix, the one list the release workflows
+# read, and an unset or empty one is refused by name, so a cell added there is mirrored and none is silently left out.
 #
 # THE SOURCE IS VERIFIED, NOT TRUSTED. The FreeREAC key is the one primary whose fingerprint is committed in freereac-key.fpr (public data,
 # beside this script): the key file the channel serves must hold exactly that one key. An rpm must carry a good signature by it (header and
@@ -25,6 +28,10 @@ base=${base%/}
 want=$(grep -v '^#' "${FREEREAC_KEY_FPR_FILE:-$here/freereac-key.fpr}" | tr -d '[:space:]')
 [[ $want =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "FAIL: the pinned FreeREAC fingerprint '$want' is not a fingerprint" >&2; exit 1; }
 [[ $pkg =~ ^[a-z0-9][a-z0-9.+-]*$ && $ver =~ ^[A-Za-z0-9.+~_-]+$ ]] || { echo "FAIL: '$pkg' '$ver' is not a package and a version" >&2; exit 1; }
+case $kind in
+    rpm) [ -n "${RELEASES:-}" ] || { echo "FAIL: RELEASES is unset: the Fedora releases to mirror come from release-matrix, never from this script" >&2; exit 1; } ;;
+    deb) [ -n "${SUITES:-}" ] || { echo "FAIL: SUITES is unset: the Debian releases to mirror come from release-matrix, never from this script" >&2; exit 1; } ;;
+esac
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -51,7 +58,7 @@ rpm)
     mkdir -p "$work/root" "$out"
     gpg --batch --armor --export "$want" > "$work/pub.asc"
     rpmkeys --root "$work/root" --import "$work/pub.asc"
-    for rel in ${RELEASES:-44 45}; do
+    for rel in $RELEASES; do
         f=$pkg-$ver.fc$rel.noarch.rpm
         get "rpm/fedora/$rel/noarch/$f" "$work/$f"
         res=$(rpmkeys --root "$work/root" --checksig "$work/$f" 2>&1) || true
@@ -65,7 +72,7 @@ rpm)
     done
     ;;
 deb)
-    for suite in ${SUITES:-trixie}; do
+    for suite in $SUITES; do
         d=deb/debian/$suite
         mkdir -p "$work/$suite"
         for f in Release Release.gpg Packages; do get "$d/$f" "$work/$suite/$f"; done
