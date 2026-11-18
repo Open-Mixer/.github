@@ -11,6 +11,16 @@ gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-freereac
 metadata_expire=6h
 skip_if_unavailable=False
 
+[freereac-noarch]
+name=FreeREAC (noarch)
+baseurl=https://freereac.github.io/rpm/fedora/$releasever/noarch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-freereac
+metadata_expire=6h
+skip_if_unavailable=False
+
 [freereac-source]
 name=FreeREAC - Sources
 baseurl=https://freereac.github.io/rpm/fedora/$releasever/SRPMS/

@@ -54,6 +54,10 @@ rpm)
     [ ! -e "$tree/RPM-GPG-KEY-openmixer" ] || fail "an OpenMixer key file was written into the other channel"
     [ ! -e "$tree/openmixer.repo" ] || fail "openmixer.repo was written into the other channel"
     cmp "$tree/freereac.repo" "$work/freereac.repo" || fail "the tree does not serve the channel's repository file"
+    # the repository file the FreeREAC profile publishes names both trees, as openmixer.repo does: a released noarch package lives in noarch/
+    for id in freereac freereac-noarch; do
+        grep -qx "\[$id\]" "$here/../packaging/freereac-release/freereac.repo" || fail "freereac.repo, the file published into FreeREAC's channel, has no [$id] repository"
+    done
     # the default is still OpenMixer's, with the committed keys
     tree=$work/rpm-default
     SERVED_KEYS_DIR=$work/committed "$actions/publish-rpms/publish-tree.sh" "$tree" "$work/src" "$KEY"
