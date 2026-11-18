@@ -331,7 +331,7 @@ jobs:
       # an ordinary run reads the channel: the staging channel is for a run that is itself staged
       - name: omx-contract from the channel (3.16.0 or later, translate and the language list)
         uses: ./.github/actions/add-openmixer
-      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract < 4'
+      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0'
       - run: tests/langpacks-fill.sh
 
   changelog:
@@ -518,6 +518,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: .github/actions/deps-render/render.sh --self-test
+      # this repository's own tree, the one that defines the rule: no ceiling in its workflows or any other file it ships
+      - run: .github/actions/deps-render/render.sh --check .
       - uses: ./.github/actions/private-refs-check
       - uses: ./.github/actions/spdx-check
       - run: tests/trigger-gate.sh
