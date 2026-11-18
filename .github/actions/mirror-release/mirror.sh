@@ -22,7 +22,7 @@ here=$(dirname "$(readlink -f "$0")")
 usage='usage: mirror.sh rpm|deb <FreeREAC channel URL|DIR> <package> <version> <out dir>'
 kind=${1:?$usage}; base=${2:?$usage}; pkg=${3:?$usage}; ver=${4:?$usage}; out=$(readlink -m "${5:?$usage}")
 base=${base%/}
-want=$(tr -d '[:space:]' < "${FREEREAC_KEY_FPR_FILE:-$here/freereac-key.fpr}")
+want=$(grep -v '^#' "${FREEREAC_KEY_FPR_FILE:-$here/freereac-key.fpr}" | tr -d '[:space:]')
 [[ $want =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "FAIL: the pinned FreeREAC fingerprint '$want' is not a fingerprint" >&2; exit 1; }
 [[ $pkg =~ ^[a-z0-9][a-z0-9.+-]*$ && $ver =~ ^[A-Za-z0-9.+~_-]+$ ]] || { echo "FAIL: '$pkg' '$ver' is not a package and a version" >&2; exit 1; }
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT

@@ -1,1 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The primary fingerprint of the one FreeREAC release key (FreeREAC Release Signing Key <packages@freereac.org>): mirror.sh trusts nothing of
+# FreeREAC's that this key did not sign. Public data; changing it is a reviewed commit here.
 97C92ED0E2D65B603A93D4711A72E09298D9C0F6
