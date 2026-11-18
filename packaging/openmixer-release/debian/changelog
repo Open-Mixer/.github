@@ -1,3 +1,11 @@
+openmixer-release (1-8) unstable; urgency=medium
+
+  * The package of 1-7, released: the 1-7 run was refused by the installability
+    gate, which read the FreeREAC channel without its noarch tree, where
+    freereac-release lives.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 22:30:00 +0100
+
 openmixer-release (1-7) unstable; urgency=medium
 
   * Depends on freereac-release: reac-pw comes from the FreeREAC channel,
