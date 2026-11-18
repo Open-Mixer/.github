@@ -2,7 +2,9 @@ openmixer-release (1-8) unstable; urgency=medium
 
   * The package of 1-7, released: the 1-7 run was refused by the installability
     gate, which read the FreeREAC channel without its noarch tree, where
-    freereac-release lives.
+    freereac-release lives. Depends on freereac-release (>= 1-2): the floor
+    the gate asks of every dependency between our own packages, now that this
+    channel serves freereac-release (the mirror).
 
  -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 22:30:00 +0100
 
