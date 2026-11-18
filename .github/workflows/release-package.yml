@@ -28,6 +28,8 @@ env:
   CHANNEL: Open-Mixer/open-mixer.github.io
   # a package of each tree the repository adds, installed through it by the install check
   RPM_PROBE: plugin-hostd-devel
+  # openmixer-release requires freereac-release: the install checks install both
+  FREEREAC_URL: https://freereac.github.io
   DEB_PROBE: clap-headers
 
 defaults:
@@ -158,7 +160,7 @@ jobs:
       - run: packaging/openmixer-release/build.sh rpm keys/RPM-GPG-KEY-openmixer rpms
 
       - name: Install it in this clean fedora and install a package of the channel through it
-        run: SIGNED=0 packaging/openmixer-release/install-check.sh rpms/openmixer-release-*.noarch.rpm "$RPM_PROBE"
+        run: FREEREAC_RELEASE_URL="$FREEREAC_URL/rpm/freereac-release.noarch.rpm" SIGNED=0 packaging/openmixer-release/install-check.sh rpms/openmixer-release-*.noarch.rpm "$RPM_PROBE"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -221,7 +223,7 @@ jobs:
       - name: Install it in this clean debian and install a package of the channel through it
         run: |
           chmod 755 debs && chmod 644 debs/*.deb
-          packaging/openmixer-release/install-check.sh debs/openmixer-release_*_all.deb "$DEB_PROBE"
+          FREEREAC_RELEASE_URL="$FREEREAC_URL/deb/freereac-release.deb" packaging/openmixer-release/install-check.sh debs/openmixer-release_*_all.deb "$DEB_PROBE"
 
   # Before anything is published: the channel with this release in it still installs everything that installed
   # before, on every Debian and Fedora release and architecture it serves (channel-installability).

@@ -25,11 +25,18 @@ run() { # <release package> <repo file name> <repo file content>
     # the step reads /etc/yum.repos.d and /etc/dnf: point both at the scratch directory
     sed -e "s|/etc/yum.repos.d|$w/etc|g" -e "s|/etc/dnf/dnf.conf|$w/dnf.conf|g" "$w/step.sh" > "$w/run.sh"
     : > "$w/dnf.conf"
-    PATH=$w/bin:$PATH BASE_URL=https://example.org SUITE= RELEASE_PACKAGE=$1 bash "$w/run.sh" > /dev/null
+    PATH=$w/bin:$PATH BASE_URL=https://example.org SUITE= RELEASE_PACKAGE=$1 FREEREAC_URL=${FREEREAC_URL-} bash "$w/run.sh" > /dev/null
 }
 run openmixer-release openmixer '[openmixer]\n[openmixer-noarch]\n'
 grep -q "install .*https://example.org/rpm/openmixer-release.noarch.rpm" "$w/calls" || fail "the default does not install openmixer-release: $(cat "$w/calls")"
 grep -q "makecache --repo openmixer --repo openmixer-noarch" "$w/calls" || fail "the default does not load both OpenMixer repositories: $(cat "$w/calls")"
+# openmixer-release requires freereac-release: both come in one transaction, and both repositories load
+FREEREAC_URL=https://fr.example.org run openmixer-release openmixer '[openmixer]\n[openmixer-noarch]\n'
+grep -q "openmixer-release.noarch.rpm https://fr.example.org/rpm/freereac-release.noarch.rpm" "$w/calls" || fail "freereac-release is not installed with openmixer-release: $(cat "$w/calls")"
+grep -q "makecache --repo openmixer --repo freereac --repo openmixer-noarch" "$w/calls" || fail "the freereac repository is not loaded: $(cat "$w/calls")"
+# a build container of the FreeREAC channel never takes the OpenMixer package, whatever freereac-url says
+FREEREAC_URL=https://fr.example.org run freereac-release freereac '[freereac]\n'
+! grep -q "openmixer" "$w/calls" || fail "freereac-release pulled in openmixer: $(cat "$w/calls")"
 run freereac-release freereac '[freereac]\n'
 grep -q "install .*https://example.org/rpm/freereac-release.noarch.rpm" "$w/calls" || fail "freereac-release is not the package installed: $(cat "$w/calls")"
 grep -q "makecache --repo freereac\$" "$w/calls" || fail "freereac loads more or other than the freereac repository: $(cat "$w/calls")"

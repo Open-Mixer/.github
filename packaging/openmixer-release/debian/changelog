@@ -1,3 +1,10 @@
+openmixer-release (1-7) unstable; urgency=medium
+
+  * Depends on freereac-release: reac-pw comes from the FreeREAC channel,
+    whose apt source and one key that package installs.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 18:00:00 +0100
+
 openmixer-release (1-6) unstable; urgency=medium
 
   * Ships exactly one key, the OpenMixer release signing key; the personal
