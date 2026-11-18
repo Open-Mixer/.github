@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # deps-render.sh: the dependency floors AND CEILINGS of a repository come from ONE file, packaging/deps.txt, and are
-# rendered into every place that states one: the RPM spec's Requires and BuildRequires, debian/control's
+# rendered into every place that states one: the RPM spec's Requires, BuildRequires and Recommends, debian/control's
 # Build-Depends and Depends, and the release-tag variables of the workflows.
 #
 #   render.sh --write [ROOT]      rewrite every floor to what deps.txt says
@@ -52,8 +52,8 @@ esc() { printf '%s' "$1" | sed 's/[.+*?^$\[\]/\\&/g'; }
 spec_files()  { ls "$1"/packaging/*.spec 2>/dev/null || true; }
 wf_files()    { ls "$1"/.github/workflows/*.yml 2>/dev/null || true; }
 
-# lines of a spec that state a versioned requirement: "<name> >= <floor>" after Requires: or BuildRequires:
-spec_names() { grep -E '^(Build)?Requires:' "$1" | grep -oE '[A-Za-z0-9_.+()-]+ *>= *[0-9][0-9.]*' | sed 's/ *>=.*//' || true; }
+# lines of a spec that state a versioned requirement: "<name> >= <floor>" after Requires:, BuildRequires: or Recommends:
+spec_names() { grep -E '^(Build)?(Requires|Recommends):' "$1" | grep -oE '[A-Za-z0-9_.+()-]+ *>= *[0-9][0-9.]*' | sed 's/ *>=.*//' || true; }
 # debian/control: a field continues on every following line that starts with white space (comment lines are skipped);
 # ctl_fields prints each dependency field as ONE line, so every reader below sees a dependency wherever it is written
 ctl_fields() { awk '
@@ -80,9 +80,9 @@ run() { # <mode> <root>
     local seen=0
     for f in $(spec_files "$root"); do
       e="$(esc "$n")"
-      if grep -qE "^(Build)?Requires:.*[ ,]$e *>= *[0-9]" "$f"; then seen=1
-        if [ "$mode" = write ]; then sed -i -E "/^(Build)?Requires:/ s/([ ,]$e *>= *)[0-9][0-9.]*/\1${FLOOR[$i]}/" "$f"
-        elif grep -E "^(Build)?Requires:" "$f" | grep -E "[ ,]$e *>= *[0-9]" | grep -qvE "[ ,]$e *>= *${FLOOR[$i]}( |,|\$)"; then
+      if grep -qE "^(Build)?(Requires|Recommends):.*[ ,]$e *>= *[0-9]" "$f"; then seen=1
+        if [ "$mode" = write ]; then sed -i -E "/^(Build)?(Requires|Recommends):/ s/([ ,]$e *>= *)[0-9][0-9.]*/\1${FLOOR[$i]}/" "$f"
+        elif grep -E "^(Build)?(Requires|Recommends):" "$f" | grep -E "[ ,]$e *>= *[0-9]" | grep -qvE "[ ,]$e *>= *${FLOOR[$i]}( |,|\$)"; then
           echo "deps-render: $f states $n at a floor other than ${FLOOR[$i]}" >&2; bad=1; fi
       fi
     done
@@ -92,18 +92,18 @@ run() { # <mode> <root>
     if [ -z "${CEIL[$i]}" ]; then
       for f in $(spec_files "$root"); do
         e="$(esc "$n")"
-        if grep -qE "^(Build)?Requires:.*[ ,]$e *< *[0-9]" "$f"; then
+        if grep -qE "^(Build)?(Requires|Recommends):.*[ ,]$e *< *[0-9]" "$f"; then
           if [ "$mode" = write ]; then
-            sed -i -E "/^(Build)?Requires: *$e *< *[0-9][0-9.]* *\$/d; /^(Build)?Requires:/ s/,? *$e *< *[0-9][0-9.]*//" "$f"
+            sed -i -E "/^(Build)?(Requires|Recommends): *$e *< *[0-9][0-9.]* *\$/d; /^(Build)?(Requires|Recommends):/ s/,? *$e *< *[0-9][0-9.]*//" "$f"
           else echo "deps-render: $f states a ceiling for $n, which $DEPS declares floor-only" >&2; bad=1; fi
         fi
       done
     else
     for f in $(spec_files "$root"); do
       e="$(esc "$n")"
-      if grep -qE "^(Build)?Requires:.*[ ,]$e *< *[0-9]" "$f"; then cseen=1
-        if [ "$mode" = write ]; then sed -i -E "/^(Build)?Requires:/ s/([ ,]$e *< *)[0-9][0-9.]*/\1${CEIL[$i]}/" "$f"
-        elif grep -E "^(Build)?Requires:" "$f" | grep -E "[ ,]$e *< *[0-9]" | grep -qvE "[ ,]$e *< *${CEIL[$i]}( |,|\$)"; then
+      if grep -qE "^(Build)?(Requires|Recommends):.*[ ,]$e *< *[0-9]" "$f"; then cseen=1
+        if [ "$mode" = write ]; then sed -i -E "/^(Build)?(Requires|Recommends):/ s/([ ,]$e *< *)[0-9][0-9.]*/\1${CEIL[$i]}/" "$f"
+        elif grep -E "^(Build)?(Requires|Recommends):" "$f" | grep -E "[ ,]$e *< *[0-9]" | grep -qvE "[ ,]$e *< *${CEIL[$i]}( |,|\$)"; then
           echo "deps-render: $f states $n below a ceiling other than ${CEIL[$i]}" >&2; bad=1; fi
       fi
     done
@@ -156,9 +156,14 @@ run() { # <mode> <root>
   fi
   # floors only: no `<=` ceiling anywhere, whether deps.txt lists the package or not
   for f in $(spec_files "$root"); do
-    if grep -E '^(Build)?Requires:' "$f" | grep -qE '<=|=<'; then echo "deps-render: $f states a <= ceiling: floors only" >&2; bad=1; fi
+    if grep -E '^(Build)?(Requires|Recommends):' "$f" | grep -qE '<=|=<'; then echo "deps-render: $f states a <= ceiling: floors only" >&2; bad=1; fi
   done
   if [ -f "$ctl" ] && ctl_fields "$ctl" | grep -qE '\(<= '; then echo "deps-render: debian/control states a <= ceiling: floors only" >&2; bad=1; fi
+  # a Recommends is a FLOOR row too (ruling a): it states a floor and never a ceiling, listed package or not
+  for f in $(spec_files "$root"); do
+    if grep -E '^Recommends:' "$f" | grep -q '<'; then echo "deps-render: $f states a ceiling in a Recommends: Recommends carries floors only" >&2; bad=1; fi
+  done
+  if [ -f "$ctl" ] && ctl_fields "$ctl" | grep -E '^Recommends:' | grep -q '<'; then echo "deps-render: debian/control states a ceiling in a Recommends: Recommends carries floors only" >&2; bad=1; fi
   [ "$bad" = 0 ] || return 1
   [ "$mode" = check ] && echo "deps-render: spec, debian/control and workflows carry the floors of $DEPS"
   return 0
@@ -225,6 +230,39 @@ if [ "${1:-}" = --self-test ]; then
   printf 'Requires: ownb < 2\n' >> "$S/t/packaging/t.spec"; sed -i 's/libownc (>= 2.1~)/libownc (>= 2.1~), libownc (<< 3~)/' "$S/t/debian/control"
   run write "$S/t" >/dev/null 2>&1 || true
   if run check "$S/t" >/dev/null 2>&1; then echo "WRITE repairs every file: ok"; else echo "WRITE left drift"; fail=1; fi
+  # Recommends are FLOOR rows (ruling a): a spec or control Recommends floor is read like Requires and Depends, listed
+  # or refused by name; a Recommends that states a ceiling is refused, listed package or not
+  mkrec() { # [listed]: a package of ours (floor-only row) that a spec and a control Recommends
+    rm -rf "$S/r"; mkdir -p "$S/r/packaging" "$S/r/debian"
+    printf '# test\nlib-devel  libx-dev  1.2.0  2\n' > "$S/r/$DEPS"
+    if [ "${1:-}" = listed ]; then printf 'omx-clap-host  omx-clap-host  0.32.5\n' >> "$S/r/$DEPS"; fi
+    printf 'Name: r\nRequires: lib-devel >= 1.2.0\nRequires: lib-devel < 2\nRecommends: omx-clap-host >= 0.32.5\n' > "$S/r/packaging/r.spec"
+    printf 'Source: r\nBuild-Depends: debhelper-compat (= 13), libx-dev (>= 1.2.0~), libx-dev (<< 2~)\n\nPackage: r\nDepends: libx-dev (>= 1.2.0~), libx-dev (<< 2~)\nRecommends: omx-clap-host (>= 0.32.5~)\n' > "$S/r/debian/control"; }
+  mkceil() { # a third-party row (floor and ceiling) that a Recommends floor names, the ceiling stated by Requires and Depends
+    rm -rf "$S/c"; mkdir -p "$S/c/packaging" "$S/c/debian"
+    printf '# test\nlib-devel  libx-dev  1.2.0  2\nlibx-rec  libx-rec-dev  1.0  2\n' > "$S/c/$DEPS"
+    printf 'Name: c\nRequires: lib-devel >= 1.2.0\nRequires: lib-devel < 2\nRequires: libx-rec < 2\nRecommends: libx-rec >= 1.0\n' > "$S/c/packaging/c.spec"
+    printf 'Source: c\nBuild-Depends: debhelper-compat (= 13), libx-dev (>= 1.2.0~), libx-dev (<< 2~), libx-rec-dev (>= 1.0~), libx-rec-dev (<< 2~)\n\nPackage: c\nDepends: libx-dev (>= 1.2.0~), libx-dev (<< 2~), libx-rec-dev (>= 1.0~), libx-rec-dev (<< 2~)\n' > "$S/c/debian/control"; }
+  mkrec
+  if run check "$S/r" >"$S/err" 2>&1; then echo "recommends unlisted floor: STAYED GREEN"; fail=1
+  elif grep -q 'omx-clap-host' "$S/err"; then echo "recommends unlisted floor: red, by name"
+  else echo "recommends unlisted floor: red, NOT BY NAME"; fail=1; fi
+  mkrec listed
+  if run check "$S/r" >/dev/null 2>&1; then echo "recommends listed floor: green"; else echo "recommends listed floor: FALSE RED"; fail=1; fi
+  mkceil
+  if run check "$S/c" >/dev/null 2>&1; then echo "recommends third-party floor with its ceiling: green"; else echo "recommends third-party floor with its ceiling: FALSE RED"; fail=1; fi
+  # planted on the listed tree: each must go red
+  srec() { mkrec listed; sed -i -E "$3" "$S/r/$2"
+    if run check "$S/r" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
+  srec recommends-spec-floor-drift   packaging/r.spec '/^Recommends:/ s/0\.32\.5/0.30.0/'
+  srec recommends-spec-ceiling-floor-only packaging/r.spec '$a Recommends: omx-clap-host < 1'
+  srec recommends-control-ceiling-floor-only debian/control '/^Recommends:/ s/\(>= 0\.32\.5~\)/(>= 0.32.5~), omx-clap-host (<< 1~)/'
+  srec recommends-spec-unlisted      packaging/r.spec '$a Recommends: extra-rec >= 2.0'
+  # planted on the third-party tree: a Recommends ceiling is refused although the row lists a ceiling
+  sabc() { mkceil; sed -i -E "$3" "$S/c/$2"
+    if run check "$S/c" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
+  sabc recommends-spec-ceiling-listed    packaging/c.spec '$a Recommends: libx-rec < 2'
+  sabc recommends-control-ceiling-listed debian/control   '$a Recommends: libx-rec-dev (<< 2~)'
   [ "$fail" = 0 ] || exit 1
   echo "deps-render self-test: every drift red"
   exit 0
