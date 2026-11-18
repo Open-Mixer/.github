@@ -665,15 +665,19 @@ def external_channels(path):
 
 
 def external_rpm_repos(externals, rel, arch, notes, where):
-    """[(repo id, path)] of each external channel's dnf repository for this release and architecture; a channel that
-    serves none is named in the notes (what depends on it is then unmet, by name, in the verdict)."""
+    """[(repo id, path)] of each external channel's dnf repositories for this release and architecture: the architecture's tree and
+    its noarch tree, as this channel's own are read (a noarch package such as a release package lives in the noarch tree). A channel
+    that serves neither is named in the notes (what depends on it is then unmet, by name, in the verdict)."""
     repos = []
     for name, base in externals:
-        p = join(base, "rpm", "fedora", rel, arch) + "/"
-        if exists(join(p, "repodata", "repomd.xml")):
-            repos.append((f"omx-ext-{name}", p))
-        else:
-            notes.append(f"{where}: the external channel {name} ({base}) serves no fedora/{rel}/{arch}: nothing it provides is known")
+        found = []
+        for tree, suffix in ((arch, ""), ("noarch", "-noarch")):
+            p = join(base, "rpm", "fedora", rel, tree) + "/"
+            if exists(join(p, "repodata", "repomd.xml")):
+                found.append((f"omx-ext-{name}{suffix}", p))
+        if not found:
+            notes.append(f"{where}: the external channel {name} ({base}) serves no fedora/{rel}/{arch} or fedora/{rel}/noarch: nothing it provides is known")
+        repos += found
     return repos
 
 
