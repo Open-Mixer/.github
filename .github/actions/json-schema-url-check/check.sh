@@ -4,7 +4,7 @@
 # json-schema-url-check check.sh [ROOT] | --self-test
 #
 # Allow-list. Every "$schema" and every "$id" in a tracked JSON object is https://openmixer.org/schema/..., or a path
-# relative to the file (a value starting // names a host and is refused) (and a "$schema" may be on json-schema.org). Any other host (github.com, githubusercontent.com,
+# relative to the file (a value starting // names a host and is refused) (a "$schema" may be on json-schema.org, an "$id" on https://openmixer.org/contract/ for a domain document). Any other host (github.com, githubusercontent.com,
 # anything) is refused by file and key: a schema's identity must not move when a repository does. Every object at every
 # depth is read. Any parsed document is read, an array included; a file that is empty or does not parse is no schema document and is skipped; a file that does not
 # parse but carries "$schema" or "$id" text is refused. A tree with no tracked JSON passes with a note.
@@ -24,6 +24,8 @@ def bad(key, value):
     h = m.group(3).lower()
     if h == 'openmixer.org' and m.group(1).lower() == 'https' and v[m.end():].startswith(('/schema/', ':443/schema/')):
         return False
+    if key == '$id' and h == 'openmixer.org' and m.group(1).lower() == 'https' and v[m.end():].startswith('/contract/'):
+        return False          # a domain document's id
     if key == '$schema' and h == 'json-schema.org':
         return False
     return True
@@ -90,6 +92,8 @@ if [ "${1:-}" = --self-test ]; then
   expect raw-host 1 '{"$schema":"https://raw.githubusercontent.com/Open-Mixer/x/main/s.json"}'
   expect nested-id 1 '{"a":[{"b":{"$id":"http://www.github.com/o/r/s.json"}}]}'
   expect broken-json 1 '{"$schema":'
+  expect domain-doc-id 0 '{"$id":"https://openmixer.org/contract/panel/panel.json"}'
+  expect domain-doc-schema 1 '{"$schema":"https://openmixer.org/contract/panel/panel.json"}'
   expect other-host 1 '{"$id":"https://example.com/s.json"}'
   expect json-schema-org 0 '{"$schema":"https://json-schema.org/draft/2020-12/schema"}'
   expect json-schema-org-id 1 '{"$id":"https://json-schema.org/x"}'
