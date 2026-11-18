@@ -341,6 +341,12 @@ if [ "${1:-}" = --self-test ]; then
   refused libomx-contract-dev  .github/workflows/ci.yml "      - run: apt-get install -y 'libomx-contract-dev (<< 4~)'"
   refused libomx-contract-dev  .github/workflows/ci.yml "      - run: apt-get install -y libomx-contract-dev=3.19.*"
   refused libomx-contract-dev  .github/workflows/ci.yml "      - run: apt-get install -y libomx-contract-dev=3.19.0"
+  # a provides-form name carries its suffix in parentheses (pkgconfig(clap), perl(Foo)): the ceiling is seen on it
+  refused 'pkgconfig(clap)'    packaging/n.spec  'BuildRequires: (pkgconfig(clap) >= 1.2.10 with pkgconfig(clap) < 2)'
+  refused 'perl(Foo)'          packaging/n.spec  'Requires: perl(Foo) < 2'
+  refused 'pkgconfig(clap)'    .github/workflows/ci.yml "      - run: dnf install -y 'pkgconfig(clap) < 2'"
+  mknodeps; printf 'BuildRequires: pkgconfig(clap) >= 1.2.10\n' >> "$S/n/packaging/n.spec"
+  if run check "$S/n" >/dev/null 2>&1; then echo "no deps.txt, provides floor only: green"; else echo "no deps.txt, provides floor only: FALSE RED"; fail=1; fi
   # planted on the listed tree: each must go red
   srec() { mkrec listed; sed -i -E "$3" "$S/r/$2"
     if run check "$S/r" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
