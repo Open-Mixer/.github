@@ -17,7 +17,10 @@
 #            published into the quick set's architecture trees alone (fc44 and fc45 x86_64), the aarch64 and noarch trees
 #            keep the packages they served, the aarch64 view still installs, and the check judges the quick cells alone,
 #            naming each cell it leaves out.
-# Usage: tests/channel-installability.sh [ceiling|deb|deb_unbuilt|rpm|rpm_quick]...   (no argument: ceiling, then each arm whose tools exist)
+#   external a release package that Requires another channel's release package (openmixer-release requires freereac-release):
+#            refused when the dependency lives only in a channel nobody declared, green when the one declared file names it, the
+#            external channel's own packages never judged, a channel that serves nothing named, a malformed declaration exit 2.
+# Usage: tests/channel-installability.sh [ceiling|deb|deb_unbuilt|rpm|rpm_quick|external_deb|external_rpm]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -394,11 +397,66 @@ arm_rpm_unbuilt() {
     rpm --channel "$d/channel-other" --fedora 44 --arch x86_64 --arch aarch64 --reposdir "$d/empty" --no-newest --new-dir "$d/new" --unbuilt-arch-pass
 }
 
+# A release package of this channel Requires another channel's release package (openmixer-release requires freereac-release): the
+# dependency lives only in the external channel, declared in the one file the gate is given. Undeclared, the release is refused
+# (the channel alone cannot meet it); declared, it passes; the external channel's own packages are read, never judged; a malformed
+# declaration is not a pass.
+arm_external_deb() {
+  command -v dose-debcheck >/dev/null || { bad 'external deb: dose-debcheck is not installed (apt-get install dose-distcheck)'; return; }
+  local d=$t/extdeb; mkdir -p "$d/channel/debian/trixie" "$d/ext/deb/debian/trixie" "$d/ext-none/deb"
+  { stanza libc6 2.41-12 amd64; } > "$d/bg"
+  { stanza openmixer-release 1-5 all; } > "$d/channel/debian/trixie/Packages"
+  # the external channel carries the dependency, and a package of its own that does not install (never judged here)
+  # (a served index carries Filename, Size and SHA256, which apt wants even to simulate an install)
+  { stanza freereac-release 1-1 all; stanza ext-broken 1.0 all 'nothing-provides-this'; } |
+    awk -v h="$(printf '0%.0s' $(seq 64))" '/^$/ {print "Filename: ./x.deb\nSize: 1\nSHA256: " h} {print}' > "$d/ext/deb/debian/trixie/Packages"
+  stanza openmixer-release 1-6 all 'freereac-release' > "$d/new"
+  printf '%s\n' '# test declaration' "freereac $d/ext" > "$d/declared"
+  printf '%s\n' "freereac $d/ext-none" > "$d/declared-empty"
+  printf '%s\n' 'not a declaration' > "$d/malformed"
+  args=(deb --channel "$d/channel" --suite trixie --arch amd64 --bg "$d/bg" --new-index "$d/new")
+  expect 1 'openmixer-release 1-6 is new and does not install' 'external deb: a dependency that lives only in an external channel is refused when none is declared' -- "${args[@]}"
+  grep -qF 'freereac-release' "$t/out" && ok 'external deb: ... naming the dependency' || bad 'external deb: the dependency is not named'
+  expect 0 - 'external deb: declared in the file, the same release passes' -- "${args[@]}" --external-channels "$d/declared"
+  grep -qF 'ext-broken' "$t/out" && bad 'external deb: a package of the external channel was judged' || ok 'external deb: the external channel'"'"'s own broken package is never judged'
+  expect 1 'external channel freereac' 'external deb: a declared channel that serves nothing is named, and the release stays refused' -- "${args[@]}" --external-channels "$d/declared-empty"
+  expect 2 'is not' 'external deb: a malformed declaration is not a pass' -- "${args[@]}" --external-channels "$d/malformed"
+}
+
+arm_external_rpm() {
+  for tool in rpmbuild createrepo_c dnf; do command -v $tool >/dev/null || { bad "external rpm: $tool is not installed"; return; }; done
+  dnf repoclosure --help >/dev/null 2>&1 || { bad 'external rpm: dnf repoclosure is not installed (dnf5-plugins)'; return; }
+  local d=$t/extrpm; mkdir -p "$d/top" "$d/channel/fedora/44/x86_64" "$d/channel/fedora/44/noarch" "$d/new" "$d/empty" "$d/ext/rpm/fedora/44/x86_64" "$d/ext-none/rpm"
+  mk() { # name version requires... ; a noarch package with a .fc44 dist tag
+    local n=$1 v=$2; shift 2
+    { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\nBuildArch: noarch\n' "$n" "$v"
+      for r in "$@"; do printf 'Requires: %s\n' "$r"; done
+      printf '%%description\nt\n%%files\n'; } > "$d/top/$n-$v.spec"
+    rpmbuild -bb -D "_topdir $d/top" -D 'dist .fc44' "$d/top/$n-$v.spec" >/dev/null 2>&1 || { echo "rpmbuild $n $v failed" >&2; return 1; }
+    find "$d/top/RPMS" -name "$n-$v-1.fc44.noarch.rpm"
+  }
+  mv "$(mk openmixer-release 1)" "$d/channel/fedora/44/noarch/"
+  mv "$(mk freereac-release 1)" "$d/ext/rpm/fedora/44/x86_64/"
+  mv "$(mk ext-broken 1.0 'nothing-provides-this')" "$d/ext/rpm/fedora/44/x86_64/"
+  mv "$(mk openmixer-release 2 'freereac-release')" "$d/new/"
+  createrepo_c -q "$d/channel/fedora/44/x86_64"; createrepo_c -q "$d/channel/fedora/44/noarch"; createrepo_c -q "$d/ext/rpm/fedora/44/x86_64"
+  printf '%s\n' '# test declaration' "freereac $d/ext" > "$d/declared"
+  printf '%s\n' "freereac $d/ext-none" > "$d/declared-empty"
+  printf '%s\n' 'not a declaration' > "$d/malformed"
+  args=(rpm --channel "$d/channel" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new")
+  expect 1 'openmixer-release 2-1.fc44.noarch is new and does not install' 'external rpm: a dependency that lives only in an external channel is refused when none is declared' -- "${args[@]}"
+  grep -qF 'freereac-release' "$t/out" && ok 'external rpm: ... naming the dependency' || bad 'external rpm: the dependency is not named'
+  expect 0 - 'external rpm: declared in the file, the same release passes' -- "${args[@]}" --external-channels "$d/declared"
+  grep -qF 'ext-broken' "$t/out" && bad 'external rpm: a package of the external channel was judged' || ok 'external rpm: the external channel'"'"'s own broken package is never judged'
+  expect 1 'external channel freereac' 'external rpm: a declared channel that serves nothing is named, and the release stays refused' -- "${args[@]}" --external-channels "$d/declared-empty"
+  expect 2 'is not' 'external rpm: a malformed declaration is not a pass' -- "${args[@]}" --external-channels "$d/malformed"
+}
+
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
   arms=(ceiling)
-  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt)
-  command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm)
+  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt external_deb)
+  command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm)
 fi
 for arm in "${arms[@]}"; do "arm_$arm"; done
 [ "$fail" = 0 ] && echo "channel-installability (${arms[*]}): ok" || echo "channel-installability (${arms[*]}): FAILED"
