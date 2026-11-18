@@ -124,6 +124,24 @@ arm_ceiling() {
   expect 0 - 'ceiling (rpm): a floor-only Requires on our own package is green (.github#102)' -- \
     ceiling --kind rpm --published "$d/rpm-published" --new "$d/rpm-no-ceiling"
 
+  # no epochs (owner rule, while developing): an rpm Epoch or a Debian N: version, staged or served, is red by name
+  stanza py3-proto 0.6.0 all > "$d/ep-none"
+  stanza py3-proto 1:0.6.0 all > "$d/ep-deb-new"
+  { stanza py3-proto 0.6.0 all; stanza py3-proto 2:0.5.0 all; } > "$d/ep-deb-served"
+  printf '@@py3-proto 1:0.6.0-1.fc45 noarch\nrtld(GNU_HASH)\n' > "$d/ep-rpm-new"
+  printf '@@py3-proto 0.6.0-1.fc45 noarch\nrtld(GNU_HASH)\n' > "$d/ep-rpm-none"
+  printf '@@py3-proto 3:0.5.0-1.fc45 noarch\nrtld(GNU_HASH)\n' > "$d/ep-rpm-served"
+  expect 0 - 'epochs: packages with no epoch are green (deb)' -- ceiling --kind deb --published "$d/ep-none" --new "$d/ep-none"
+  expect 0 - 'epochs: packages with no epoch are green (rpm)' -- ceiling --kind rpm --published "$d/ep-rpm-none" --new "$d/ep-rpm-none"
+  expect 1 'RED ceiling: deb: py3-proto 1:0.6.0 (all, staged) carries Debian epoch 1: no epochs (owner rule); prune and release a new version' \
+    'epochs: a staged Debian N: version is refused by name' -- ceiling --kind deb --published "$d/ep-none" --new "$d/ep-deb-new"
+  expect 1 'py3-proto 2:0.5.0 (all, served) carries Debian epoch 2: no epochs (owner rule)' \
+    'epochs: a served Debian N: version is refused by name' -- ceiling --kind deb --published "$d/ep-deb-served" --new "$d/ep-none"
+  expect 1 'RED ceiling: rpm: py3-proto 1:0.6.0-1.fc45 (noarch, staged) carries Epoch 1: no epochs (owner rule); prune and release a new version' \
+    'epochs: a staged rpm Epoch is refused by name' -- ceiling --kind rpm --published "$d/ep-rpm-none" --new "$d/ep-rpm-new"
+  expect 1 'py3-proto 3:0.5.0-1.fc45 (noarch, served) carries Epoch 3: no epochs (owner rule)' \
+    'epochs: a served rpm Epoch is refused by name' -- ceiling --kind rpm --published "$d/ep-rpm-served" --new "$d/ep-rpm-none"
+
   # the version orders the gate compares with, against the cases that bite
   python3 -I -B - "$gate" <<'PY' && ok 'ceiling: dpkg and rpm version order' || bad 'ceiling: version order'
 import importlib.util, sys
