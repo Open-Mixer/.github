@@ -412,9 +412,6 @@ jobs:
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
@@ -468,9 +465,6 @@ jobs:
           tag: ${{ format('staged {0}', github.sha) }}
           sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
@@ -492,9 +486,6 @@ jobs:
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}

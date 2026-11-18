@@ -121,9 +121,6 @@ jobs:
           kind: deb
           sign: ${{ !inputs.dry-run }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the apt index is co-signed by the original key, as publish-debs signs it
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
