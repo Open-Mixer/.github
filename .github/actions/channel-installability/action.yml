@@ -13,7 +13,9 @@ description: Refuse a release that would leave a package of the channel uninstal
 # Each of our packages installed alone on a clean machine must resolve, with every one of our packages it pulls in, to
 # the newest published version (apt-get -s, dnf install --assumeno): a fallback to an old build is red. A published
 # build without a floor on our own packages is flagged (HYGIENE) to be removed or superseded.
-# gate.py has the details; tests/channel-installability.sh proves each arm.
+# A release package of this channel may Require another channel's release package (openmixer-release requires freereac-release): the
+# channels declared in external-channels.txt, the one place, are read as providers and never judged. gate.py has the details;
+# tests/channel-installability.sh proves each arm.
 #
 # Placed before anything is signed or published, in a Debian (deb) or Fedora (rpm) container:
 #
