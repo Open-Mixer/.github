@@ -47,7 +47,7 @@ name: Promote a staged version
 #       secrets: inherit
 #
 # Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY,
-# and RPM_GPG_KEY with RPM_GPG_PASSPHRASE, which co-sign the apt index.
+# and RPM_GPG_KEY with RPM_GPG_PASSPHRASE, no longer read (declared optional so a caller that still passes them does not fail).
 
 on:
   workflow_call:

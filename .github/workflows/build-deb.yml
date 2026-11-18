@@ -42,8 +42,8 @@ name: Build DEB (reusable)
 # (plugin-hostd-dev) comes from the channel's apt source, added inside the build container only.
 #
 # Secrets (organisation secrets, passed by `secrets: inherit`): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN,
-# and the original key RPM_GPG_KEY, RPM_GPG_PASSPHRASE. The packages key signs the apt index as it signs the
-# RPMs; the original key co-signs the index while apt installs may hold only it in their signed-by file.
+# and RPM_GPG_KEY, RPM_GPG_PASSPHRASE, no longer read (declared optional so a caller that still passes them does not fail).
+# The packages key signs the apt index as it signs the RPMs, alone.
 
 on:
   workflow_call:
