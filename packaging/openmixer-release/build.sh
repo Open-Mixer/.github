@@ -5,9 +5,10 @@
 #
 #   build.sh rpm|deb <key file> <output dir>
 #
-# The key file is the one the channel serves to the package manager the package is for (rpm/RPM-GPG-KEY-openmixer,
-# deb/openmixer.asc), fetched by the caller: the package ships those bytes, so a machine verifies with what the
-# channel serves and a key added to the channel reaches it as an update. The RPM's Version-Release and the DEB's
+# The package ships ONE key: the release signing key committed to this repository (channel-keys.sh ship), not the
+# channel's bytes. <key file> is the file the channel serves to the package manager the package is for
+# (rpm/RPM-GPG-KEY-openmixer, deb/openmixer.asc), fetched by the caller; build.sh only refuses a served file that
+# holds a key this repository does not pin, and ships none of its content. The RPM's Version-Release and the DEB's
 # version are one release: a build where they differ is refused. rpm runs in a Fedora container with rpm-build
 # and gnupg2; deb in a Debian one with dpkg-dev, debhelper, lintian and gnupg, as root.
 set -euo pipefail

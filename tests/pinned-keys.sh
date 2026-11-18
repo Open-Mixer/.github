@@ -94,16 +94,20 @@ grep -q "^$oldfpr packages " "$committed" || fail "the first release key is no l
 export PINNED_FINGERPRINTS=$work/list SERVED_KEYS_DIR=$work/none
 pin "$real"
 
-# openmixer-release ships the served file: build.sh stops at an unpinned key, before it builds anything
-pin "$real"
+# openmixer-release ships one committed release key: build.sh stops at an unpinned served key, before it builds anything
+gpg --batch --yes --quiet --passphrase '' --quick-gen-key "OpenMixer Release Signing Key <packages@openmixer.org>" ed25519 sign 1y
+relfpr=$(gpg --batch --with-colons --fingerprint packages@openmixer.org | awk -F: '/^fpr:/ {print $10; exit}')
+mkdir "$work/committed-release"
+gpg --batch --armor --export "$relfpr" > "$work/committed-release/release.asc"
+export SERVED_KEYS_DIR=$work/committed-release
+pin "$real" "$relfpr"
 refuse "build.sh on an unpinned key" "$here/../packaging/openmixer-release/build.sh" rpm "$work/both.asc" "$work/out"
 out=$("$here/../packaging/openmixer-release/build.sh" rpm "$work/real.asc" "$work/out" 2>&1 || true)
 grep -q 'ships' <<< "$out" || fail "build.sh did not get past the pin with a pinned key: $out"
-# ... and with a committed key it ships the served key and the committed one, so a client of the new package verifies both
-export SERVED_KEYS_DIR=$work/committed
-pin "$real" "$other"
+# ... with a committed release key it ships that key ALONE: the served file's extra key is not in the package
 out=$("$here/../packaging/openmixer-release/build.sh" rpm "$work/real.asc" "$work/out2" 2>&1 || true)
-grep -q "ships .*$real" <<< "$out" && grep -q "ships .*$other" <<< "$out" || fail "build.sh does not ship the served key and the committed key: $out"
+grep -q "ships $relfpr\$" <<< "$(grep ' ships ' <<< "$out" | sed 's/ *$//')" || fail "build.sh does not ship the committed key alone: $out"
+if grep -q "ships .*$real" <<< "$out"; then fail "build.sh shipped the served file's key $real, not the committed key alone: $out"; fi
 # the committed list read by whatever awk this machine has (Debian's is mawk, which has no {n} intervals): the
 # committed served key is pinned by the committed list, and with the packages lines stripped it is refused by name
 for f in "$here"/../.github/actions/import-gpg-key/served-keys/*.asc; do

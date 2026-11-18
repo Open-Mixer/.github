@@ -7,7 +7,7 @@
 #   channel-keys.sh serve <key file> <key id>...        the file becomes what it served plus these keys
 #   channel-keys.sh pinned <key file> [<key id>...]     every primary the file serves, and every key named, is pinned
 #   channel-keys.sh emit <key file>                     the armored keys of the file plus the committed keys, on stdout
-#   channel-keys.sh ship <key file>                     the ONE key openmixer-release ships (the committed signing key), on stdout
+#   channel-keys.sh ship <ignored>                      the ONE key openmixer-release ships (the committed signing key), on stdout
 #   channel-keys.sh single <key file>                   the file holds exactly ONE key, whose uids are all packages@openmixer.org
 #
 # THE TRUST ROOT IS NOT THE CHANNEL. pinned-fingerprints.txt (committed beside this script, in the repository the
@@ -86,7 +86,8 @@ case "$cmd" in
 ship)
     # What a machine imports from openmixer-release: the signing key committed in served-keys/, alone. The served
     # file may still hold older keys while the channel is being trimmed; they are not shipped. The result must
-    # pass `single`.
+    # pass `single`. The argument is the served file by the same calling shape as emit; ship never reads it
+    # (the second word is required only because every subcommand takes a file word).
     out=$(mktemp)
     trap 'rm -f "$out"' EXIT
     while IFS= read -r f; do cat "$f"; done < <(committed_files) > "$out"
