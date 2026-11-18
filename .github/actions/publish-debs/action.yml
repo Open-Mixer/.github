@@ -6,8 +6,8 @@ description: Sign DEBs and publish them into the deb/ tree of an Open-Mixer Page
 # The DEB half of a release, run in a Debian container by the reusable build-deb workflow on a release tag
 # only. The tree is one flat apt repository per Debian release, deb/debian/<suite>/, holding <arch>/*.deb,
 # Packages, Release, InRelease and Release.gpg; users point apt at it with `deb [signed-by=...] <url> ./`.
-# The key is the one that signs the RPMs. cosign-key, when set, also signs Release.gpg and InRelease: a key
-# change for apt users, whose signed-by file holds the key they saved at install time (publish-tree.sh).
+# The key is the one that signs the RPMs, the dnf metadata and the apt index: Release.gpg and InRelease carry
+# that one signature and no other.
 # sign=false assembles an unsigned tree in build/repo and pushes nothing. The shared-tree race is described
 # in channel-pull.
 #
@@ -29,11 +29,6 @@ inputs:
   gpg-key:
     default: ''
   gpg-passphrase:
-    default: ''
-  cosign-key:
-    description: a second key that also signs the apt index, armored; empty for none
-    default: ''
-  cosign-passphrase:
     default: ''
   key-file:
     description: "the name of the public key file the channel serves in its deb/ tree; empty means openmixer.asc, OpenMixer's. Another project's channel names its own"
@@ -143,13 +138,6 @@ runs:
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
-      if: inputs.sign == 'true' && inputs.cosign-key != ''
-      with:
-        gpg-key: ${{ inputs.cosign-key }}
-        gpg-passphrase: ${{ inputs.cosign-passphrase }}
-        id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
-
     - name: Check the fingerprint of the signing key is the one named
       if: inputs.sign == 'true' && inputs.signing-fingerprint != ''
       shell: bash
@@ -170,9 +158,8 @@ runs:
       shell: bash
       run: |
         set -o pipefail
-        # shellcheck disable=SC2086 # the co-signer is one fingerprint or empty
         "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "build/channel/deb/${KEY_FILE:-openmixer.asc}" \
-          "$OPENMIXER_GPG_KEY_ID" ${OPENMIXER_GPG_COSIGN_KEY_ID:-}
+          "$OPENMIXER_GPG_KEY_ID"
 
     # Before the tree is assembled and signed: the channel with this release in it still installs everything that
     # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
@@ -207,7 +194,7 @@ runs:
       run: |
         set -o pipefail
         if [ "$SIGN" = true ]; then
-          COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$DEB_TREE" "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$DEB_TREE" "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
         else
           "$GITHUB_ACTION_PATH/publish-tree.sh" "build/repo/$DEB_TREE" "$DEB_DIR"
         fi
@@ -245,7 +232,7 @@ runs:
         tag: ${{ inputs.tag }}
         what: staging/deb
         # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
-        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 
     - id: push-real
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
@@ -258,7 +245,7 @@ runs:
         tag: ${{ inputs.tag }}
         what: deb
         # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
-        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 
     # After the push: a push that lost a race rebuilds and re-signs the tree, and the copies must be the bytes
     # the channel serves, not those of the first attempt.
