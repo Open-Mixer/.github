@@ -9,14 +9,14 @@ set -euo pipefail
 mode=${1:?usage: check-fingerprint.sh key|want ...}
 case $mode in
 key)
-    have=${2:?}; want=${3:-}
+    have=${2:-}; want=${3:-}
     [ -z "$want" ] || [ "${have^^}" = "${want^^}" ] || {
         echo "::error::the signing key is $have, not the $want this channel signs with: a secret is mapped to another channel's key; nothing was signed" >&2
         exit 1
     }
     ;;
 want)
-    committed=${2:?}; want=${3:-}
+    committed=${2:-true}; want=${3:-}
     [ "$committed" != false ] || [[ $want =~ ^[0-9A-Fa-f]{40}$ ]] || {
         echo "::error::committed-keys is false but signing-fingerprint is '$want', not a 40-digit key fingerprint: a channel that is not OpenMixer's names the one key it signs with" >&2
         exit 1
