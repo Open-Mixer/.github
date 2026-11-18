@@ -20,7 +20,7 @@
 #   external a release package that Requires another channel's release package (openmixer-release requires freereac-release):
 #            refused when the dependency lives only in a channel nobody declared, green when the one declared file names it, the
 #            external channel's own packages never judged, a channel that serves nothing named, a malformed declaration exit 2.
-# Usage: tests/channel-installability.sh [ceiling|deb|deb_unbuilt|rpm|rpm_quick|external_deb|external_rpm]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb|deb_unbuilt|rpm|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -452,11 +452,47 @@ arm_external_rpm() {
   expect 2 'is not' 'external rpm: a malformed declaration is not a pass' -- "${args[@]}" --external-channels "$d/malformed"
 }
 
+# The client path of openmixer-release Requiring freereac-release: an existing client has ONLY the OpenMixer channel enabled. The channel must
+# serve freereac-release itself (mirror-freereac-release): without it the release is refused by the gate and a client's upgrade would break;
+# with it, the gate passes with NO external channel declared, and on a clean root with the OpenMixer repositories alone `dnf upgrade
+# openmixer-release` pulls freereac-release in (whose repository then serves reac-pw).
+arm_mirror_client() {
+  for tool in rpmbuild createrepo_c dnf; do command -v $tool >/dev/null || { bad "mirror client: $tool is not installed"; return; }; done
+  dnf repoclosure --help >/dev/null 2>&1 || { bad 'mirror client: dnf repoclosure is not installed (dnf5-plugins)'; return; }
+  local d=$t/mirror; mkdir -p "$d/top" "$d/with/fedora/44/x86_64" "$d/with/fedora/44/noarch" "$d/without/fedora/44/x86_64" "$d/without/fedora/44/noarch" "$d/new" "$d/empty"
+  mk() { # name version requires... ; a noarch package with a .fc44 dist tag
+    local n=$1 v=$2; shift 2
+    { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\nBuildArch: noarch\n' "$n" "$v"
+      for r in "$@"; do printf 'Requires: %s\n' "$r"; done
+      printf '%%description\nt\n%%files\n'; } > "$d/top/$n-$v.spec"
+    rpmbuild -bb -D "_topdir $d/top" -D 'dist .fc44' "$d/top/$n-$v.spec" >/dev/null 2>&1 || { echo "rpmbuild $n $v failed" >&2; return 1; }
+    find "$d/top/RPMS" -name "$n-$v-1.fc44.noarch.rpm"
+  }
+  local old; old=$(mk openmixer-release 7); cp "$old" "$d/with/fedora/44/noarch/"; cp "$old" "$d/without/fedora/44/noarch/"
+  mv "$(mk freereac-release 1)" "$d/with/fedora/44/noarch/"
+  mv "$(mk openmixer-release 8 'freereac-release >= 1')" "$d/new/"
+  for c in with without; do createrepo_c -q "$d/$c/fedora/44/x86_64"; createrepo_c -q "$d/$c/fedora/44/noarch"; done
+  local args=(rpm --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new")
+  expect 1 'openmixer-release 8-1.fc44.noarch is new and does not install' 'mirror client: without freereac-release in the channel (and none declared) the release is refused' -- "${args[@]}" --channel "$d/without"
+  expect 0 - 'mirror client: with freereac-release in the channel, the gate passes with no external channel declared' -- "${args[@]}" --channel "$d/with"
+  # a clean root, only the OpenMixer repositories (the channel after the release): install the old release package, then upgrade it
+  cp "$d/new/"*.rpm "$d/with/fedora/44/noarch/"; createrepo_c -q "$d/with/fedora/44/noarch"
+  local root=$d/root; mkdir -p "$root"
+  printf '[openmixer]\nname=openmixer\nbaseurl=file://%s/fedora/44/x86_64/\nenabled=1\ngpgcheck=0\n[openmixer-noarch]\nname=openmixer-noarch\nbaseurl=file://%s/fedora/44/noarch/\nenabled=1\ngpgcheck=0\n' "$d/with" "$d/with" > "$d/openmixer.repo"
+  mkdir -p "$d/repos"; cp "$d/openmixer.repo" "$d/repos/"
+  local dnfc=(dnf -y -q --installroot="$root" --setopt=reposdir="$d/repos" --releasever=44 --forcearch=x86_64 --setopt=install_weak_deps=False)
+  "${dnfc[@]}" install openmixer-release-7 >/dev/null 2>&1 || { bad 'mirror client: the old openmixer-release does not install on the clean root'; return; }
+  if rpm --root "$root" -q freereac-release >/dev/null 2>&1; then bad 'mirror client: freereac-release was on the clean root before the upgrade'; return; fi
+  "${dnfc[@]}" upgrade openmixer-release >/dev/null 2>&1 || { bad 'mirror client: dnf upgrade openmixer-release failed with only the OpenMixer channel'; return; }
+  rpm --root "$root" -q openmixer-release-8 freereac-release >/dev/null 2>&1 && ok 'mirror client: dnf upgrade openmixer-release pulls freereac-release from the OpenMixer channel alone' \
+    || bad 'mirror client: the upgrade did not install openmixer-release 8 and freereac-release'
+}
+
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
   arms=(ceiling)
   command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt external_deb)
-  command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm)
+  command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm mirror_client)
 fi
 for arm in "${arms[@]}"; do "arm_$arm"; done
 [ "$fail" = 0 ] && echo "channel-installability (${arms[*]}): ok" || echo "channel-installability (${arms[*]}): FAILED"
