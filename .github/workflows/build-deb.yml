@@ -166,6 +166,22 @@ on:
         type: string
         default: 'openmixer-package-published'
         description: 'event_type of that repository_dispatch; the worker image build listens for it (client_payload: package, tag, format)'
+      key-file:
+        type: string
+        default: ''
+        description: "The name of the public key file the channel serves in its deb/ tree; empty means openmixer.asc, OpenMixer's. FreeREAC's channel passes its own (docs/channel-by-input.md)"
+      committed-keys:
+        type: boolean
+        default: true
+        description: "false keeps the public keys committed in this repository, which are OpenMixer's, out of the channel's key file: another project's channel serves exactly the key it signs with"
+      signing-fingerprint:
+        type: string
+        default: ''
+        description: "The primary fingerprint the signing key must have; a secret mapped to another channel's key refuses the run before anything is signed. Empty checks none"
+      label:
+        type: string
+        default: ''
+        description: "The Origin and Label of the real channel's Release files; empty means OpenMixer"
     secrets:
       DISPATCH_TOKEN:
         required: false
@@ -174,6 +190,8 @@ on:
       RPM_GPG_KEY:
         required: false
       RPM_GPG_PASSPHRASE:
+        required: false
+      PACKAGES_SIGNING_PASSPHRASE:
         required: false
       PAGES_TOKEN:
         required: false
@@ -412,6 +430,11 @@ jobs:
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          key-file: ${{ inputs.key-file }}
+          committed-keys: ${{ inputs.committed-keys }}
+          signing-fingerprint: ${{ inputs.signing-fingerprint }}
+          label: ${{ inputs.label }}
+          gpg-passphrase: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
           # the original key co-signs the apt index while installs may hold only it (publish-debs)
           cosign-key: ${{ secrets.RPM_GPG_KEY }}
           cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
@@ -468,6 +491,11 @@ jobs:
           tag: ${{ format('staged {0}', github.sha) }}
           sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          key-file: ${{ inputs.key-file }}
+          committed-keys: ${{ inputs.committed-keys }}
+          signing-fingerprint: ${{ inputs.signing-fingerprint }}
+          label: ${{ inputs.label }}
+          gpg-passphrase: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
           # the original key co-signs the apt index while installs may hold only it (publish-debs)
           cosign-key: ${{ secrets.RPM_GPG_KEY }}
           cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
@@ -492,6 +520,11 @@ jobs:
           tag: ${{ inputs.source-ref || github.ref_name }}
           sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          key-file: ${{ inputs.key-file }}
+          committed-keys: ${{ inputs.committed-keys }}
+          signing-fingerprint: ${{ inputs.signing-fingerprint }}
+          label: ${{ inputs.label }}
+          gpg-passphrase: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
           # the original key co-signs the apt index while installs may hold only it (publish-debs)
           cosign-key: ${{ secrets.RPM_GPG_KEY }}
           cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}

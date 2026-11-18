@@ -35,6 +35,18 @@ inputs:
     default: ''
   gpg-passphrase:
     default: ''
+  key-file:
+    description: "the name of the public key file the channel serves in its rpm/ tree; empty means RPM-GPG-KEY-openmixer, OpenMixer's. Another project's channel names its own"
+    default: ''
+  committed-keys:
+    description: "'false' keeps the public keys committed in this repository, which are OpenMixer's, out of the key file: the channel of another project serves exactly the key it signs with"
+    default: 'true'
+  signing-fingerprint:
+    description: "the primary fingerprint the signing key must have; empty checks none. A channel that is not OpenMixer's names its own, so a secret mapped to the wrong key refuses the run before anything is signed"
+    default: ''
+  repo-file:
+    description: "the dnf repository file the tree serves, a path inside this repository; empty means packaging/openmixer-release/openmixer.repo"
+    default: ''
   publish-token:
     default: ''
   site-gpg-key:
@@ -93,8 +105,15 @@ runs:
         MATRIX_SET: ${{ inputs.matrix-set }}
         CATCH_UP: ${{ inputs.catch-up }}
         RELEASES: ${{ inputs.releases }}
+        KEY_FILE_IN: ${{ inputs.key-file }}
+        COMMITTED_KEYS: ${{ inputs.committed-keys }}
+        REPO_FILE_IN: ${{ inputs.repo-file }}
       run: |
         set -o pipefail
+        # the channel profile: another project's key file, repository file and committed keys, for the tree script and the lost-race rebuild alike
+        [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
+        [ "$COMMITTED_KEYS" = false ] && echo "SERVED_KEYS_DIR=none" >> "$GITHUB_ENV" || true
+        [ -z "$REPO_FILE_IN" ] || echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../$REPO_FILE_IN" >> "$GITHUB_ENV"
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
         # a catch-up, for the tree script and the lost-race rebuild alike
@@ -116,6 +135,17 @@ runs:
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
+    - name: Check the signing key is the one this channel signs with
+      if: inputs.sign == 'true' && inputs.signing-fingerprint != ''
+      shell: bash
+      env:
+        WANT: ${{ inputs.signing-fingerprint }}
+      run: |
+        [ "${OPENMIXER_GPG_KEY_ID^^}" = "${WANT^^}" ] || {
+          echo "::error::the signing key is $OPENMIXER_GPG_KEY_ID, not the $WANT this channel signs with: a secret is mapped to another channel's key; nothing was signed"
+          exit 1
+        }
+
     - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
       with:
@@ -132,7 +162,7 @@ runs:
         PUBLIC_KEY_URL: ${{ inputs.public-key-url }}
       run: |
         set -o pipefail
-        keys=build/channel/rpm/RPM-GPG-KEY-openmixer
+        keys=build/channel/rpm/${KEY_FILE:-RPM-GPG-KEY-openmixer}
         if [ ! -s "$keys" ] && [ -n "$PUBLIC_KEY_URL" ]; then
           keys=$(mktemp)
           curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 "$PUBLIC_KEY_URL" > "$keys"

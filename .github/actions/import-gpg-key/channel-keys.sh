@@ -20,6 +20,9 @@
 # so for apt the index is co-signed while the old key is still in users' keyrings (publish-debs). A key
 # leaves the file only by a hand commit to the channel, when its retirement is decided.
 #
+# ANOTHER PROJECT'S CHANNEL (FreeREAC's) sets SERVED_KEYS_DIR=none: the committed keys below are OpenMixer's and a
+# channel that is not OpenMixer's never serves them, so it serves exactly the keys it signs with.
+#
 # SIGNING KEYS COMMITTED HERE. served-keys/*.asc (beside this script; SERVED_KEYS_DIR names another directory)
 # holds the public half of every key OpenMixer signs with that is not only in the channel: each is served by
 # every publish next to what the channel served (serve), is trusted by the publishers' keystore and keyring and
@@ -40,6 +43,8 @@ committed_dir=${SERVED_KEYS_DIR:-$(dirname "$(readlink -f "$0")")/served-keys}
 # the committed public key files, each refused unless every primary in it is pinned
 committed_files() {
     local f fpr
+    # SERVED_KEYS_DIR=none: a channel that is not OpenMixer's serves its own signing key alone, never OpenMixer's
+    [ "$committed_dir" != none ] || return 0
     for f in "$committed_dir"/*.asc; do
         [ -f "$f" ] || continue
         # shellcheck disable=SC2046 # the fingerprints are words

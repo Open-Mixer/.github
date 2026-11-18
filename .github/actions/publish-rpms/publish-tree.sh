@@ -35,6 +35,9 @@
 #               directories that received a package get their metadata made again, from the packages they hold; every
 #               other directory keeps its metadata and its signature byte for byte, and the repository file is not
 #               rewritten.
+#   KEY_FILE    the name of the public key file the tree serves; default RPM-GPG-KEY-openmixer. A channel of another
+#               project names its own (RPM-GPG-KEY-freereac); SERVED_KEYS_DIR=none (channel-keys.sh) keeps OpenMixer's
+#               committed keys out of it, and REPO_FILE is that channel's repository file.
 #   OMX_RELEASE_MATRIX  the organisation variable the releases read (quick while a release wave is open, full or unset otherwise):
 #               with no MATRIX_SET (a regeneration such as the prune of the channel repository), the pin guard judges the
 #               architectures release-matrix/matrix.sh says that matrix publishes, and a caller that wants the open wave's
@@ -47,6 +50,9 @@ set -euo pipefail
 tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <rpm dir> [<gpg key id>]}")
 src=${2:?usage: publish-tree.sh <tree> <rpm dir> [<gpg key id>]}
 key=${3:-}
+# the channel's public key file: OpenMixer's by default, another channel's by KEY_FILE (a file name, no directory)
+key_name=${KEY_FILE:-RPM-GPG-KEY-openmixer}
+case $key_name in */* | '' | . | ..) echo "KEY_FILE must be a file name, not '$key_name'" >&2; exit 1 ;; esac
 
 signed() {
     local sigs
@@ -277,7 +283,7 @@ fi
 trusted_keystore() {
     local root=$1 home fpr
     home=$(mktemp -d)
-    { "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" emit "$tree/RPM-GPG-KEY-openmixer"; gpg --batch --armor --export "$key"; } |
+    { "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" emit "$tree/$key_name"; gpg --batch --armor --export "$key"; } |
         GNUPGHOME=$home gpg --batch --quiet --import 2>/dev/null
     while IFS= read -r fpr; do
         GNUPGHOME=$home gpg --batch --armor --export "$fpr" > "$home/k.asc"
@@ -291,7 +297,7 @@ if [ -n "$key" ]; then
     for f in ${placed[@]+"${placed[@]}"}; do mine[$f]=1; done
     # the key file is the channel's to write: it is read only if every primary in it, and the key this run signs
     # with, is on the list committed in this repository (channel-keys.sh)
-    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/RPM-GPG-KEY-openmixer" "$key" ||
+    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/$key_name" "$key" ||
         { echo "the channel's key file is not one this repository pins: nothing was signed" >&2; exit 1; }
     keystore=$(mktemp -d)
     trusted_keystore "$keystore"
@@ -362,7 +368,7 @@ done
 # the key file is what the channel served plus the signing key, never the signing key alone (channel-keys.sh);
 # openmixer.repo is the file openmixer-release installs, the same bytes (REPO_FILE: openmixer-staging.repo for staging)
 if [ -n "$key" ]; then
-    keyfile="$tree/RPM-GPG-KEY-openmixer"
+    keyfile="$tree/$key_name"
     # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
     [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
     "$here/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"
