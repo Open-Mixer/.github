@@ -102,7 +102,7 @@ ceilings() {
           *) if [[ "$line" == Recommends:* ]]; then echo "deps-render: $rel:$ln: $name: a ceiling in a Recommends: Recommends carries floors only"
              elif ! in_list "$name" "${RPM[@]}"; then echo "deps-render: $rel:$ln: $name: a ceiling on a package $DEPS does not list: floors only"; fi ;;
         esac
-      done < <(printf '%s\n' "$line" | grep -oE '[A-Za-z0-9_.+-]+ *(<=|=<|<)' | sed -E 's/ *(<=|=<|<)$/ \1/')
+      done < <(printf '%s\n' "$line" | grep -oE '[A-Za-z0-9_.+-]+(\([^)]*\))? *(<=|=<|<)' | sed -E 's/ *(<=|=<|<)$/ \1/')
     done < <(grep -nE '^(Build)?(Requires|Recommends):' "$f")
   done
   if [ -f "$root/debian/control" ]; then
@@ -120,7 +120,7 @@ ceilings() {
     rel="${f#"$root"/}"
     while IFS=: read -r ln line; do
       # a ceiling of dnf or yum (name < v, 'name <= v') or of apt-get ((<< v), (<= v)): a name then an operator then a digit
-      names="$( { printf '%s\n' "$line" | grep -oE '[A-Za-z0-9_.+-]+ *<=? *[0-9]' | sed -E 's/ *<=? *[0-9]$//'
+      names="$( { printf '%s\n' "$line" | grep -oE '[A-Za-z0-9_.+-]+(\([^)]*\))? *<=? *[0-9]' | sed -E 's/ *<=? *[0-9]$//'
                   printf '%s\n' "$line" | grep -oE '[A-Za-z0-9.+-]+ \(<+=?' | sed -E 's/ \(.*$//'; } )"
       for name in $names; do echo "deps-render: $rel:$ln: $name: a ceiling in an install line: floors only"; done
       # an apt-get install pin (name=1.2 or name=1.*) is a ceiling too; dnf's --setopt=retries=10 is not an apt pin
