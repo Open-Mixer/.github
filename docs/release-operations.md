@@ -591,3 +591,21 @@ until 1-5, 2026-11-15; the rpm job builds one RPM per release of the set since).
 
 `add-openmixer` is the action the shared workflows use to add the channel to a build or install-check
 container: it installs the stable name from `base-url`.
+
+## A channel that is not OpenMixer's (FreeREAC)
+
+`build-rpm.yml` and `build-deb.yml` publish into the channel named by `target-repo` and `base-url`. The key and the
+repository file are inputs too, and default to OpenMixer's, so a caller that passes none changes nothing:
+
+| input | default | FreeREAC passes |
+| --- | --- | --- |
+| `target-repo`, `base-url` | `Open-Mixer/open-mixer.github.io`, `https://www.openmixer.org` | `FreeREAC/freereac.github.io`, `https://freereac.github.io` |
+| `key-file` | `RPM-GPG-KEY-openmixer` / `openmixer.asc` | `RPM-GPG-KEY-freereac` / `freereac.asc` |
+| `committed-keys` | `true` | `false`: OpenMixer's committed keys are never served by another channel |
+| `signing-fingerprint` | none | the channel's one key: a secret mapped to another key refuses the run before anything is signed |
+| `repo-file` (rpm) | `packaging/openmixer-release/openmixer.repo` | `packaging/freereac-release/freereac.repo` |
+| `label` (deb) | `OpenMixer` | `FreeREAC` |
+
+The signing key and its passphrase reach the workflow under the declared secret names; the caller maps its own secrets onto
+them (`OPENMIXER_PACKAGES_SIGNING_KEY: ${{ secrets.RPM_GPG_KEY }}`, `PACKAGES_SIGNING_PASSPHRASE: ${{ secrets.RPM_GPG_PASSPHRASE }}`).
+A channel serves exactly one key and the two channels share none. `tests/channel-profile.sh` publishes through both profiles.

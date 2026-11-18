@@ -30,6 +30,18 @@ inputs:
     default: ''
   gpg-passphrase:
     default: ''
+  key-file:
+    description: "the name of the public key file the channel serves in its deb/ tree; empty means openmixer.asc, OpenMixer's. Another project's channel names its own"
+    default: ''
+  committed-keys:
+    description: "'false' keeps the public keys committed in this repository, which are OpenMixer's, out of the key file: the channel of another project serves exactly the key it signs with"
+    default: 'true'
+  signing-fingerprint:
+    description: "the primary fingerprint the signing key must have; empty checks none. A channel that is not OpenMixer's names its own, so a secret mapped to the wrong key refuses the run before anything is signed"
+    default: ''
+  label:
+    description: "the Origin and Label of the Release files of the real channel; empty means OpenMixer (the staging channel always labels OpenMixer-Staging)"
+    default: ''
   publish-token:
     default: ''
   site-gpg-key:
@@ -90,8 +102,21 @@ runs:
         MATRIX_SET: ${{ inputs.matrix-set }}
         CATCH_UP: ${{ inputs.catch-up }}
         SUITES: ${{ inputs.suites }}
+        KEY_FILE_IN: ${{ inputs.key-file }}
+        COMMITTED_KEYS: ${{ inputs.committed-keys }}
+        SIGNING_FPR: ${{ inputs.signing-fingerprint }}
+        LABEL_IN: ${{ inputs.label }}
       run: |
         set -o pipefail
+        # the channel profile: another project's key file, label and committed keys, for the tree script and the lost-race rebuild alike
+        [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" want "$COMMITTED_KEYS" "$SIGNING_FPR"
+        if [ "$COMMITTED_KEYS" = false ]; then
+          # the trust root of another project's channel is the one fingerprint its caller names, not OpenMixer's pinned list
+          pins=$(mktemp -d)/pinned.txt; printf '%s packages the channel key named by the caller\n' "${SIGNING_FPR^^}" > "$pins"
+          { echo "SERVED_KEYS_DIR=none"; echo "PINNED_FINGERPRINTS=$pins"; } >> "$GITHUB_ENV"
+        fi
+        [ -z "$LABEL_IN" ] || [ "$STAGING" = true ] || echo "LABEL=$LABEL_IN" >> "$GITHUB_ENV"
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
         # a catch-up, for the tree script and the lost-race rebuild alike
@@ -113,6 +138,14 @@ runs:
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
+    - name: Check the fingerprint of the signing key is the one named
+      if: inputs.sign == 'true' && inputs.signing-fingerprint != ''
+      shell: bash
+      env:
+        WANT: ${{ inputs.signing-fingerprint }}
+      run: |
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" key "$OPENMIXER_GPG_KEY_ID" "$WANT"
+
     - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
       with:
@@ -125,7 +158,7 @@ runs:
       shell: bash
       run: |
         set -o pipefail
-        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check build/channel/deb/openmixer.asc \
+        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "build/channel/deb/${KEY_FILE:-openmixer.asc}" \
           "$OPENMIXER_GPG_KEY_ID"
 
     # Before the tree is assembled and signed: the channel with this release in it still installs everything that
@@ -178,7 +211,7 @@ runs:
         test -n "$(find "$tree" -name Packages -print -quit)" || { echo "::error::no index in the tree"; exit 1; }
         if [ "$SIGN" = true ]; then
           test -n "$(find "$tree" -name InRelease -print -quit)" || { echo "::error::the index is not signed"; exit 1; }
-          test -s "$tree/openmixer.asc" || { echo "::error::no public key in the tree"; exit 1; }
+          test -s "$tree/${KEY_FILE:-openmixer.asc}" || { echo "::error::no public key in the tree"; exit 1; }
         fi
 
     # The rebuild command runs inside the job's container, where the action lives under a different path than

@@ -23,6 +23,8 @@
 # before anything is signed, naming the file.
 #
 # The environment, for the staging channel (docs/release-operations.md) and its purge:
+#   KEY_FILE        the name of the public key file the tree serves; default openmixer.asc. A channel of another
+#                   project names its own (freereac.asc), with SERVED_KEYS_DIR=none (channel-keys.sh) and its own LABEL.
 #   LABEL           the Origin and Label of every Release file; default OpenMixer (staging: OpenMixer-Staging, which
 #                   the staging pin names)
 #   REQUIRES_TREE   another apt tree a REQUIRES package may be served from: the real deb/ tree, for a staging publish
@@ -49,6 +51,9 @@ tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}
 src=${2:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}
 key=${3:-}
 requires=${REQUIRES:-}
+# the channel's public key file: OpenMixer's by default, another channel's by KEY_FILE (a file name, no directory)
+key_name=${KEY_FILE:-openmixer.asc}
+case $key_name in */* | '' | . | ..) echo "KEY_FILE must be a file name, not '$key_name'" >&2; exit 1 ;; esac
 # CHANGELOGS_URL is where the tree's changelogs/ directory is served; empty leaves the Release file without a Changelogs field
 changelogs=${CHANGELOGS_URL:+${CHANGELOGS_URL%/}/@CHANGEPATH@_changelog}
 signers=()
@@ -273,10 +278,10 @@ if [ -n "$key" ]; then
     command -v gpgv >/dev/null || { echo "gpgv is not installed: the channel's signed index cannot be read, so nothing can be vouched for and nothing was signed" >&2; exit 1; }
     # the key file is the channel's to write: it is read only if every primary in it, and every key this run signs
     # with, is on the list committed in this repository (channel-keys.sh)
-    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/openmixer.asc" $key ||
+    "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" pinned "$tree/$key_name" $key ||
         { echo "the channel's key file is not one this repository pins: nothing was signed" >&2; exit 1; }
     keyring=$(mktemp)
-    { "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" emit "$tree/openmixer.asc"; gpg --batch --armor --export $key; } |
+    { "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" emit "$tree/$key_name"; gpg --batch --armor --export $key; } |
         gpg --batch --yes --dearmor > "$keyring"
     refused=0
     for suitedir in "$tree"/debian/*/; do
@@ -342,7 +347,7 @@ done
 
 # the key file is what the channel served plus every key that signed the index (channel-keys.sh)
 if [ -n "$key" ]; then
-    keyfile="$tree/openmixer.asc"
+    keyfile="$tree/$key_name"
     # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
     [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
     "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"

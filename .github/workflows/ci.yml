@@ -137,6 +137,10 @@ jobs:
         shell: bash
         run: tests/key-transition.sh ${{ matrix.kind }}
 
+      - name: Another project's channel serves its own key under its own name, and none of OpenMixer's
+        shell: bash
+        run: tests/channel-profile.sh ${{ matrix.kind }}
+
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
