@@ -251,6 +251,30 @@ if [ "${1:-}" = --self-test ]; then
   if run check "$S/r" >/dev/null 2>&1; then echo "recommends listed floor: green"; else echo "recommends listed floor: FALSE RED"; fail=1; fi
   mkceil
   if run check "$S/c" >/dev/null 2>&1; then echo "recommends third-party floor with its ceiling: green"; else echo "recommends third-party floor with its ceiling: FALSE RED"; fail=1; fi
+  # a repository WITHOUT packaging/deps.txt (.github#146): nothing is rendered, but no ceiling is carried by its spec,
+  # its debian/control or its workflow install lines, and a refusal names the file, the line and the package
+  mknodeps() { rm -rf "$S/n"; mkdir -p "$S/n/packaging" "$S/n/debian" "$S/n/.github/workflows"
+    printf 'Name: n\nBuildRequires: gcc\nRequires: omx-contract >= 3.19\n' > "$S/n/packaging/n.spec"
+    printf 'Source: n\nBuild-Depends: debhelper-compat (= 13), libomx-contract-dev (>= 3.19~)\n\nPackage: n\nDepends: libomx-contract-dev (>= 3.19~), ${misc:Depends}\n' > "$S/n/debian/control"
+    printf 'jobs:\n  t:\n    steps:\n      - run: dnf install -y --setopt=retries=10 %s\n      - run: apt-get install -y -o Acquire::Retries=3 libomx-contract-dev\n' "'omx-contract >= 3.19'" > "$S/n/.github/workflows/ci.yml"; }
+  # refused <package> <file> <line appended to it>: must go red, and the refusal names that file, that line, that package
+  refused() { mknodeps; printf '%s\n' "$3" >> "$S/n/$2"
+    local ln out; ln="$(wc -l < "$S/n/$2")"
+    if out="$(run check "$S/n" 2>&1)"; then echo "SABOTAGE $1 in $2: STAYED GREEN"; fail=1; return; fi
+    if grep -qF "$2:$ln: $1" <<<"$out"; then echo "no deps.txt, $1 in $2:$ln: red, by name"
+    else echo "no deps.txt, $1 in $2:$ln: red, NOT BY NAME"; echo "$out" | sed 's/^/    /'; fail=1; fi; }
+  mknodeps
+  if run check "$S/n" >/dev/null 2>&1; then echo "no deps.txt, floors only: green"; else echo "no deps.txt, floors only: FALSE RED"; fail=1; fi
+  refused omx-contract         packaging/n.spec  'Requires: (omx-contract >= 3.19 with omx-contract < 4)'
+  refused omx-contract         packaging/n.spec  'Requires: omx-contract < 4'
+  refused omx-contract         packaging/n.spec  'Requires: omx-contract <= 4'
+  refused libomx-contract-dev  debian/control    'Depends: libomx-contract-dev (<< 4~)'
+  refused libomx-contract-dev  debian/control    'Depends: libomx-contract-dev (<= 4~)'
+  refused libomx-contract-dev  debian/control    ' libomx-contract-dev (<< 4~)'
+  refused omx-contract         .github/workflows/ci.yml "      - run: dnf install -y 'omx-contract < 4'"
+  refused libomx-contract-dev  .github/workflows/ci.yml "      - run: apt-get install -y 'libomx-contract-dev (<< 4~)'"
+  refused libomx-contract-dev  .github/workflows/ci.yml "      - run: apt-get install -y libomx-contract-dev=3.19.*"
+  refused libomx-contract-dev  .github/workflows/ci.yml "      - run: apt-get install -y libomx-contract-dev=3.19.0"
   # planted on the listed tree: each must go red
   srec() { mkrec listed; sed -i -E "$3" "$S/r/$2"
     if run check "$S/r" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
