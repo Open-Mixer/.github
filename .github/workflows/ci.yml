@@ -158,6 +158,11 @@ jobs:
         shell: bash
         run: tests/noarch-pin.sh
 
+      - name: The noarch pin guard judges only the architectures the release matrix publishes
+        if: matrix.kind == 'rpm'
+        shell: bash
+        run: tests/noarch-pin-matrix-arches.sh
+
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
     runs-on: ubuntu-latest
