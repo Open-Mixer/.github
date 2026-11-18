@@ -7,6 +7,7 @@
 #   channel-keys.sh serve <key file> <key id>...        the file becomes what it served plus these keys
 #   channel-keys.sh pinned <key file> [<key id>...]     every primary the file serves, and every key named, is pinned
 #   channel-keys.sh emit <key file>                     the armored keys of the file plus the committed keys, on stdout
+#   channel-keys.sh ship <ignored>                      the ONE key openmixer-release ships (the committed signing key), on stdout
 #   channel-keys.sh single <key file>                   the file holds exactly ONE key, whose uids are all packages@openmixer.org
 #
 # THE TRUST ROOT IS NOT THE CHANNEL. pinned-fingerprints.txt (committed beside this script, in the repository the
@@ -76,12 +77,23 @@ primary_of() { gpg --batch --with-colons --fingerprint "$1" 2>/dev/null | awk -F
 cmd=${1:?usage: channel-keys.sh check|serve|pinned <key file> <key>...}
 file=${2:?usage: channel-keys.sh check|serve|pinned <key file> <key>...}
 shift 2
-[ "$#" -gt 0 ] || [ "$cmd" = pinned ] || [ "$cmd" = emit ] || [ "$cmd" = single ] || { echo "channel-keys.sh $cmd: no key named" >&2; exit 2; }
+[ "$#" -gt 0 ] || [ "$cmd" = pinned ] || [ "$cmd" = emit ] || [ "$cmd" = single ] || [ "$cmd" = ship ] || { echo "channel-keys.sh $cmd: no key named" >&2; exit 2; }
 
 # a committed key that is not pinned stops the command here, in this shell, not in a substitution below
 case "$cmd" in emit | check | serve) committed_files > /dev/null ;; esac
 
 case "$cmd" in
+ship)
+    # What a machine imports from openmixer-release: the signing key committed in served-keys/, alone. The served
+    # file may still hold older keys while the channel is being trimmed; they are not shipped. The result must
+    # pass `single`. The argument is the served file by the same calling shape as emit; ship never reads it
+    # (the second word is required only because every subcommand takes a file word).
+    out=$(mktemp)
+    trap 'rm -f "$out"' EXIT
+    while IFS= read -r f; do cat "$f"; done < <(committed_files) > "$out"
+    "$0" single "$out" > /dev/null || exit 1
+    cat "$out"
+    ;;
 single)
     # The end state of every published key file: one release key, the release identity, nothing personal.
     # Not yet wired into a publish: the live files hold three keys until the re-sign and trim steps are done.

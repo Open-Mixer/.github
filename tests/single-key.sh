@@ -39,4 +39,14 @@ refuse "two release keys" "holds 2 keys" "$work/two-release.asc"
 refuse "a release key plus a personal key" "holds 2 keys" "$work/one-plus-personal.asc"
 refuse "a personal key alone" "$personal" "$work/personal.asc"
 if "$keys" single "$work/missing.asc" > /dev/null 2>&1; then fail "accepted a missing file"; fi
+# ship: only the committed key, whatever the served file holds
+mkdir "$work/committed"
+cp "$work/one.asc" "$work/committed/current.asc"
+export SERVED_KEYS_DIR=$work/committed
+shipped=$("$keys" ship "$work/one-plus-personal.asc") || fail "ship refused a served file holding an extra key"
+listing=$(gpg --batch --with-colons --import-options show-only --import <<< "$shipped" 2>/dev/null)
+[ "$(grep -c '^pub:' <<< "$listing")" = 1 ] || fail "ship wrote more than the one committed key"
+if grep -q "$personal" <<< "$listing"; then fail "ship wrote the personal key"; fi
+cp "$work/two-release.asc" "$work/committed/extra.asc"
+if "$keys" ship "$work/one.asc" > /dev/null 2>&1; then fail "ship accepted two committed keys"; fi
 echo "single-key: ok"
