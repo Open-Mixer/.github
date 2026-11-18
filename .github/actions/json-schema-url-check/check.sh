@@ -3,26 +3,32 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # json-schema-url-check check.sh [ROOT] | --self-test
 #
-# Every "$schema" and every "$id" in a tracked JSON file names an address on https://openmixer.org/schema/, or a path
-# relative to the file. One that points at github.com or githubusercontent.com (any organisation, any subdomain) is
-# refused by file and key: a schema's identity must not move when a repository does. Every object at every depth is
-# read, so a nested definition's "$id" counts. A file that is not valid JSON is named and fails too, never skipped.
+# Allow-list. Every "$schema" and every "$id" in a tracked JSON object is https://openmixer.org/schema/..., or a path
+# relative to the file (and a "$schema" may be on json-schema.org). Any other host (github.com, githubusercontent.com,
+# anything) is refused by file and key: a schema's identity must not move when a repository does. Every object at every
+# depth is read. A file that is empty, or not a JSON object, is no schema document and is skipped; a file that does not
+# parse but carries "$schema" or "$id" text is refused. A tree with no tracked JSON passes with a note.
 set -euo pipefail
 
 READER=$(cat <<'PY'
 import json, re, subprocess, sys
 root = sys.argv[1]
-host = re.compile(r'^[a-z][a-z0-9+.-]*://([^/?#]*@)?([^/?#:]*)', re.I)
-def bad(value):
-    m = host.match(value.strip())
+host = re.compile(r'^([a-z][a-z0-9+.-]*)://([^/?#]*@)?([^/?#:]*)', re.I)
+def bad(key, value):
+    v = value.strip()
+    m = host.match(v)
     if not m:
+        return False          # relative, or a bare name: no host named
+    h = m.group(3).lower()
+    if h == 'openmixer.org' and m.group(1).lower() == 'https' and v[m.end():].startswith(('/schema/', ':443/schema/')):
         return False
-    h = m.group(2).lower()
-    return h == 'github.com' or h.endswith('.github.com') or h == 'githubusercontent.com' or h.endswith('.githubusercontent.com')
+    if key == '$schema' and h == 'json-schema.org':
+        return False
+    return True
 def walk(node, path, out):
     if isinstance(node, dict):
         for k, v in node.items():
-            if k in ('$schema', '$id') and isinstance(v, str) and bad(v):
+            if k in ('$schema', '$id') and isinstance(v, str) and bad(k, v):
                 out.append((path + '/' + k, v))
             walk(v, path + '/' + k, out)
     elif isinstance(node, list):
@@ -39,17 +45,24 @@ for f in files:
         with open(root + '/' + f, encoding='utf-8') as fh:
             doc = json.load(fh)
     except (OSError, ValueError) as e:
-        print('json-schema-url-check: %s is not readable JSON: %s' % (f, e), file=sys.stderr)
-        rc = 1
+        # an empty or non-JSON file is no schema document; refuse only one that carries schema text
+        try:
+            text = open(root + '/' + f, encoding='utf-8', errors='replace').read()
+        except OSError:
+            text = ''
+        if '"$schema"' in text or '"$id"' in text:
+            print('json-schema-url-check: %s carries $schema or $id text but is not readable JSON: %s' % (f, e), file=sys.stderr)
+            rc = 1
+        continue
+    if not isinstance(doc, dict):
         continue
     hits = []
     walk(doc, '', hits)
     for p, v in hits:
-        print('json-schema-url-check: %s: %s is %s, a code-hosting address; name it under https://openmixer.org/schema/' % (f, p, v), file=sys.stderr)
+        print('json-schema-url-check: %s: %s is %s, a host the rule does not allow; name it under https://openmixer.org/schema/' % (f, p, v), file=sys.stderr)
         rc = 1
 if n == 0:
-    print('json-schema-url-check: git lists no JSON file', file=sys.stderr)
-    rc = 1
+    print('json-schema-url-check: note: git lists no JSON file, nothing to read')
 sys.exit(rc)
 PY
 )
@@ -77,12 +90,18 @@ if [ "${1:-}" = --self-test ]; then
   expect raw-host 1 '{"$schema":"https://raw.githubusercontent.com/Open-Mixer/x/main/s.json"}'
   expect nested-id 1 '{"a":[{"b":{"$id":"http://www.github.com/o/r/s.json"}}]}'
   expect broken-json 1 '{"$schema":'
-  # a repository with no JSON file at all is an error, not a pass
+  expect other-host 1 '{"$id":"https://example.com/s.json"}'
+  expect json-schema-org 0 '{"$schema":"https://json-schema.org/draft/2020-12/schema"}'
+  expect json-schema-org-id 1 '{"$id":"https://json-schema.org/x"}'
+  expect empty-file 0 ''
+  expect array-file 0 '[{"$id":"https://github.com/x"}]'
+  expect non-json-plain 0 'not json at all'
+  # a repository with no JSON file at all passes, with a note
   t=$tmp/none; mkdir -p "$t"; git -C "$t" init -q; : >"$t/a.txt"; git -C "$t" add a.txt
-  if check "$t" 2>/dev/null; then echo "json-schema-url-check self-test: no-json tree passed" >&2; fail=1; fi
+  check "$t" >/dev/null 2>&1 || { echo "json-schema-url-check self-test: no-json tree refused" >&2; fail=1; }
   [ "$fail" = 0 ] && echo "json-schema-url-check self-test: every case as wanted"
   exit "$fail"
 fi
 
 check "${1:-.}"
-echo "json-schema-url-check: no \$schema or \$id names a code host"
+echo "json-schema-url-check: every \$schema and \$id is on the allow-list"

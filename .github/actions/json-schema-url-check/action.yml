@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: json-schema-url-check
-description: Fail when a tracked JSON file names a code host as the home of a "$schema" or "$id"
+description: Fail when a tracked JSON file gives a "$schema" or "$id" a host the allow-list does not name as the home of a "$schema" or "$id"
 
 # A schema's address is a published address on the project's own site, never a code-hosting URL. The check is proven
 # first on planted trees, with a sabotage arm, then reads the caller's checkout. The caller has checked the repository out.
