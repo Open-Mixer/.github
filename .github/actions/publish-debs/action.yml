@@ -150,7 +150,7 @@ runs:
         gpg-passphrase: ${{ inputs.cosign-passphrase }}
         id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
 
-    - name: Check the signing key is the one this channel signs with
+    - name: Check the fingerprint of the signing key is the one named
       if: inputs.sign == 'true' && inputs.signing-fingerprint != ''
       shell: bash
       env:
