@@ -1,3 +1,10 @@
+openmixer-release (1-6) unstable; urgency=medium
+
+  * Depends on freereac-release: reac-pw comes from the FreeREAC channel,
+    whose apt source and one key that package installs.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 17:30:00 +0100
+
 openmixer-release (1-5) unstable; urgency=medium
 
   * Built and served for every Fedora release of the set: fc45 beside fc44
