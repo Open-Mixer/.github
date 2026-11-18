@@ -57,6 +57,7 @@ jobs:
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
       - run: tests/add-openmixer-release-package.sh
+      - run: tests/build-rpm-channel-repos.sh
       - run: tests/release-matrix.sh
       - run: tests/check-matrix.sh
       - run: tests/no-hardcoded-cells.sh

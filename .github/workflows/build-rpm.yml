@@ -343,7 +343,19 @@ jobs:
 
       - name: Show what the channel provides the build
         if: inputs.channel-deps
-        run: dnf repoquery --repo openmixer --repo openmixer-noarch --whatprovides 'pkgconfig(plugin-hostd)'
+        env:
+          RELEASE_PACKAGE: ${{ inputs.release-package }}
+        run: |
+          set -euo pipefail
+          # the repositories are the ones the channel's release package installed: <channel> and, where its repository file has one,
+          # <channel>-noarch (openmixer has both, freereac one)
+          channel=${RELEASE_PACKAGE%-release}
+          repos=(--repo "$channel"); ! grep -qx "\[$channel-noarch\]" "/etc/yum.repos.d/$channel.repo" || repos+=(--repo "$channel-noarch")
+          if [ "$channel" = openmixer ]; then
+            dnf repoquery "${repos[@]}" --whatprovides 'pkgconfig(plugin-hostd)'
+          else
+            dnf repoquery "${repos[@]}" --qf '%{name}-%{evr}.%{arch}'
+          fi
 
       - uses: Open-Mixer/.github/.github/actions/build-rpm@openmixer-v1
         with:
