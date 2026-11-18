@@ -4,9 +4,9 @@
 # json-schema-url-check check.sh [ROOT] | --self-test
 #
 # Allow-list. Every "$schema" and every "$id" in a tracked JSON object is https://openmixer.org/schema/..., or a path
-# relative to the file (and a "$schema" may be on json-schema.org). Any other host (github.com, githubusercontent.com,
+# relative to the file (a value starting // names a host and is refused) (and a "$schema" may be on json-schema.org). Any other host (github.com, githubusercontent.com,
 # anything) is refused by file and key: a schema's identity must not move when a repository does. Every object at every
-# depth is read. A file that is empty, or not a JSON object, is no schema document and is skipped; a file that does not
+# depth is read. Any parsed document is read, an array included; a file that is empty or does not parse is no schema document and is skipped; a file that does not
 # parse but carries "$schema" or "$id" text is refused. A tree with no tracked JSON passes with a note.
 set -euo pipefail
 
@@ -16,6 +16,8 @@ root = sys.argv[1]
 host = re.compile(r'^([a-z][a-z0-9+.-]*)://([^/?#]*@)?([^/?#:]*)', re.I)
 def bad(key, value):
     v = value.strip()
+    if v.startswith('//'):
+        return True           # scheme-relative: it names a host
     m = host.match(v)
     if not m:
         return False          # relative, or a bare name: no host named
@@ -53,8 +55,6 @@ for f in files:
         if '"$schema"' in text or '"$id"' in text:
             print('json-schema-url-check: %s carries $schema or $id text but is not readable JSON: %s' % (f, e), file=sys.stderr)
             rc = 1
-        continue
-    if not isinstance(doc, dict):
         continue
     hits = []
     walk(doc, '', hits)
@@ -94,7 +94,9 @@ if [ "${1:-}" = --self-test ]; then
   expect json-schema-org 0 '{"$schema":"https://json-schema.org/draft/2020-12/schema"}'
   expect json-schema-org-id 1 '{"$id":"https://json-schema.org/x"}'
   expect empty-file 0 ''
-  expect array-file 0 '[{"$id":"https://github.com/x"}]'
+  expect array-file 1 '[{"$id":"https://github.com/x"}]'
+  expect array-clean 0 '[{"$id":"https://openmixer.org/schema/a.json"}]'
+  expect scheme-relative 1 '{"$schema":"//github.com/FreeMixer/x.json"}'
   expect non-json-plain 0 'not json at all'
   # a repository with no JSON file at all passes, with a note
   t=$tmp/none; mkdir -p "$t"; git -C "$t" init -q; : >"$t/a.txt"; git -C "$t" add a.txt
