@@ -228,15 +228,15 @@ arm_deb() {
 # name when absent) and a package whose only unmet requirement on its path is held by a same-pass binary is reported.
 arm_deb_source() {
   command -v dose-debcheck >/dev/null || { bad 'deb source: dose-debcheck is not installed (apt-get install dose-distcheck)'; return; }
-  local d=$t/debs; mkdir -p "$d/a/debian/bookworm" "$d/c/debian/bookworm"
+  local d=$t/debs; mkdir -p "$d/a/debian/bookworm" "$d/b/debian/bookworm" "$d/c/debian/bookworm"
   { stanza libc6 2.36-9 amd64; } > "$d/bg"
   # clap-host is built by the source clap-core; qualify installs through it and names no source (so it is its own)
   { stanza libproto0 0.4.4 amd64
     printf 'Package: clap-host\nSource: clap-core (0.30.6-1)\nVersion: 0.30.6\nArchitecture: amd64\nDepends: libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)\n\n'
-    stanza qualify 1.0 amd64 'clap-host (>= 0.30~), libproto0 (>= 0.4.4~)'
   } > "$d/a/debian/bookworm/Packages"
+  { cat "$d/a/debian/bookworm/Packages"; stanza qualify 1.0 amd64 'clap-host (>= 0.30~), libproto0 (>= 0.4.4~)'; } > "$d/b/debian/bookworm/Packages"
   # the same, and an unrelated package capping the protocol too
-  { cat "$d/a/debian/bookworm/Packages"; stanza unrelated 1.0 amd64 'libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)'; } > "$d/c/debian/bookworm/Packages"
+  { cat "$d/b/debian/bookworm/Packages"; stanza unrelated 1.0 amd64 'libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)'; } > "$d/c/debian/bookworm/Packages"
   stanza libproto0 0.5.0 amd64 > "$d/lib"
   local args=(--suite bookworm --arch amd64 --bg "$d/bg" --new-index "$d/lib")
   # (control) no same-pass: all three are red
@@ -246,7 +246,8 @@ arm_deb_source() {
     'deb source: (a) a binary of a listed source is reported, not red' -- deb --channel "$d/a" "${args[@]}" --same-pass clap-core
   ! grep -q '^ERROR: ' "$t/out" && ok 'deb source: (a) ... and no line is an error' || bad 'deb source: (a) an error line'
   # (b) qualify names no same-pass package; it is broken only through clap-host, which the pass caps
-  grep -F 'newest: apt-get install qualify fails' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
+  python3 -I "$gate" deb --channel "$d/b" "${args[@]}" --same-pass clap-core > "$t/out" 2>&1 || bad 'deb source: (b) the pass is not green'
+  grep -F 'until the rest of the pass is released: apt-get install qualify fails' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
     && ok 'deb source: (b) a consumer broken only through a same-pass binary is reported' || bad 'deb source: (b) the consumer is not reported'
   # (c) an unrelated package caps the protocol too: not through any package of the pass, so red, and only it
   expect 1 'unrelated 1.0 was installable and is not' 'deb source: (c) a breakage outside the pass stays red' -- \
@@ -333,7 +334,7 @@ arm_rpm() {
 
 arm_rpm_source() {
   for tool in rpmbuild createrepo_c dnf; do command -v $tool >/dev/null || { bad "rpm source: $tool is not installed"; return; }; done
-  local d=$t/rpms; mkdir -p "$d/top" "$d/a/fedora/44/noarch" "$d/a/fedora/44/x86_64" "$d/c/fedora/44/noarch" "$d/c/fedora/44/x86_64" "$d/new" "$d/empty"
+  local d=$t/rpms; mkdir -p "$d/top" "$d/a/fedora/44/noarch" "$d/a/fedora/44/x86_64" "$d/b/fedora/44/noarch" "$d/b/fedora/44/x86_64" "$d/c/fedora/44/noarch" "$d/c/fedora/44/x86_64" "$d/new" "$d/empty"
   mks() { # source binary version requires... ; the source's spec builds the binary as a subpackage, so its SOURCERPM names the source
     local src=$1 n=$2 v=$3; shift 3
     { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\nBuildArch: noarch\n' "$src" "$v"
@@ -349,14 +350,14 @@ arm_rpm_source() {
     find "$d/top/RPMS" -name "$n-$v-1.fc44.noarch.rpm"
   }
   local ch lib_rpm; lib_rpm=$(mks libproto libproto 0.4.4)
-  cp "$lib_rpm" "$d/a/fedora/44/noarch/"; cp "$lib_rpm" "$d/c/fedora/44/noarch/"
+  for ch in a b c; do cp "$lib_rpm" "$d/$ch/fedora/44/noarch/"; done
   # clap-host is built by the source clap-core; qualify installs through it and is its own source
   local ch_rpm; ch_rpm=$(mks clap-core clap-host 0.30.6 '(libproto >= 0.4.4 with libproto < 0.5)')
   local q_rpm; q_rpm=$(mks qualify qualify 1.0 'clap-host >= 0.30' 'libproto >= 0.4.4')
   local u_rpm; u_rpm=$(mks unrelated unrelated 1.0 '(libproto >= 0.4.4 with libproto < 0.5)')
-  cp "$ch_rpm" "$q_rpm" "$d/a/fedora/44/noarch/"; cp "$ch_rpm" "$q_rpm" "$u_rpm" "$d/c/fedora/44/noarch/"
+  cp "$ch_rpm" "$d/a/fedora/44/noarch/"; cp "$ch_rpm" "$q_rpm" "$d/b/fedora/44/noarch/"; cp "$ch_rpm" "$q_rpm" "$u_rpm" "$d/c/fedora/44/noarch/"
   cp "$(mks libproto libproto 0.5.0)" "$d/new/"
-  for ch in a c; do createrepo_c -q "$d/$ch/fedora/44/x86_64"; createrepo_c -q "$d/$ch/fedora/44/noarch"; done
+  for ch in a b c; do createrepo_c -q "$d/$ch/fedora/44/x86_64"; createrepo_c -q "$d/$ch/fedora/44/noarch"; done
   local args=(rpm --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new")
   expect 1 'clap-host 0.30.6-1.fc44.noarch was installable and is not' 'rpm source: without a same-pass list the cap is red' -- \
     "${args[@]}" --channel "$d/a"
@@ -365,8 +366,9 @@ arm_rpm_source() {
     'rpm source: (a) a binary of a listed source is reported, not red' -- "${args[@]}" --channel "$d/a" --same-pass clap-core
   ! grep -q '^ERROR: ' "$t/out" && ok 'rpm source: (a) ... and no line is an error' || bad 'rpm source: (a) an error line'
   # (b) qualify names no same-pass package; it is broken only through clap-host, which the pass caps
-  grep -qF 'newest: installing qualify falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44' "$t/out" \
-    && grep -F 'newest: installing qualify falls back' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
+  python3 -I "$gate" "${args[@]}" --channel "$d/b" --same-pass clap-core > "$t/out" 2>&1 || bad 'rpm source: (b) the pass is not green'
+  grep -qF 'until the rest of the pass is released: installing qualify falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44' "$t/out" \
+    && grep -F 'installing qualify falls back' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
     && ok 'rpm source: (b) a consumer broken only through a same-pass binary is reported' || bad 'rpm source: (b) the consumer is not reported'
   # (c) an unrelated package caps the protocol too: not through any package of the pass, so red
   expect 1 'unrelated 1.0-1.fc44.noarch was installable and is not' 'rpm source: (c) a breakage outside the pass stays red' -- \
