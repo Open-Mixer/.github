@@ -33,7 +33,7 @@ A machine adds the channel by installing `openmixer-release` (`packaging/openmix
 ## Versions
 
 The checks and builds every repository runs are reusable workflows here, and a repository keeps no copy of
-them: `public-sources-check.yml` (commit messages, private references, and no local copy of either, the
+them: `public-sources-check.yml` (commit messages, commit identity, private references, and no local copy of either, the
 commit-msg hook being `.github/actions/commit-message-check/commit-msg` byte for byte; and, in a public repository,
 no dated document, no dated folder and no folder of evidence or notes), `ci-node.yml`, `ci-c.yml`,
 `fuzz.yml`, `release-c-lib.yml` (both kinds built, then `channel-installability.yml`, then RPMs and DEBs published),
@@ -44,6 +44,15 @@ inputs at its top. A repository whose every tracked file carries its licence run
 rule is the format of the file, a format with no comment syntax carries no header, and there is no list of files.
 A check a repository relies on is run by a step that enforces it: `.github/actions/ci-steps` reads the workflow
 files and goes red when a required command is in no step that runs it and fails the job (its README holds the arms).
+
+`.github/actions/commit-identity-check` (a job of `public-sources-check.yml`, run when the caller passes `commit-identity: true`; off by default so moving `openmixer-v1` turns no caller red, and `author-email` / `committer-email` inputs pass through) reads EVERY commit of a pull request's
+range, `origin/<base>..HEAD`, not only the head: the author email must be `linuxnow@gmail.com`, the committer email
+`commits@openmixer.org` (the signing key's uid) and `.commit.verification.verified` true as GitHub reports it for the
+commit (workflow token). The two emails are the action's inputs, whose defaults in its `action.yml` are the one place
+they are written. Each offending commit is named by sha, field and value (a committer of `linuxnow@gmail.com` reads
+`bad_email`, unverified). There is no bypass list. A base that moved on is not charged to the pull request (what the
+base tip reaches is not in the range); GitHub's own "Update branch" commit is in the range and fails, so merge the base into the branch locally (a plain signed `git merge`, house author and committer) and push plainly, never a rebase or force; the merge button's commit is made after the checks and is never read. A missing API answer is exit 2, never
+a pass. `tests/commit-identity-check.sh` proves it on planted ranges, including the head-only sabotage.
 
 Call the shared workflows and actions by the `v1` tag, never by `main`:
 
