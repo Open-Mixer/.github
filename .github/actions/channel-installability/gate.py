@@ -932,7 +932,10 @@ def deb_arm(a):
             reds += [f"debian/{suite}: {x}" for x in r]
             warns += [f"debian/{suite}: {x}" for x in w]
             notes += [f"debian/{suite}: {x}" for x in n]
-        reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+        if read_pkgs:
+            reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+        else:  # no metadata read (the cells left no suite): nothing to match the names against, so none is judged
+            say("same-pass names not checked: no suite judged")
     finally:
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1081,7 +1084,10 @@ def rpm_arm(a):
                 warns += [f"{where}: {x}" for x in w]
                 notes += [f"{where}: {x}" for x in n]
         # the entries are the pass's own names, not the unbuilt ones the cells derive from their metadata
-        reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+        if read_pkgs:
+            reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+        else:  # no metadata read (the cells left no suite): nothing to match the names against, so none is judged
+            say("same-pass names not checked: no cell judged")
     finally:
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)

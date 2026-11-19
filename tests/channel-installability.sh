@@ -23,7 +23,7 @@
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -625,9 +625,22 @@ arm_mirror_client() {
     || bad 'mirror client: the upgrade did not install openmixer-release 8 and freereac-release'
 }
 
+arm_deb_cells() {
+  # a deb run whose cells leave NO suite judged (the cell names only suites this run neither serves nor built) reads no
+  # metadata, so a same-pass name has nothing to match: it is not refused as unknown (a false red); a note says so
+  local d=$t/cells; mkdir -p "$d/a/debian/bookworm"
+  { stanza libc6 2.36-9 amd64; } > "$d/bg"
+  { stanza libproto0 0.4.4 amd64; } > "$d/a/debian/bookworm/Packages"
+  stanza libproto0 0.5.0 amd64 > "$d/lib"
+  expect 0 'same-pass names not checked: no suite judged' \
+    'deb cells: no suite judged, the same-pass names are not refused' -- \
+    deb --channel "$d/a" --suite bookworm --arch amd64 --bg "$d/bg" --new-index "$d/lib" --cell trixie/amd64 --same-pass 'clap-core nosuch-repo'
+  ! grep -q 'same-pass entry' "$t/out" && ok 'deb cells: ... and no entry is named' || bad 'deb cells: a same-pass entry is refused with no suite read'
+}
+
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
-  arms=(ceiling)
+  arms=(ceiling deb_cells)
   command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt external_deb)
   command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm mirror_client)
 fi
