@@ -244,7 +244,7 @@ arm_deb_source() {
   # (a) the SOURCE is listed, its binary is not named: reported, and nothing is red
   expect 0 'clap-host 0.30.6 is uninstallable until the rest of the pass (clap-host)' \
     'deb source: (a) a binary of a listed source is reported, not red' -- deb --channel "$d/a" "${args[@]}" --same-pass clap-core
-  ! grep -q '^ERROR: ' "$t/out" && ok 'deb source: (a) ... and no line is an error' || bad 'deb source: (a) an error line'
+  ! grep -qE '^(ERROR: |::error::)' "$t/out" && ok 'deb source: (a) ... and no line is an error' || bad 'deb source: (a) an error line'
   # (b) qualify names no same-pass package; it is broken only through clap-host, which the pass caps
   python3 -I "$gate" deb --channel "$d/b" "${args[@]}" --same-pass clap-core > "$t/out" 2>&1 || bad 'deb source: (b) the pass is not green'
   grep -F 'until the rest of the pass is released: apt-get install qualify fails' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
@@ -252,7 +252,7 @@ arm_deb_source() {
   # (c) an unrelated package caps the protocol too: not through any package of the pass, so red, and only it
   expect 1 'unrelated 1.0 was installable and is not' 'deb source: (c) a breakage outside the pass stays red' -- \
     deb --channel "$d/c" "${args[@]}" --same-pass clap-core
-  grep '^ERROR: ' "$t/out" | grep -qF unrelated && [ -z "$(grep '^ERROR: ' "$t/out" | grep -vF unrelated)" ] \
+  grep -E '^(ERROR: |::error::)' "$t/out" | grep -qF unrelated && [ -z "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -vF unrelated)" ] \
     && ok 'deb source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'deb source: (c) a red is not unrelated'
 }
 
@@ -364,7 +364,7 @@ arm_rpm_source() {
   # (a) the SOURCE is listed, its binary is not named: reported, and nothing is red
   expect 0 'clap-host 0.30.6-1.fc44.noarch is uninstallable until the rest of the pass (clap-host)' \
     'rpm source: (a) a binary of a listed source is reported, not red' -- "${args[@]}" --channel "$d/a" --same-pass clap-core
-  ! grep -q '^ERROR: ' "$t/out" && ok 'rpm source: (a) ... and no line is an error' || bad 'rpm source: (a) an error line'
+  ! grep -qE '^(ERROR: |::error::)' "$t/out" && ok 'rpm source: (a) ... and no line is an error' || bad 'rpm source: (a) an error line'
   # (b) qualify names no same-pass package; it is broken only through clap-host, which the pass caps
   python3 -I "$gate" "${args[@]}" --channel "$d/b" --same-pass clap-core > "$t/out" 2>&1 || bad 'rpm source: (b) the pass is not green'
   grep -qF 'until the rest of the pass is released: installing qualify falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44' "$t/out" \
@@ -373,7 +373,7 @@ arm_rpm_source() {
   # (c) an unrelated package caps the protocol too: not through any package of the pass, so red
   expect 1 'unrelated 1.0-1.fc44.noarch was installable and is not' 'rpm source: (c) a breakage outside the pass stays red' -- \
     "${args[@]}" --channel "$d/c" --same-pass clap-core
-  grep '^ERROR: ' "$t/out" | grep -qF unrelated && [ -z "$(grep '^ERROR: ' "$t/out" | grep -vF unrelated)" ] \
+  grep -E '^(ERROR: |::error::)' "$t/out" | grep -qF unrelated && [ -z "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -vF unrelated)" ] \
     && ok 'rpm source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'rpm source: (c) a red is not unrelated'
 }
 
