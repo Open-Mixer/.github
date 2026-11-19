@@ -83,16 +83,27 @@ esac
 
 cells=()
 if [ "$set" = quick ]; then
+    # the quick (development) set wins: a caller's architecture list only narrows WITHIN the set. When it leaves
+    # no cell (an amd64-only caller while the set is trixie arm64), the run builds the set's own cell for the
+    # caller's releases, never the caller's full matrix. Only when the set has no cell of this kind and these
+    # releases does the run build the caller's full matrix.
+    inset=()
     while read -r k rel arch rest; do
         case $k in '' | '#'*) continue ;; esac
         [ -n "$arch" ] && [ -z "$rest" ] || { echo "::error::quick.txt: not '<kind> <release> <arch>': $k $rel $arch $rest" >&2; exit 2; }
         [ "$k" = "$kind" ] || continue
         printf '%s\n' "${releases[@]}" | grep -qxF -- "$rel" || continue
+        inset+=("$rel $arch")
         printf '%s\n' "${arches[@]}" | grep -qxF -- "$arch" || continue
         cells+=("$rel $arch")
     done < "$here/quick.txt"
+    if [ "${#cells[@]}" = 0 ] && [ "${#inset[@]}" -gt 0 ]; then
+        cells=("${inset[@]}")
+        echo "::notice::the quick set's $kind cell is outside the caller's architectures (${arches[*]}): this run builds the set's own cell, ${inset[*]}"
+        source="$source, the set's cell outside the caller's architectures"
+    fi
     if [ "${#cells[@]}" = 0 ]; then
-        echo "::notice::the quick set has no $kind cell among ${releases[*]} x ${arches[*]}: this run builds the caller's full $kind matrix"
+        echo "::notice::the quick set has no $kind cell among ${releases[*]}: this run builds the caller's full $kind matrix"
         set=full source="$source, no quick $kind cell in the caller's matrix"
     fi
 fi

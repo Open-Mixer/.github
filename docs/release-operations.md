@@ -345,8 +345,9 @@ names, no others. The run says which set it builds, and why, in a notice.
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
-- The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
-  cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie arm64.
+- The quick set wins: a caller's architectures only narrow it within the set, and when they leave no cell (an
+  amd64-only caller while the set is trixie arm64) the run builds the set's own cell, never the caller's full matrix. Only
+  a caller whose releases hold no quick cell of a kind builds its full matrix of that kind and says so.
 
 ### Checks follow the set
 

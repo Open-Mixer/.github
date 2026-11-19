@@ -188,6 +188,13 @@ assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"{got} {log}"
 # (omx-plugins run 43412676885, 2026-11-13)
 got, log = run("deb", dict(X86["deb"]), "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"a lane's amd64-only dispatch builds {got.set} {got.jobs}: {log}"
+# the development set wins over the caller's architectures: an amd64-only caller (omx-plugins ci -> release.yml, arm: false)
+# while the set is trixie arm64 builds trixie arm64, never its full deb matrix; likewise an aarch64-only rpm caller builds
+# the set's fc45 x86_64. The architecture list only narrows within the set.
+got, log = run("deb", {"arch-matrix": '["amd64"]'}, "workflow_dispatch", "branch", "quick")
+assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"an amd64-only caller in a quick run builds {got.set} {got.jobs}, not the set's trixie arm64: {log}"
+got, log = run("rpm", {"arch-matrix": '["aarch64"]'}, "workflow_dispatch", "branch", "quick")
+assert (got.set, got.jobs) == ("quick", ["fc45, x86_64"]), f"an aarch64-only rpm caller in a quick run builds {got.set} {got.jobs}, not the set's fc45 x86_64: {log}"
 # one Fedora release asked for: the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
