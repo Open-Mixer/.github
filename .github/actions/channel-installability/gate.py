@@ -1162,7 +1162,7 @@ def ceiling_cmd(a):
     else:
         pub = parse_rpm_query(open(a.published).read())
         new = sum((parse_rpm_query(open(f).read()) for f in a.new), [])
-    r, w, n = ceiling_check(a.kind, pub, new, a.same_pass)
+    r, w, n = ceiling_check(a.kind, pub, new, expand_same_pass(a.same_pass, pub + new))
     return report("ceiling", unknown_same_pass_reds(a.same_pass, pub + new) + r, w, n)
 
 

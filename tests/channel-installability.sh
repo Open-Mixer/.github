@@ -102,6 +102,11 @@ arm_ceiling() {
   expect 0 - 'ceiling: a same-pass source whose binary is named otherwise is accepted (clap-core builds clap-host)' -- \
     ceiling --kind deb --published "$d/src-published" --new "$d/lib-patch" --same-pass clap-core
   ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: clap-core refused'
+  # ceiling mode expands a same-pass SOURCE to its binaries exactly as the arms do (one expand_same_pass): clap-core builds
+  # clap-host, so clap-host is released in the pass and its ceiling does not refuse the new library
+  expect 0 'same pass: clap-core also covers its binaries clap-host' \
+    'ceiling: a same-pass source covers its differently named binary (clap-host), as in the arms' -- \
+    ceiling --kind deb --published "$d/src-published" --new "$d/lib-alone" --same-pass clap-core
   # a binary name is accepted
   expect 0 - 'ceiling: a same-pass binary name is accepted' -- ceiling --kind deb --published "$d/published" --new "$d/lib-patch" --same-pass clap-host
   ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: clap-host refused'
