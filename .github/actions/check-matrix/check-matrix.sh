@@ -15,6 +15,10 @@
 #   RPM_ARCHES    its architectures, a JSON array
 #   DEB_RELEASES  the caller's whole check matrix of Debian releases, a JSON array; empty when it checks no deb
 #   DEB_ARCHES    its architectures, a JSON array
+#   ARM_ARCHES    the architectures of a cell that runs on ARM_RUNNER, space separated; every other cell runs on X86_RUNNER
+#   ARM_RUNNER    the runner label of those cells
+#   X86_RUNNER    the runner label of the rest: a caller with its own pool passes its OMX_RUNNER expression
+#                 (the action.yml inputs arm-arches, arm-runner and x86-runner carry the defaults; no arch is written here)
 #
 # The set is MATRIX, else WAVE, else full. The cells are what release-matrix's matrix.sh says for that set: the quick set
 # is quick.txt beside it, cut down to the caller's matrix, and that file stays the only place it is written. One
@@ -24,8 +28,8 @@
 #
 # Each cell is matrix.sh's row with the container image and the runner added: {"fedora": "45", "arch": "x86_64",
 # "image": "fedora:45", "runner": "ubuntu-latest"} or {"suite": "trixie", "arch": "arm64", "image": "debian:trixie",
-# "runner": "ubuntu-24.04-arm"}. The runner is the one of the cell's own architecture: a container of one architecture
-# cannot install the packages of another (apt resolves libomxdsp-dev arm64 and dpkg refuses it in an amd64 container,
+# "runner": "ubuntu-24.04-arm"}. The runner is the one of the cell's own architecture (the arm-arches, arm-runner and
+# x86-runner inputs name the ARM architectures and the two labels): a container of one architecture cannot install the packages of another (apt resolves libomxdsp-dev arm64 and dpkg refuses it in an amd64 container,
 # omx-panel ci 44563540081), and the channel's development debs are trixie arm64 only. A caller writes
 # runs-on: ${{ matrix.cell.runner }} instead of choosing the runner by hand. images is the images of every cell, each
 # once, in order: the matrix of a CI job that runs on the runner's own architecture.
@@ -34,6 +38,10 @@ here=$(dirname "$(readlink -f "$0")")
 matrix_sh=$here/../release-matrix/matrix.sh
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
+for r in "${ARM_RUNNER:?}" "${X86_RUNNER:?}"; do
+    [[ $r =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::runner '$r' is not a runner label" >&2; exit 2; }
+done
+: "${ARM_ARCHES:?the architectures that run on ARM_RUNNER}"
 wave=${WAVE:-}
 case $wave in quick | full | '') ;; *) echo "::error::OMX_RELEASE_MATRIX is '$wave', not quick or full" >&2; exit 2 ;; esac
 case ${MATRIX:-} in
@@ -49,11 +57,16 @@ ask() { # <kind> <releases> <arches> <set>: the key=value lines matrix.sh writes
     cat "$tmp/out"
 }
 field() { sed -n "s/^$1=//p" <<< "$2"; }
-with_image() { # matrix.sh's cells with the container image and the runner of each
+with_image() { # matrix.sh's cells with the container image of each
     sed -E 's/\{"fedora":"([^"]+)","arch":"([^"]+)"\}/{"fedora":"\1","arch":"\2","image":"fedora:\1"}/g;
-            s/\{"suite":"([^"]+)","arch":"([^"]+)"\}/{"suite":"\1","arch":"\2","image":"debian:\1"}/g' <<< "$1" |
-        sed -E 's/"arch":"(aarch64|arm64)"(,"image":"[^"]+")\}/"arch":"\1"\2,"runner":"ubuntu-24.04-arm"}/g;  # runner label
-               s/("image":"[^"]+")\}/\1,"runner":"ubuntu-latest"}/g'
+            s/\{"suite":"([^"]+)","arch":"([^"]+)"\}/{"suite":"\1","arch":"\2","image":"debian:\1"}/g' <<< "$1"
+}
+with_runner() { # the cells with a runner each: ARM_RUNNER for a cell of an ARM_ARCHES architecture, X86_RUNNER for the rest
+    local cells=$1 a
+    for a in $ARM_ARCHES; do
+        cells=$(sed -E "s/\"arch\":\"$a\"(,\"image\":\"[^\"]+\")\}/\"arch\":\"$a\"\1,\"arm\":1}/g" <<< "$cells")
+    done
+    sed -E "s/(\"image\":\"[^\"]+\")\}/\1,\"runner\":\"$X86_RUNNER\"}/g; s/(\"image\":\"[^\"]+\"),\"arm\":1\}/\1,\"runner\":\"$ARM_RUNNER\"}/g" <<< "$cells"
 }
 shown() { # <kind> <cells json>: the cells as a notice shows them, fc<release> <arch> or <suite> <arch>
     grep -oE '"(fedora|suite)":"[^"]+","arch":"[^"]+"' <<< "$2" |
@@ -75,7 +88,7 @@ for kind in rpm deb; do
     else
         got=$whole
     fi
-    json[$kind]=$(with_image "$(field cells "$got")")
+    json[$kind]=$(with_runner "$(with_image "$(field cells "$got")")")
     count[$kind]=$(field count "$got")
     n=$((n + count[$kind]))
     inner=${json[$kind]#[} inner=${inner%]}

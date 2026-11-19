@@ -38,9 +38,18 @@ assert s, "no step with id matrix"
 open(sys.argv[2], "w").write(s[0]["run"])
 PY
 
+# the defaults of the runner inputs, read out of the action file (the script writes no architecture or label)
+eval "$(python3 -I - "$actions/check-matrix/action.yml" <<'PY'
+import sys, yaml
+i = yaml.safe_load(open(sys.argv[1]))["inputs"]
+for k in ("arm-arches", "arm-runner", "x86-runner"):
+    print("export %s=%r" % (k.upper().replace("-", "_") + "_DEFAULT", i[k]["default"]))
+PY
+)"
 render() { # <wave> <matrix input> <rpm releases> <rpm arches> <deb releases> <deb arches>: key=value lines in $t/out
     : > "$t/out"
-    GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$actions/check-matrix WAVE=$1 MATRIX=$2 \
+    GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$actions/check-matrix WAVE=$1 MATRIX=$2 ARM_ARCHES=$ARM_ARCHES_DEFAULT \
+        ARM_RUNNER=$ARM_RUNNER_DEFAULT X86_RUNNER=${X86_RUNNER:-$X86_RUNNER_DEFAULT} \
         RPM_RELEASES=$3 RPM_ARCHES=$4 DEB_RELEASES=$5 DEB_ARCHES=$6 bash "$t/step.sh" > "$t/log" 2>&1
 }
 out() { sed -n "s/^$1=//p" "$t/out"; }
@@ -105,16 +114,34 @@ expect "runner, quick deb" deb '[{"suite":"trixie","arch":"arm64","image":"debia
 if grep -q '"runner":"ubuntu-latest"' <<< "$(out deb)"; then no "quick: a deb cell is left on an x86 runner"; else yes "quick: no deb cell is on an x86 runner"; fi
 render full '' '' '' '["trixie"]' '["amd64", "arm64"]'
 expect "runner, full deb" deb '[{"suite":"trixie","arch":"amd64","image":"debian:trixie","runner":"ubuntu-latest"},{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]'
-# sabotage: every cell on the x86 runner is what omx-panel ci 44563540081 ran; the arms above must go red on it
-cp -a "$actions" "$t/xcopy"
-sed -i 's/"runner":"ubuntu-24.04-arm"/"runner":"ubuntu-latest"/' "$t/xcopy/check-matrix/check-matrix.sh"
+# sabotage: no architecture routed to the ARM runner is what omx-panel ci 44563540081 ran (the arm64 cell on an x86
+# runner); the arm64 assertion above must go red on it
 : > "$t/out"
-GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/xcopy/check-matrix WAVE=quick MATRIX='' RPM_RELEASES='' RPM_ARCHES='' \
-    DEB_RELEASES='["trixie"]' DEB_ARCHES='["amd64", "arm64"]' bash "$t/step.sh" > "$t/log" 2>&1
-if grep -q '"runner":"ubuntu-latest"' <<< "$(out deb)"; then yes "sabotage: the arm64 cell on an x86 runner is red"; else no "sabotage: the arm64 cell on an x86 runner passed"; fi
+GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$actions/check-matrix WAVE=quick MATRIX='' RPM_RELEASES='' RPM_ARCHES='' \
+    DEB_RELEASES='["trixie"]' DEB_ARCHES='["amd64", "arm64"]' ARM_ARCHES=none ARM_RUNNER=$ARM_RUNNER_DEFAULT \
+    X86_RUNNER=$X86_RUNNER_DEFAULT bash "$t/step.sh" > "$t/log" 2>&1
+if [ "$(out deb)" = '[{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]' ]; then
+    no "sabotage: the arm64 cell on an x86 runner passed"
+else yes "sabotage: the arm64 cell on an x86 runner is red"; fi
+
+# ---- the x86 runner is the caller's: a private pool's label reaches every x86 cell and no ARM cell, so a caller that
+# writes runs-on: matrix.cell.runner keeps the runner its x86 jobs always had
+X86_RUNNER=arc-freemixer render full '' '["45"]' '["x86_64", "aarch64"]' '["trixie"]' '["amd64", "arm64"]'
+expect "x86-runner" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45","runner":"arc-freemixer"},{"fedora":"45","arch":"aarch64","image":"fedora:45","runner":"ubuntu-24.04-arm"}]'
+expect "x86-runner" deb '[{"suite":"trixie","arch":"amd64","image":"debian:trixie","runner":"arc-freemixer"},{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]'
+# sabotage: a script that ignores X86_RUNNER leaves the private pool's label out of the x86 cells
+cp -a "$actions" "$t/ycopy"
+sed -i 's/\$X86_RUNNER/ubuntu-latest/' "$t/ycopy/check-matrix/check-matrix.sh"
+: > "$t/out"
+GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/ycopy/check-matrix WAVE=full MATRIX='' RPM_RELEASES='' RPM_ARCHES='' \
+    DEB_RELEASES='["trixie"]' DEB_ARCHES='["amd64"]' ARM_ARCHES=$ARM_ARCHES_DEFAULT ARM_RUNNER=$ARM_RUNNER_DEFAULT \
+    X86_RUNNER=arc-freemixer bash "$t/step.sh" > "$t/log" 2>&1
+if grep -q arc-freemixer <<< "$(out deb)"; then no "sabotage: an ignored x86-runner passed"; else yes "sabotage: an ignored x86-runner is red"; fi
+# a label that is not a label is refused
+if X86_RUNNER='a b;c' render full '' '' '' '["trixie"]' '["amd64"]'; then no "a runner label with a space passed"; else yes "a runner label with a space is refused"; fi
 
 # ---- one source: no cell restated, and quick.txt is what is read
-if grep -nE '\b(bookworm|trixie|x86_64|aarch64|amd64|arm64)\b' "$actions/check-matrix/check-matrix.sh" "$t/step.sh" | grep -v '^[^:]*:[0-9]*:#' | grep -v '# runner label$'; then
+if grep -nE '\b(bookworm|trixie|x86_64|aarch64|amd64|arm64)\b' "$actions/check-matrix/check-matrix.sh" "$t/step.sh" | grep -v '^[^:]*:[0-9]*:#'; then
     no "check-matrix restates a cell"
 else
     yes "check-matrix restates no cell"
@@ -122,8 +149,16 @@ fi
 cp -a "$actions" "$t/copy"
 printf 'rpm 45 x86_64\ndeb bookworm arm64\n' > "$t/copy/release-matrix/quick.txt"
 : > "$t/out"
-GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/copy/check-matrix WAVE=quick MATRIX='' RPM_RELEASES='["44", "45"]' RPM_ARCHES='["x86_64"]' \
+GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/copy/check-matrix ARM_ARCHES=$ARM_ARCHES_DEFAULT ARM_RUNNER=$ARM_RUNNER_DEFAULT \
+    X86_RUNNER=$X86_RUNNER_DEFAULT WAVE=quick MATRIX='' RPM_RELEASES='["44", "45"]' RPM_ARCHES='["x86_64"]' \
     DEB_RELEASES="$PHD_DEB" DEB_ARCHES="$PHD_DEBA" bash "$t/step.sh" > "$t/log" 2>&1
 expect "a changed quick.txt" images '["fedora:45","debian:bookworm"]'
+
+# sabotage: an architecture written back into the script's code (no exemption) puts the guard red
+cp "$actions/check-matrix/check-matrix.sh" "$t/lit.sh"
+sed -i 's/for a in \$ARM_ARCHES; do/for a in aarch64 arm64; do/' "$t/lit.sh"
+if grep -nE '\b(bookworm|trixie|x86_64|aarch64|amd64|arm64)\b' "$t/lit.sh" "$t/step.sh" | grep -qv '^[^:]*:[0-9]*:#'; then
+    yes "sabotage: an architecture literal in the script is red"
+else no "sabotage: an architecture literal in the script passed the guard"; fi
 
 [ "$fail" = 0 ] && echo "check-matrix: all passed" || exit 1

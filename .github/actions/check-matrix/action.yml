@@ -46,6 +46,16 @@ inputs:
     description: its architectures, a JSON array
     default: '["amd64", "arm64"]'
 
+  arm-arches:
+    description: the architectures of a cell that needs the ARM runner, space separated
+    default: 'aarch64 arm64'
+  arm-runner:
+    description: the runner of those cells; a container of one architecture cannot install the packages of another
+    default: ubuntu-24.04-arm
+  x86-runner:
+    description: the runner of every other cell; a caller with its own pool passes its expression, e.g. the one its x86 jobs already use for OMX_RUNNER
+    default: ubuntu-latest
+
 outputs:
   set:
     description: "'quick' or 'full'"
@@ -84,5 +94,8 @@ runs:
         RPM_ARCHES: ${{ inputs.rpm-arches }}
         DEB_RELEASES: ${{ inputs.deb-releases }}
         DEB_ARCHES: ${{ inputs.deb-arches }}
+        ARM_ARCHES: ${{ inputs.arm-arches }}
+        ARM_RUNNER: ${{ inputs.arm-runner }}
+        X86_RUNNER: ${{ inputs.x86-runner }}
       run: |
         "$GITHUB_ACTION_PATH/check-matrix.sh"
