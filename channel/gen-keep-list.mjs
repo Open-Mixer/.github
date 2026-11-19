@@ -14,8 +14,13 @@
 //   0.15.3      that upstream version (the newest build of it): the prune keeps it
 //   >=0.19.0    a floor: keeps nothing extra, but the channel must serve a version at or above it
 //   newest      the package is installed unversioned: the channel must serve it
+//   pending:>=0.19.3  a floor whose package the channel serves in no cell of that release at all (a devel package
+//               a release dropped and has not republished): the prune PRINTS it as pending and does not refuse the
+//               plan. The PLANNER (open-mixer.github.io prune) judges it: it stays pending only while no build of the
+//               package is served at all; served in any version it is an ordinary floor there (below it: refused). The
+//               next regeneration then writes the plain floor
 // <package> is a binary package name, or source:<name> for every package built from that source. <distro/arch>
-// is e.g. fedora/44/*, debian/bookworm/amd64.
+// is e.g. fedora/45/*, debian/bookworm/amd64.
 //
 // The sources (read from the default branch, or from a --local checkout):
 //   the worker image's repository (private: --worker-image <owner/repo> or OMX_WORKER_IMAGE_REPO; it is named
@@ -27,7 +32,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const gh = (...a) => execFileSync('gh', ['api', ...a], { encoding: 'utf8', maxBuffer: 1 << 28 });
 
@@ -54,10 +59,33 @@ export function makeReader(locals = {}) {
   };
 }
 
+// The development Fedora release is declared once, in the release matrix's quick set (the cells a staged build and
+// the dev matrix hold): fedora/<release>/* is where a released floor is keyed, and an exact fc<N> row of another
+// release is dropped (Fedora 44 is dropped by owner ruling 2026-11-19). Never a literal here.
+const QUICK = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.github', 'actions', 'release-matrix', 'quick.txt');
+export function devFedora(text) {
+  const m = text.split('\n').map((l) => l.replace(/#.*$/, '').trim().match(/^rpm\s+(\d+)\s+\S+$/)).find(Boolean);
+  if (!m) throw new Error('release-matrix/quick.txt names no rpm cell: no development Fedora release');
+  return m[1];
+}
+export const FEDORA_RELEASE = devFedora(fs.readFileSync(QUICK, 'utf8'));
+
+// the packages the channel serves in a Fedora release: rpm/cells.tsv "<package> <version> <set> <cells...>"
+export function servedPackages(cellsTsv, release) {
+  const out = new Set();
+  for (const l of cellsTsv.split('\n')) {
+    const f = l.split('\t');
+    if (f.length >= 4 && f[3].split(' ').some((c) => c.startsWith(`fc${release}/`))) out.add(f[0]);
+  }
+  return out;
+}
+
 const NVR = /^(.+)-(\d[\w.~+]*)-(\d[\w.~+]*)\.fc(\d+)$/;
 
-// baked-versions.yml -> exact rows from rpms:, floors from released:
-export function bakedRows(text, pin) {
+// baked-versions.yml -> exact rows from rpms:, floors from released:. Only the development release's rows count: an
+// exact row of another fc<N> is dropped, and a floor is keyed fedora/<release>/*. With <served> (a Set of package names
+// the channel serves in that release) a floor whose package is not in it is the named pending form.
+export function bakedRows(text, pin, { release = FEDORA_RELEASE, served = null } = {}) {
   const out = [];
   let section = null;
   for (const raw of text.split('\n')) {
@@ -67,11 +95,11 @@ export function bakedRows(text, pin) {
     if (section === 'rpms') {
       for (const tok of line.replace(/^\s*(- |[A-Za-z0-9_.+-]+:\s*)/, '').replace(/[\[\]]/g, '').split(',')) {
         const m = tok.trim().match(NVR);
-        if (m) out.push({ pkg: m[1], version: `${m[2]}-${m[3]}`, where: `fedora/${m[4]}/*`, pin });
+        if (m && m[4] === String(release)) out.push({ pkg: m[1], version: `${m[2]}-${m[3]}`, where: `fedora/${m[4]}/*`, pin });
       }
     } else if (section === 'released') {
       const m = line.match(/^ {2}([A-Za-z0-9_.+-]+):\s*"?(\d[\w.~+-]*)"?\s*$/);
-      if (m) out.push({ pkg: m[1], version: `>=${m[2]}`, where: 'fedora/44/*', pin });
+      if (m) out.push({ pkg: m[1], version: `${served && !served.has(m[1]) ? 'pending:' : ''}>=${m[2]}`, where: `fedora/${release}/*`, pin });
     }
   }
   return out;
@@ -130,8 +158,12 @@ export function collect(reader, workerImage) {
     sources.push(`${label}@${sha.slice(0, 12)} ${shown}${ref ? ` (${ref})` : ''}`);
     rows.push(...fn(reader.text(repo, ref, file), pin));
   };
+  // the channel's own record of what it serves: a floor on a package it serves in no cell is pending, not hard
+  const CHANNEL = 'Open-Mixer/open-mixer.github.io';
+  const served = servedPackages(reader.text(CHANNEL, 'main', 'rpm/cells.tsv'), FEDORA_RELEASE);
+  sources.push(`${CHANNEL}@${reader.sha(CHANNEL, 'main').slice(0, 12)} rpm/cells.tsv (main)`);
   for (const f of reader.files(workerImage, 'main', /^k8s\/omx-worker\/images\/[^/]+\/baked-versions\.yml$/)) {
-    src(workerImage, 'main', f, bakedRows);
+    src(workerImage, 'main', f, (t, p) => bakedRows(t, p, { served }));
   }
   src('Open-Mixer/.github', 'main', '.github/pins.txt', pinsTxtRows);
   for (const tag of reader.tags('Open-Mixer/zynthian-sys', 'omx-track/')) {
@@ -148,7 +180,7 @@ export function render({ rows, sources }) {
   return [
     '# GENERATED by channel/gen-keep-list.mjs from the pins named below. Never edit by hand: tests/channel-keep-list.sh fails a',
     '# line no source produced and a file whose lines do not match the sum.',
-    '# columns (tab separated): package, version (N-R | N | >=floor | newest), distro/arch, the pin that keeps it',
+    '# columns (tab separated): package, version (N-R | N | >=floor | pending:>=floor | newest), distro/arch, the pin that keeps it',
     ...sources.map((s) => `# source ${s}`),
     ...lines,
     `# sum ${sum}`,
