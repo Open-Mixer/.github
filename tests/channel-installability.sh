@@ -299,8 +299,9 @@ arm_deb_dryrun_version() {
   # separator.sh <explicit> <staged> <dry-run>: what each kind of run yields
   [ "$("$sep" '' true false)" = +git ] && ok 'deb dry-run version: a staged build is +git' || bad 'deb dry-run version: a staged build is not +git'
   [ "$("$sep" '' false true)" = +git ] && ok 'deb dry-run version: a branch dry run is +git' || bad 'deb dry-run version: a branch dry run is not +git'
-  [ "$("$sep" '' false false)" = '~git' ] && ok 'deb dry-run version: a pull request snapshot stays ~git' || bad 'deb dry-run version: a pull request snapshot is not ~git'
-  [ "$("$sep" '+git' false false)" = +git ] && ok 'deb dry-run version: an explicit separator is kept for any other snapshot' || bad 'deb dry-run version: an explicit separator is lost'
+  [ "$("$sep" '' false false)" = +git ] && ok 'deb dry-run version: a pull-request run (no explicit separator) is +git' || bad 'deb dry-run version: a pull-request run is not +git'
+  [ "$("$sep" '~git' false false)" = '~git' ] && ok 'deb dry-run version: ~git remains for a caller that names it' || bad 'deb dry-run version: an explicit ~git is lost'
+  [ "$("$sep" '~git' false true)" = +git ] && ok 'deb dry-run version: a dry run overrides an explicit ~git' || bad 'deb dry-run version: a dry run kept ~git'
   # a tag release: the workflow tells the action dry-run false when RELEASE_TAG is set, and build-deb.sh -t builds the clean version
   grep -qF "dry-run: \${{ env.RELEASE_TAG == '' }}" "$here/.github/workflows/build-deb.yml" &&
     grep -qF "staged: \${{ inputs.staged }}" "$here/.github/workflows/build-deb.yml" &&
@@ -310,7 +311,7 @@ arm_deb_dryrun_version() {
   stanza libc6 2.36-9 arm64 > "$d/bg"
   stanza libcore1 0.32.5 arm64 > "$d/channel/debian/trixie/Packages"
   local v args=(deb --channel "$d/channel" --suite trixie --arch arm64 --bg "$d/bg" --dry-run)
-  for v in "0.32.5$("$sep" '' false false)1795000000.abc1234" "0.32.5$("$sep" '' false true)1795000000.abc1234"; do
+  for v in "0.32.5~git1795000000.abc1234" "0.32.5$("$sep" '' false true)1795000000.abc1234"; do
     { stanza libcore1 "$v" arm64; stanza libcore-dev "$v" arm64 "libcore1 (= $v)"; } > "$d/new-$v"
   done
   expect 1 'which nothing in the channel meets' 'deb dry-run version: a ~git dry run beside the published 0.32.5 is RED (libcore-dev needs its own pruned libcore1)' -- \

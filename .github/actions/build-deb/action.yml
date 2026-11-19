@@ -17,7 +17,7 @@ inputs:
     description: directory the DEBs are copied to
     default: debs
   separator:
-    description: what joins a snapshot's version and its commit time and commit; ~git (the default) sorts below the release, +git above it. A staged build or a dry run always takes +git (separator.sh)
+    description: what joins a snapshot's version and its commit time and commit; empty (the default) is +git, above the release, so a snapshot beside a published version is not pruned behind it; ~git sorts below it and is kept only when a caller names it, unless the build is staged or a dry run (separator.sh)
     default: ''
   staged:
     description: 'true for a staged build: its snapshot is <version>+git...'
