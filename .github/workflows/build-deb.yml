@@ -213,6 +213,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       set: ${{ steps.matrix.outputs.set }}
+      releases: ${{ steps.matrix.outputs.releases }}
       cells: ${{ steps.matrix.outputs.cells }}
       first-arch: ${{ steps.matrix.outputs.first-arch }}
       count: ${{ steps.matrix.outputs.count }}
@@ -449,7 +450,7 @@ jobs:
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}
-          suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          suites: ${{ needs.preflight.outputs.releases }}
 
 
       - uses: actions/upload-artifact@v4
@@ -507,7 +508,7 @@ jobs:
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}
-          suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          suites: ${{ needs.preflight.outputs.releases }}
 
 
       - id: dry
@@ -533,7 +534,7 @@ jobs:
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}
-          suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          suites: ${{ needs.preflight.outputs.releases }}
 
 
       - uses: actions/upload-artifact@v4
