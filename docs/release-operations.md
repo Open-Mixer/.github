@@ -378,7 +378,7 @@ The `check-matrix` action renders such a matrix. The caller writes its whole mat
   full-deb:
     needs: [deb, checks]
     if: needs.checks.outputs.deb-count != '0'
-    runs-on: ${{ matrix.cell.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.cell.runner }}
     container:
       image: ${{ matrix.cell.image }}
     strategy:
@@ -387,7 +387,15 @@ The `check-matrix` action renders such a matrix. The caller writes its whole mat
         mode: [default, headless]
 ```
 
-Each cell carries its container image (`{"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}`); `images` is
+Each cell carries its container image and the runner of its own architecture (`{"suite": "trixie", "arch": "arm64",
+"image": "debian:trixie", "runner": "ubuntu-24.04-arm"}`). The inputs name the split: `arm-arches` (default `aarch64
+arm64`) and `arm-runner` (default `ubuntu-24.04-arm`) for a cell that needs the ARM runner, `x86-runner` (default
+`ubuntu-latest`) for every other cell; no architecture is written in the script. A caller with its own pool passes the
+expression its x86 jobs already use (`x86-runner: ${{ vars.OMX_RUNNER || 'ubuntu-latest' }}`), so `runs-on: ${{
+matrix.cell.runner }}` keeps the runner those jobs had. The development set's debs are trixie arm64 only, and an amd64
+container resolves an arm64 `-dev` package that dpkg then refuses (omx-panel ci 44563540081). `build-deb.yml` already
+sends its arm64 build and install-check cells to `ubuntu-24.04-arm`, and `build-rpm.yml` and `clap-headers-deb.yml` do
+not read check-matrix, so their runner expressions are untouched. `images` is
 the list of images alone, for a CI job that runs on the runner's own architecture. Unlike a release, a kind whose
 matrix holds no quick cell renders no cell while `quick` (count 0, the job is skipped), never its full matrix. The
 notice names the cells skipped. The cell is a matrix dimension of its own (`matrix.cell`), not an `include`: `include`

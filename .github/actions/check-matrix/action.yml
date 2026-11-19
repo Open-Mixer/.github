@@ -22,6 +22,7 @@ description: Say which cells a check runs, the quick set's alone while a release
 #   full-deb:
 #     needs: checks
 #     if: needs.checks.outputs.deb-count != '0'
+#     runs-on: ${{ matrix.cell.runner }}
 #     container: { image: '${{ matrix.cell.image }}' }
 #     strategy: { matrix: { cell: '${{ fromJSON(needs.checks.outputs.deb) }}', mode: [default, headless] } }
 
@@ -45,18 +46,28 @@ inputs:
     description: its architectures, a JSON array
     default: '["amd64", "arm64"]'
 
+  arm-arches:
+    description: the architectures of a cell that needs the ARM runner, space separated
+    default: 'aarch64 arm64'
+  arm-runner:
+    description: the runner of those cells; a container of one architecture cannot install the packages of another
+    default: ubuntu-24.04-arm
+  x86-runner:
+    description: the runner of every other cell; a caller with its own pool passes its expression, e.g. the one its x86 jobs already use for OMX_RUNNER
+    default: ubuntu-latest
+
 outputs:
   set:
     description: "'quick' or 'full'"
     value: ${{ steps.matrix.outputs.set }}
   rpm:
-    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45"}'
+    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45", "runner": "ubuntu-latest"}'
     value: ${{ steps.matrix.outputs.rpm }}
   rpm-count:
     description: how many rpm cells; 0 skips the job
     value: ${{ steps.matrix.outputs.rpm-count }}
   deb:
-    description: 'the deb cells, a JSON array: {"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}'
+    description: 'the deb cells, a JSON array: {"suite": "trixie", "arch": "arm64", "image": "debian:trixie", "runner": "ubuntu-24.04-arm"}'
     value: ${{ steps.matrix.outputs.deb }}
   deb-count:
     description: how many deb cells; 0 skips the job
@@ -83,5 +94,8 @@ runs:
         RPM_ARCHES: ${{ inputs.rpm-arches }}
         DEB_RELEASES: ${{ inputs.deb-releases }}
         DEB_ARCHES: ${{ inputs.deb-arches }}
+        ARM_ARCHES: ${{ inputs.arm-arches }}
+        ARM_RUNNER: ${{ inputs.arm-runner }}
+        X86_RUNNER: ${{ inputs.x86-runner }}
       run: |
         "$GITHUB_ACTION_PATH/check-matrix.sh"
