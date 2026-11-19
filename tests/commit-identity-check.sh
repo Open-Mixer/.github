@@ -74,6 +74,29 @@ rc=0; run main..HEAD >/dev/null 2>&1 || rc=$?
 rc=0; run nosuch..HEAD >/dev/null 2>&1 || rc=$?
 [ "$rc" = 2 ] || fail "an unreadable range gave $rc, not 2"
 
+# empty flags take the defaults from action.yml: the house pair passes, a wrong committer is red
+git checkout -q topic~0
+"$chk" --author-email "" --committer-email "" "main..$wc~1" >/dev/null || fail "empty flags did not take the action defaults"
+rc=0; "$chk" --author-email "" --committer-email "" "main..$wc" >/dev/null || rc=$?
+[ "$rc" = 1 ] || fail "empty flags with a wrong committer gave $rc, not 1"
+
+# the workflow's inputs reach the action, the switch is off by default and skips the job, the action takes env not a splice
+python3 -I - "$here" <<'PY' || fail "workflow wiring"
+import sys, yaml
+h = sys.argv[1]
+w = yaml.safe_load(open(h + "/.github/workflows/public-sources-check.yml"))
+i = w[True]["workflow_call"]["inputs"]
+assert i["commit-identity"]["default"] is False, "the switch must default off"
+assert i["author-email"]["default"] == "" and i["committer-email"]["default"] == "", "no second copy of the emails"
+j = w["jobs"]["commit-identity"]
+assert "inputs.commit-identity" in j["if"], "the job is not skipped when off"
+st = [s for s in j["steps"] if "commit-identity-check" in s.get("uses", "")][0]["with"]
+assert st["author-email"] == "${{ inputs.author-email }}" and st["committer-email"] == "${{ inputs.committer-email }}", st
+a = open(h + "/.github/actions/commit-identity-check/action.yml").read()
+assert "'${{ inputs.author-email }}'" not in a and "'${{ inputs.committer-email }}'" not in a, "inputs spliced into the script"
+assert 'AUTHOR_EMAIL: ${{ inputs.author-email }}' in a and 'COMMITTER_EMAIL: ${{ inputs.committer-email }}' in a
+PY
+
 # a GitHub-made merge commit is named with the fix: a local signed merge, not a rebase
 git checkout -q -b t5 topic~3 2>/dev/null || git checkout -q -b t5 main
 mk noreply@github.com noreply@github.com true "Merge branch main into t5"

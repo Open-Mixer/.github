@@ -9,8 +9,8 @@
 #   commit-identity-check.sh --selftest
 #
 # Exit 0 clean, 1 a hit (each commit sha, the field and the value are named), 2 a range, flag or API answer that
-# cannot be read: a checker that cannot judge is never a pass. The expected emails are flags with no default here;
-# action.yml is the one place their defaults are written.
+# cannot be read: a checker that cannot judge is never a pass. The expected emails are flags; an empty flag takes the
+# default written in action.yml beside this script, the one place the defaults are written.
 set -euo pipefail
 
 verified_of() { # sha -> "<verified> <reason>" from the GitHub API
@@ -65,6 +65,10 @@ while [ $# -gt 2 ]; do
   esac
   shift 2
 done
+default_of() { sed -n "/^  $1:/,/^  [a-z-]*:\$/p" "$(dirname "${BASH_SOURCE[0]}")/action.yml" | sed -n 's/^    default: //p' | head -1; }
+[ $# = 1 ] || { echo "usage: commit-identity-check.sh --author-email A --committer-email C <range> | --selftest" >&2; exit 2; }
+[ -n "$a" ] || a=$(default_of author-email)
+[ -n "$c" ] || c=$(default_of committer-email)
 [ -n "$a" ] && [ -n "$c" ] && [ $# = 1 ] || { echo "usage: commit-identity-check.sh --author-email A --committer-email C <range> | --selftest" >&2; exit 2; }
 : "${GH_REPO:?commit-identity-check: GH_REPO (owner/repo) is not set}"
 rc=0; check "$a" "$c" "$1" || rc=$?

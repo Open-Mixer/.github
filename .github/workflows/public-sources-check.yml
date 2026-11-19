@@ -3,7 +3,7 @@
 name: public-sources-check
 # The checks every OpenMixer repository runs on what it publishes, from this repository and nowhere else:
 #   - its pull request's own commits carry no attribution line (commit-message-check);
-#   - every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
+#   - (commit-identity: true) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
 #     by GitHub (commit-identity-check);
 #   - no tracked file points into a private repository (private-refs-check);
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);
@@ -15,6 +15,7 @@ name: public-sources-check
 #     public-sources:
 #       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@openmixer-v1
 #       with:
+#         commit-identity: true      # optional, off by default; author-email / committer-email override the house pair
 #         runner: arc-freemixer      # optional: a private repository's own runners (default ubuntu-latest)
 on:
   workflow_call:
@@ -23,6 +24,18 @@ on:
         description: the checks of a public repository, private-refs-check and public-layout-check (a private repository passes false)
         type: boolean
         default: true
+      commit-identity:
+        description: run commit-identity-check on pull requests (every commit authored and committed by the house emails and verified). Off by default so moving openmixer-v1 turns no caller red; a repository whose open pull requests are clean passes true
+        type: boolean
+        default: false
+      author-email:
+        description: the author email commit-identity-check expects; empty takes the action's default
+        type: string
+        default: ''
+      committer-email:
+        description: the committer email commit-identity-check expects; empty takes the action's default
+        type: string
+        default: ''
       runner:
         description: runner label for every job (a private repository passes its own runners, e.g. arc-freemixer; a pull request from a fork always runs on GitHub-hosted runners)
         type: string
@@ -48,7 +61,7 @@ jobs:
 
   commit-identity:
     name: every commit has the house author and committer and is verified
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && inputs.commit-identity
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
@@ -59,6 +72,8 @@ jobs:
       - uses: Open-Mixer/.github/.github/actions/commit-identity-check@openmixer-v1
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
+          author-email: ${{ inputs.author-email }}
+          committer-email: ${{ inputs.committer-email }}
 
   private-refs:
     name: no tracked file points into a private repository

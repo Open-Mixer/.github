@@ -45,7 +45,7 @@ rule is the format of the file, a format with no comment syntax carries no heade
 A check a repository relies on is run by a step that enforces it: `.github/actions/ci-steps` reads the workflow
 files and goes red when a required command is in no step that runs it and fails the job (its README holds the arms).
 
-`.github/actions/commit-identity-check` (a job of `public-sources-check.yml`) reads EVERY commit of a pull request's
+`.github/actions/commit-identity-check` (a job of `public-sources-check.yml`, run when the caller passes `commit-identity: true`; off by default so moving `openmixer-v1` turns no caller red, and `author-email` / `committer-email` inputs pass through) reads EVERY commit of a pull request's
 range, `origin/<base>..HEAD`, not only the head: the author email must be `linuxnow@gmail.com`, the committer email
 `commits@openmixer.org` (the signing key's uid) and `.commit.verification.verified` true as GitHub reports it for the
 commit (workflow token). The two emails are the action's inputs, whose defaults in its `action.yml` are the one place
