@@ -298,7 +298,7 @@ arm_rpm_quick() {
       || { echo "rpmbuild $n $v $arch fc$r failed" >&2; return 1; }
     find "$d/top/RPMS" -name "$n-$v-1.fc$r.$arch.rpm"
   }
-  for rel in 44 45; do
+  for rel in 45; do
     local c=$d/channel/fedora/$rel
     mkdir -p "$c/x86_64" "$c/aarch64" "$c/noarch" "$c/SRPMS"
     mv "$(mkq omx-dsp-contract 0.32.0 noarch $rel '(omx-dsp-devel >= 0.32.0 with omx-dsp-devel < 0.33)')" "$c/noarch/"
@@ -312,7 +312,7 @@ arm_rpm_quick() {
   rc=0; MATRIX_SET=quick REPOSDIR=$d/empty "$run" rpm "$d/new" "$d/channel" > "$t/out" 2>&1 || rc=$?
   if [ "$rc" = 0 ]; then ok 'rpm_quick: the check of a quick release is green'
   else bad "rpm_quick: the check of a quick release exits $rc"; sed 's/^/     /' "$t/out" | tail -15; fi
-  for rel in 44 45; do
+  for rel in 45; do
     grep -qF "fedora/$rel aarch64: outside the cells of the set, not judged" "$t/out" && ! grep -q "fedora/$rel aarch64: [0-9]* new" "$t/out" \
       && ok "rpm_quick: ... fedora/$rel aarch64 is named and not judged" || bad "rpm_quick: fedora/$rel aarch64 was judged or not named"
     grep -q "^fedora/$rel x86_64: 2 new" "$t/out" && ok "rpm_quick: ... fedora/$rel x86_64 is judged" || bad "rpm_quick: fedora/$rel x86_64 was not judged"
@@ -322,7 +322,7 @@ arm_rpm_quick() {
   (cd "$d/tree" && find fedora -name '*.rpm' ! -path '*/x86_64/*' | sort) > "$d/frozen.before"
   rc=0; MATRIX_SET=quick "$pub" "$d/tree" "$d/new" > "$t/out" 2>&1 || rc=$?
   [ "$rc" = 0 ] && ok 'rpm_quick: the publish of a quick release places its packages' || { bad "rpm_quick: the publish exits $rc"; sed 's/^/     /' "$t/out" | tail -15; return; }
-  for rel in 44 45; do
+  for rel in 45; do
     [ -f "$d/tree/fedora/$rel/x86_64/omx-dsp-contract-0.32.1-1.fc$rel.noarch.rpm" ] && [ ! -e "$d/tree/fedora/$rel/noarch/omx-dsp-contract-0.32.1-1.fc$rel.noarch.rpm" ] \
       && ok "rpm_quick: ... the noarch contract lands in fedora/$rel/x86_64 alone, never in fedora/$rel/noarch" \
       || bad "rpm_quick: the noarch contract of fc$rel is at $(cd "$d/tree" && find fedora -name "omx-dsp-contract-0.32.1-*fc$rel*")"
@@ -331,7 +331,7 @@ arm_rpm_quick() {
   cmp -s "$d/frozen.before" "$d/frozen.after" && ok 'rpm_quick: ... the aarch64 and noarch trees hold what they served' \
     || bad "rpm_quick: the trees outside the quick set changed: $(diff "$d/frozen.before" "$d/frozen.after" | grep '^[<>]' | tr '\n' ' ')"
   # what a machine of each architecture sees after the publish: every package installs, the newest contract on x86_64
-  for rel in 44 45; do
+  for rel in 45; do
     for arch in aarch64 x86_64; do
       rc=0
       dnf --setopt=reposdir="$d/empty" --releasever=$rel --forcearch=$arch --setopt='*.gpgcheck=0' \

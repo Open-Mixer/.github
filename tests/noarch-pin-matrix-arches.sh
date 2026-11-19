@@ -7,7 +7,7 @@
 # nobody publishes. The architectures come from release-matrix/matrix.sh, the script the releases read, never a second list,
 # and no kept package is relabelled.
 #
-# The fixture is omx-clap-core on fc44 (as tests/noarch-pin.sh): x86_64 and aarch64 0.32.3 with contract 0.32.3 in noarch, then
+# The fixture is omx-clap-core on fc45 (as tests/noarch-pin.sh): x86_64 and aarch64 0.32.3 with contract 0.32.3 in noarch, then
 # a run of 0.32.4 with its noarch contract 0.32.4.
 # Proves:
 #   - the matrix is quick (OMX_RELEASE_MATRIX=quick, no MATRIX_SET) and the run builds x86_64: the aarch64 skew is not judged,
@@ -41,7 +41,7 @@ snapshot() { (cd "$tree" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0
 build() { # <out dir> <version> <arch>: omx-clap-core and its noarch contract, which the binary package pins exactly
     local id=$2-$3 spec
     spec=$work/$id.spec
-    printf '%s\n' 'Name: omx-clap-core' "Version: $2" 'Release: 1.fc44' 'Summary: t' 'License: MIT' "Requires: omx-clap-core-contract = $2-1.fc44" \
+    printf '%s\n' 'Name: omx-clap-core' "Version: $2" 'Release: 1.fc45' 'Summary: t' 'License: MIT' "Requires: omx-clap-core-contract = $2-1.fc45" \
         '%description' 'core' '%package contract' 'Summary: t' 'BuildArch: noarch' '%description contract' 'contract' '%files' '%files contract' > "$spec"
     rpmbuild -bb --quiet --define "_topdir $work/rb-$id" --define 'dist %{nil}' --define 'debug_package %{nil}' \
         --target "$3" "$spec" >/dev/null 2>&1 || fail "rpmbuild $id"
@@ -65,7 +65,7 @@ restore() { rm -rf "$tree"; cp -a "$work/tree0" "$tree"; }
 restore
 cells0=$(cat "$tree/cells.tsv")
 regen quick "$work/r1" > "$work/log" 2>&1 || { cat "$work/log"; fail "a regeneration under the quick matrix was refused for aarch64, which the matrix does not publish"; }
-[ -f "$tree/fedora/44/noarch/omx-clap-core-contract-0.32.4-1.fc44.noarch.rpm" ] || fail "the contract 0.32.4 is not placed"
+[ -f "$tree/fedora/45/noarch/omx-clap-core-contract-0.32.4-1.fc45.noarch.rpm" ] || fail "the contract 0.32.4 is not placed"
 # the new version takes no set ('-'); every line the tree had keeps its set (here: full)
 while IFS= read -r l; do
     grep -qxF -- "$l" "$tree/cells.tsv" || { diff <(echo "$cells0") "$tree/cells.tsv" || true; fail "a regeneration with no MATRIX_SET relabelled a kept line of cells.tsv: $l"; }
@@ -110,7 +110,7 @@ snapshot "$work/before"
 if MATRIX_SET= OMX_RELEASE_MATRIX=quick REPO_FILE=$here/packaging/openmixer-release/openmixer.repo "$work/empty-actions/publish-rpms/publish-tree.sh" "$tree" "$work/r1" "$key" > "$work/log" 2>&1; then
     cat "$work/log"; fail "an empty published-architecture set was judged as nothing to check"
 fi
-grep -q 'the release matrix publishes no architecture for fc44' "$work/log" || { cat "$work/log"; fail "the empty set is not refused by name"; }
+grep -q 'the release matrix publishes no architecture for fc45' "$work/log" || { cat "$work/log"; fail "the empty set is not refused by name"; }
 snapshot "$work/after"
 cmp -s "$work/before" "$work/after" || fail "the refused run changed the tree"
 ok "an empty published-architecture set is refused by name, nothing placed"

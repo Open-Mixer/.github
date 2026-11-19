@@ -71,14 +71,14 @@ rpm)
         find "$d/RPMS" -name '*.rpm'
     }
     mkdir -p "$work/real" "$work/staged" "$work/staged2"
-    cp "$(mkpkg omx-lib 3.13.0 1.fc44)" "$work/real/"
-    cp "$(mkpkg omx-lib 3.14.0 1.git5f455d3.fc44)" "$work/staged/"
-    cp "$(mkpkg omx-lib 3.14.0 1.git6a0b1c2.fc44)" "$work/staged2/"
+    cp "$(mkpkg omx-lib 3.13.0 1.fc45)" "$work/real/"
+    cp "$(mkpkg omx-lib 3.14.0 1.git5f455d3.fc45)" "$work/staged/"
+    cp "$(mkpkg omx-lib 3.14.0 1.git6a0b1c2.fc45)" "$work/staged2/"
     "$actions/publish-rpms/publish-tree.sh" "$ch/rpm" "$work/real" "$NEW_ID" >/dev/null
     rel=$(. /etc/os-release && echo "$VERSION_ID")
-    [ "$rel" = 44 ] || fail "the rpm arm runs in fedora:44, not $rel"
-    index=staging/rpm/fedora/44/noarch/repodata/repomd.xml
-    real_index=rpm/fedora/44/noarch/repodata/repomd.xml
+    [ "$rel" = 45 ] || fail "the rpm arm runs in fedora:45, not $rel"
+    index=staging/rpm/fedora/45/noarch/repodata/repomd.xml
+    real_index=rpm/fedora/45/noarch/repodata/repomd.xml
     sk="44 45"
     ;;
 deb)
@@ -232,7 +232,7 @@ add_staging > "$work/verify-add.log" 2>&1 || { cat "$work/verify-add.log"; fail 
 for f in "${staging_files[@]}"; do [ -s "$f" ] || fail "add-openmixer did not add $f once staging was published"; done
 if [ "$kind" = rpm ]; then
     q install omx-lib >/dev/null
-    [ "$(rpm -q --qf '%{RELEASE}' omx-lib)" = 1.git5f455d3.fc44 ] || fail "the client took omx-lib $(rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib), not the staged build"
+    [ "$(rpm -q --qf '%{RELEASE}' omx-lib)" = 1.git5f455d3.fc45 ] || fail "the client took omx-lib $(rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib), not the staged build"
     q remove omx-lib >/dev/null
 else
     apt-get update -qq -o APT::Update::Error-Mode=any
@@ -247,7 +247,7 @@ ok "$kind: the install check adds the staging channel the first publish made, an
 unadd() { rm -f "${staging_files[@]}"; rm -rf /var/cache/libdnf5/openmixer-staging* /var/lib/apt/lists/*_staging_deb_*; }
 (cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org commit -qm staged)
 if [ "$kind" = rpm ]; then
-    echo '<!-- tampered -->' >> "$ch/staging/rpm/fedora/44/noarch/repodata/repomd.xml"
+    echo '<!-- tampered -->' >> "$ch/staging/rpm/fedora/45/noarch/repodata/repomd.xml"
 else
     sed -i 's/^Label: OpenMixer-Staging$/Label: OpenMixer-Tampered/' "$ch/staging/deb/debian/trixie/InRelease"
 fi
@@ -273,7 +273,7 @@ real_sum | cmp -s - "$work/real.before" || fail "the staged publish after the pu
 if [ "$kind" = rpm ]; then
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null
     q install omx-lib >/dev/null
-    [ "$(rpm -q --qf '%{RELEASE}' omx-lib)" = 1.git6a0b1c2.fc44 ] || fail "after the purge and a publish the client took omx-lib $(rpm -q --qf '%{RELEASE}' omx-lib)"
+    [ "$(rpm -q --qf '%{RELEASE}' omx-lib)" = 1.git6a0b1c2.fc45 ] || fail "after the purge and a publish the client took omx-lib $(rpm -q --qf '%{RELEASE}' omx-lib)"
 else
     apt-get update -qq -o APT::Update::Error-Mode=any
     cand=$(apt-cache policy omx-lib | awk '/Candidate:/ {print $2}')
