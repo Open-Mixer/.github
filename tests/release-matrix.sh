@@ -200,9 +200,12 @@ assert (got.set, got.jobs) == ("quick", ["fc45, x86_64"]), f"an aarch64-only rpm
 # first release (plugin-db 0.4.7's dry run built fc44 and refused "fc44 has no rpm cell in the quick set")
 got, log = run("rpm", {"fedora-versions": '["44", "45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.set, got.jobs, got.releases) == ("quick", ["fc45, x86_64"], "45"), f"a caller listing 44 45 builds {got.set} {got.jobs} {got.releases}: {log}"
-bad = [n for n, j in yaml.safe_load(open(f"{here}/.github/workflows/build-rpm.yml"))["jobs"].items()
-       if "fedora-versions" in str((j.get("container") or {}).get("image", ""))]
-assert not bad, f"build-rpm.yml jobs {bad} run in an image of the caller's first release, which the set may not build"
+# no job but the preflight reads the caller's list of releases or suites: a publish job takes the releases and suites the
+# run built (preflight outputs), or a quick run writes empty fc44 staging metadata and runs in a release the set dropped
+for wfname, caller_input in (("build-rpm.yml", "inputs.fedora-versions"), ("build-deb.yml", "inputs.suite-matrix")):
+    bad = [n for n, j in yaml.safe_load(open(f"{here}/.github/workflows/{wfname}"))["jobs"].items()
+           if n != "preflight" and caller_input in json.dumps(j)]
+    assert not bad, f"{wfname}: jobs {bad} read the caller's {caller_input}, not the releases the run built (preflight outputs)"
 # one Fedora release asked for: the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
