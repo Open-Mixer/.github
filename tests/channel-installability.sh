@@ -23,7 +23,7 @@
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -287,6 +287,22 @@ arm_deb_source() {
     'deb source: (d) a same-pass repository name is refused by name' -- deb --channel "$d/a" "${args[@]}" --same-pass 'clap-core nosuch-repo'
   [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
     && ok 'deb source: (d) ... and the source is still covered' || bad 'deb source: (d) the refusal or the covering changed'
+}
+
+arm_deb_dryrun_version() {
+  # a release dry run of a tree whose VERSION is already published: the run's own binaries must sort ABOVE the published
+  # ones, or dose --latest 1 prunes them behind the release and refuses their dependents (omx-clap-core#126).
+  command -v dose-debcheck >/dev/null || { bad 'deb dry-run version: dose-debcheck is not installed'; return; }
+  local d=$t/debdry; mkdir -p "$d/channel/debian/trixie"
+  { stanza libc6 2.36-9 arm64; } > "$d/bg"
+  { stanza libcore1 0.32.5 arm64; stanza libcore-dev 0.32.5 arm64 'libcore1 (= 0.32.5)'; } > "$d/channel/debian/trixie/Packages"
+  { stanza libcore1 0.32.5+git1795000000.abc1234 arm64; stanza libcore-dev 0.32.5+git1795000000.abc1234 arm64 'libcore1 (= 0.32.5+git1795000000.abc1234)'; } > "$d/plus"
+  local args=(deb --channel "$d/channel" --suite trixie --arch arm64 --bg "$d/bg" --dry-run)
+  expect 0 - 'deb dry-run version: 0.32.5+git... beside a published 0.32.5 is green' -- "${args[@]}" --new-index "$d/plus"
+  # the workflow builds a dry run with +git (a staged run already does), a tag release with the clean version
+  if grep -qF "separator: \${{ inputs.staged || !inputs.publish && '+git' || '~git' }}" "$here/.github/workflows/build-deb.yml"; then
+    ok 'deb dry-run version: build-deb.yml builds a dry run as +git, above the published version'
+  else bad 'deb dry-run version: build-deb.yml does not build a dry run as +git'; fi
 }
 
 arm_deb_unbuilt() {
@@ -641,7 +657,7 @@ arm_deb_cells() {
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
   arms=(ceiling deb_cells)
-  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt external_deb)
+  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt deb_dryrun_version external_deb)
   command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm mirror_client)
 fi
 for arm in "${arms[@]}"; do "arm_$arm"; done
