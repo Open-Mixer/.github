@@ -5,7 +5,7 @@
 # its action.yml runs it.
 # Proves:
 #   - with OMX_RELEASE_MATRIX quick, plugin-hostd's full-stack checks (Debian bookworm and trixie on amd64 and arm64,
-#     Fedora 44 on x86_64 and aarch64) render the quick cells alone: trixie amd64, trixie arm64, fc44 x86_64; the cells
+#     Fedora 45 on x86_64 and aarch64) render the quick cells alone: trixie amd64, trixie arm64, fc45 x86_64; the cells
 #     left out are named in the notice; a CI image list (Fedora 44 and 45, Debian bookworm and trixie) renders
 #     fedora:44, fedora:45 and debian:trixie, bookworm skipped;
 #   - with full, or the variable unset, the caller's whole matrix, every cell;
@@ -45,17 +45,17 @@ expect() { # <name> <output> <want>
     if [ "$got" = "$3" ]; then yes "$1: $2"; else no "$1: $2 is '$got', want '$3'"; cat "$t/log"; fi
 }
 
-PHD_RPM='["44"]' PHD_RPMA='["x86_64", "aarch64"]' PHD_DEB='["bookworm", "trixie"]' PHD_DEBA='["amd64", "arm64"]'
+PHD_RPM='["45"]' PHD_RPMA='["x86_64", "aarch64"]' PHD_DEB='["bookworm", "trixie"]' PHD_DEBA='["amd64", "arm64"]'
 
 # ---- plugin-hostd's full-stack checks while the wave is quick
 render quick '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA" || { no "quick render failed"; cat "$t/log"; }
 expect "quick, plugin-hostd" set quick
-expect "quick, plugin-hostd" rpm '[{"fedora":"44","arch":"x86_64","image":"fedora:44"}]'
+expect "quick, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45"}]'
 expect "quick, plugin-hostd" rpm-count 1
 expect "quick, plugin-hostd" deb '[{"suite":"trixie","arch":"amd64","image":"debian:trixie"},{"suite":"trixie","arch":"arm64","image":"debian:trixie"}]'
 expect "quick, plugin-hostd" deb-count 2
-expect "quick, plugin-hostd" images '["fedora:44","debian:trixie"]'
-for c in 'fc44 aarch64' 'bookworm amd64' 'bookworm arm64'; do
+expect "quick, plugin-hostd" images '["fedora:45","debian:trixie"]'
+for c in 'fc45 aarch64' 'bookworm amd64' 'bookworm arm64'; do
     grep -q "skipped while quick:.*$c" "$t/log" && yes "quick: the notice names $c as skipped" || { no "quick: the notice does not name $c as skipped"; cat "$t/log"; }
 done
 
@@ -63,9 +63,9 @@ done
 for w in full ''; do
     render "$w" '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA" || { no "${w:-unset} render failed"; cat "$t/log"; }
     expect "${w:-unset}, plugin-hostd" set full
-    expect "${w:-unset}, plugin-hostd" rpm '[{"fedora":"44","arch":"x86_64","image":"fedora:44"},{"fedora":"44","arch":"aarch64","image":"fedora:44"}]'
+    expect "${w:-unset}, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45"},{"fedora":"45","arch":"aarch64","image":"fedora:45"}]'
     expect "${w:-unset}, plugin-hostd" deb-count 4
-    expect "${w:-unset}, plugin-hostd" images '["fedora:44","debian:bookworm","debian:trixie"]'
+    expect "${w:-unset}, plugin-hostd" images '["fedora:45","debian:bookworm","debian:trixie"]'
 done
 
 # ---- the matrix input overrides the variable
@@ -76,7 +76,7 @@ expect "matrix quick over full" deb-count 2
 
 # ---- an ordinary CI image list (D25): fedora:44, fedora:45, debian:trixie while quick; bookworm returns with full
 render quick '' '["44", "45"]' '["x86_64"]' '["bookworm", "trixie"]' '["amd64"]'
-expect "CI images, quick" images '["fedora:44","fedora:45","debian:trixie"]'
+expect "CI images, quick" images '["fedora:45","debian:trixie"]'
 render full '' '["44", "45"]' '["x86_64"]' '["bookworm", "trixie"]' '["amd64"]'
 expect "CI images, full" images '["fedora:44","fedora:45","debian:bookworm","debian:trixie"]'
 

@@ -86,7 +86,7 @@ on:
         description: 'Promote the DEBs'
       fedora-versions:
         type: string
-        default: '["44", "45"]'
+        default: '["45"]'
         description: 'JSON array of the Fedora releases a release of this package covers'
       rpm-arch-matrix:
         type: string

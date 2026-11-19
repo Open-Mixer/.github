@@ -22,7 +22,7 @@
 # nothing); a check renders no cell then, because a check never runs a cell the set does not build. The caller skips the
 # job on a count of 0.
 #
-# Each cell is matrix.sh's row with the container image added: {"fedora": "44", "arch": "x86_64", "image": "fedora:44"}
+# Each cell is matrix.sh's row with the container image added: {"fedora": "45", "arch": "x86_64", "image": "fedora:45"}
 # or {"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}. images is the images of every cell, each once, in
 # order: the matrix of a CI job that runs on the runner's own architecture.
 set -euo pipefail

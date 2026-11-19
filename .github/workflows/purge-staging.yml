@@ -27,7 +27,7 @@ on:
         description: 'The channel repository whose staging/ is emptied'
       fedora-versions:
         type: string
-        default: '["44", "45"]'
+        default: '["45"]'
         description: 'JSON array of the Fedora releases whose empty staging index must exist'
       suite-matrix:
         type: string
@@ -49,7 +49,7 @@ on:
         description: 'The channel repository whose staging/ is emptied'
       fedora-versions:
         type: string
-        default: '["44", "45"]'
+        default: '["45"]'
         description: 'JSON array of the Fedora releases whose empty staging index must exist'
       suite-matrix:
         type: string
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:45
     # the publishes of this organisation to the channel run in this group; the purge waits for them
     concurrency:
       group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}

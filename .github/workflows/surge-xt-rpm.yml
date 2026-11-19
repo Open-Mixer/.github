@@ -58,7 +58,7 @@ jobs:
           kind: rpm
           matrix: ${{ inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["44"]'
+          releases: '["45"]'
           arches: '["x86_64", "aarch64"]'
 
   build:
@@ -129,7 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     concurrency:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
@@ -165,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     env:
       DO_PUBLISH: 'false'
     steps:

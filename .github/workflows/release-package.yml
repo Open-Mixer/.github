@@ -106,7 +106,7 @@ jobs:
         uses: ./.github/actions/check-matrix
         with:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          rpm-releases: '["44", "45"]'
+          rpm-releases: '["45"]'
           rpm-arches: '["x86_64"]'
           deb-releases: '["trixie"]'
           deb-arches: '["amd64"]'
@@ -130,7 +130,7 @@ jobs:
         with:
           kind: rpm
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["44", "45"]'
+          releases: '["45"]'
           arches: '["x86_64"]'
 
   rpm:

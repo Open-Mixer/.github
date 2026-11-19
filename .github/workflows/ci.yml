@@ -103,7 +103,7 @@ jobs:
       matrix:
         include:
           - kind: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
           - kind: deb
             image: debian:trixie
@@ -186,7 +186,7 @@ jobs:
       matrix:
         include:
           - kind: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git
           - kind: deb
             image: debian:trixie
@@ -217,7 +217,7 @@ jobs:
       matrix:
         include:
           - kind: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git curl
           - kind: deb
             image: debian:trixie
@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c dnf5-plugins python3 git findutils
 
@@ -269,7 +269,7 @@ jobs:
         uses: ./.github/actions/check-matrix
         with:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          rpm-releases: '["44", "45"]'
+          rpm-releases: '["45"]'
           rpm-arches: '["x86_64"]'
           deb-releases: '["trixie"]'
           deb-arches: '["amd64"]'
@@ -316,7 +316,7 @@ jobs:
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
           - arm: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
     steps:
       - run: ${{ matrix.tools }}
@@ -328,7 +328,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - name: The tools
         run: dnf install -y --setopt=install_weak_deps=False git nodejs python3 gnupg2 diffutils findutils
@@ -354,7 +354,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c python3-rpm dnf5 findutils
       - uses: actions/checkout@v4
@@ -367,7 +367,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build gcc git python3 findutils diffutils
       - uses: actions/checkout@v4
@@ -419,7 +419,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False git gcc make python3 pkgconf-pkg-config libasan diffutils
       - uses: actions/checkout@v4
@@ -438,7 +438,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build
       - uses: actions/checkout@v4
@@ -449,7 +449,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False git
       - uses: actions/checkout@v4
@@ -465,7 +465,7 @@ jobs:
           echo "built $evr"
           cmp() { rpm --eval "%{lua: print(rpm.vercmp('$1', '$2'))}"; }
           fail=0
-          for old in 0.10.6.f14a230-11.3.omx.fc44 0.10.6.f14a230-11.1 0.10.6.f14a230-12.fc44 0.10.6.f14a230-13.fc44; do
+          for old in 0.10.6.f14a230-11.3.omx.fc45 0.10.6.f14a230-11.1 0.10.6.f14a230-12.fc45 0.10.6.f14a230-13.fc45; do
             got=$(cmp "$evr" "$old")
             if [ "$got" = 1 ]; then echo "ok      $evr above $old"; else echo "::error::$evr does not sort above $old"; fail=1; fi
           done

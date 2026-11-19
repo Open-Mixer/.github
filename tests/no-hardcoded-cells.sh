@@ -46,9 +46,9 @@ ALLOW = [
     ("build-deb.yml", r"default: '\[\"amd64\", \"arm64\"\]'", "declares the caller's whole deb architectures, fed to release-matrix"),
     ("build-deb.yml", r"default: '\[\"trixie\"\]'", "declares the caller's whole Debian releases, fed to release-matrix"),
     ("build-rpm.yml", r"default: '\[\"x86_64\", \"aarch64\"\]'", "declares the caller's whole rpm architectures, fed to release-matrix"),
-    ("build-rpm.yml", r"default: '\[\"44\", \"45\"\]'", "declares the caller's whole Fedora releases, fed to release-matrix"),
-    ("promote-staged.yml", r"default: '\[\"(x86_64|trixie|amd64|44)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
-    ("purge-staging.yml", r"default: '\[\"(trixie|44)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
+    ("build-rpm.yml", r"default: '\[\"45\"\]'", "declares the caller's whole Fedora releases, fed to release-matrix"),
+    ("promote-staged.yml", r"default: '\[\"(x86_64|trixie|amd64|45)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
+    ("purge-staging.yml", r"default: '\[\"(trixie|45)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
     ("release-c-lib.yml", r"arch-matrix: \$\{\{ inputs\.arm", "the caller's whole architectures, passed to build-rpm.yml and build-deb.yml"),
 ]
 # a matrix of toolchain arms, each one image the quick set always builds (rule A holds the image to the set)
@@ -214,26 +214,26 @@ check_plan() {
 D=workflow_dispatch
 DEB2='trixie amd64, trixie arm64'
 check_plan "pugl-nanovg deb" pugl-nanovg-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
-check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
+check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
 check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie amd64' 'trixie amd64' ''
 check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
-check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
-check_plan "rncbc-v1 rpm" rncbc-v1-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
+check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
+check_plan "rncbc-v1 rpm" rncbc-v1-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
 check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
-check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '44 x86_64' '44 x86_64, 44 aarch64' 'fc44 aarch64'
-check_plan "clap rpm" clap-rpm.yml plan $D '' '44 x86_64, 45 x86_64' '44 x86_64, 44 aarch64, 45 x86_64, 45 aarch64' 'fc44 aarch64, fc45 aarch64'
+check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
+check_plan "clap rpm" clap-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
 # the release package: an Architecture: all deb, built and laid out for the suites of the set; one noarch rpm per Fedora
 # release of the set (the dist tag ties a build to its release); its install check after the publish
 check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie amd64' 'trixie amd64' ''
-check_plan "openmixer-release rpm" release-package.yml rpm-plan push tag '44 x86_64, 45 x86_64' '44 x86_64, 45 x86_64' ''
-render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
-    && yes "openmixer-release verify, quick: fedora:44, fedora:45, debian:trixie" || { no "openmixer-release verify, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-render_plan release-package.yml verify-plan full push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
+check_plan "openmixer-release rpm" release-package.yml rpm-plan push tag '45 x86_64' '45 x86_64' ''
+render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
+    && yes "openmixer-release verify, quick: fedora:45, debian:trixie" || { no "openmixer-release verify, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
+render_plan release-package.yml verify-plan full push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
     && yes "openmixer-release verify, full: the same three images (no bookworm)" || { no "openmixer-release verify, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
 # .github's own CI: the language packs
-render_plan ci.yml plan quick push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
-    && yes "ci langpacks, quick: fedora:44, fedora:45, debian:trixie" || { no "ci langpacks, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:44","fedora:45","debian:trixie"]' ] \
+render_plan ci.yml plan quick push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
+    && yes "ci langpacks, quick: fedora:45, debian:trixie" || { no "ci langpacks, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
+render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
     && yes "ci langpacks, full: the same three images (no bookworm)" || { no "ci langpacks, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
 # promote-staged.yml stays as it is, by design: it promotes the whole matrix (collect.py refuses a staged tree that lacks
 # any release or architecture), so its install checks cover what it promotes; its lists are inputs, never literals in a job.
