@@ -4,7 +4,7 @@
 # The quick and the full release matrix, offline (docs/release-operations.md, "The quick set and the full matrix").
 # Proves:
 #   - the quick set is written once, in .github/actions/release-matrix/quick.txt, and is fc45 x86_64
-#     for rpm and trixie amd64 and trixie arm64 for deb;
+#     for rpm and trixie arm64 for deb (the development set; the full set returns at the end of development);
 #   - build-rpm.yml and build-deb.yml, rendered: the first job asks release-matrix once, with the caller's matrix,
 #     the matrix input, the organisation variable, staged and source-ref; the build and the install check both take
 #     their cells from its answer and nothing else, so an install check never runs for a cell that was not built;
@@ -58,7 +58,7 @@ def text(v):
 
 # ---- the quick set, written once
 quick = [l.split() for l in open(f"{act}/quick.txt") if l.strip() and not l.startswith("#")]
-assert quick == [["rpm", "45", "x86_64"], ["deb", "trixie", "amd64"], ["deb", "trixie", "arm64"]], \
+assert quick == [["rpm", "45", "x86_64"], ["deb", "trixie", "arm64"]], \
     f"quick.txt is {quick}"
 action = yaml.safe_load(open(f"{act}/action.yml"))
 step = action["runs"]["steps"]
@@ -66,7 +66,7 @@ assert len(step) == 1 and step[0]["run"].strip() == '"$GITHUB_ACTION_PATH/matrix
 sh = open(f"{act}/matrix.sh").read()
 assert "quick.txt" in sh and not re.search(r"\b(trixie|bookworm|x86_64|aarch64|arm64|amd64)\b", re.sub(r"(?m)^\s*#.*$", "", sh)), \
     "matrix.sh names a cell of its own: the quick set is quick.txt alone"
-print("ok   the quick set is fc45 x86_64 (rpm), trixie amd64 and trixie arm64 (deb), written in quick.txt alone")
+print("ok   the quick set is fc45 x86_64 (rpm), trixie arm64 (deb), written in quick.txt alone")
 
 WF = {"rpm": (f"{here}/.github/workflows/build-rpm.yml", "fedora-versions", "fedora"),
       "deb": (f"{here}/.github/workflows/build-deb.yml", "suite-matrix", "suite")}
@@ -142,8 +142,8 @@ def run(kind, inputs, event, ref_type, var):
 
 FULL = {"rpm": ["fc45, x86_64", "fc45, aarch64"],
         "deb": ["trixie, amd64", "trixie, arm64"]}
-QUICK = {"rpm": ["fc45, x86_64"], "deb": ["trixie, amd64", "trixie, arm64"]}
-X86 = {"rpm": {"arch-matrix": '["x86_64"]'}, "deb": {"arch-matrix": '["amd64"]'}}
+QUICK = {"rpm": ["fc45, x86_64"], "deb": ["trixie, arm64"]}
+X86 = {"rpm": {"arch-matrix": '["x86_64"]'}, "deb": {"arch-matrix": '["arm64"]'}}
 # (what, inputs, event, ref type, OMX_RELEASE_MATRIX, the set, the jobs)
 cases = [
     ("a tag push of a caller that passes nothing", {"publish": True}, "push", "tag", None, "full", FULL),
@@ -172,22 +172,29 @@ for what, inputs, event, rt, var, want_set, want in cases:
         n += 1
 print(f"ok   {n} runs rendered: a tag is full unless the wave is open, a staged run and a dispatch are quick unless told full, a pull request is full")
 
-# the three quick cells and the four of a release, counted across the two workflows
+# the two quick cells and the four of a release, counted across the two workflows
 q = sum(len(run(k, {"staged": True}, "workflow_dispatch", "branch", None)[0].jobs) for k in WF)
 f = sum(len(run(k, {"publish": True}, "push", "tag", None)[0].jobs) for k in WF)
-assert (q, f) == (3, 4), f"a staged run builds {q} cells and a release {f}, want 3 and 4"
+assert (q, f) == (2, 4), f"a staged run builds {q} cells and a release {f}, want 2 and 4"
 print("ok   a staged run is 4 build jobs and 4 install checks, a release 6 and 6")
 
-# a caller built for x86_64 alone: the quick rpm cells, and of the quick deb cells the one it builds, trixie amd64
+# a caller built for x86_64 alone: the quick rpm cells, and of the quick deb cells the one it builds, trixie arm64
 got, _ = run("rpm", dict(X86["rpm"], staged=True), "workflow_dispatch", "branch", None)
 assert (got.set, got.jobs, got.first) == ("quick", QUICK["rpm"], "x86_64"), got
 got, log = run("deb", dict(X86["deb"], staged=True), "workflow_dispatch", "branch", None)
-assert (got.set, got.jobs) == ("quick", ["trixie, amd64"]), f"{got} {log}"
-# a lane's dry-run dispatch with arm off while the wave is open (omx-plugins ci.yml -> release.yml, arm: false): trixie amd64,
+assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"{got} {log}"
+# a lane's dry-run dispatch with arm off while the wave is open (omx-plugins ci.yml -> release.yml, arm: false): trixie arm64,
 # never the full deb matrix. Before trixie amd64 joined the quick set this fell back to full and built bookworm amd64
 # (omx-plugins run 43412676885, 2026-11-13)
 got, log = run("deb", dict(X86["deb"]), "workflow_dispatch", "branch", "quick")
-assert (got.set, got.jobs) == ("quick", ["trixie, amd64"]), f"a lane's amd64-only dispatch builds {got.set} {got.jobs}: {log}"
+assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"a lane's amd64-only dispatch builds {got.set} {got.jobs}: {log}"
+# the development set wins over the caller's architectures: an amd64-only caller (omx-plugins ci -> release.yml, arm: false)
+# while the set is trixie arm64 builds trixie arm64, never its full deb matrix; likewise an aarch64-only rpm caller builds
+# the set's fc45 x86_64. The architecture list only narrows within the set.
+got, log = run("deb", {"arch-matrix": '["amd64"]'}, "workflow_dispatch", "branch", "quick")
+assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"an amd64-only caller in a quick run builds {got.set} {got.jobs}, not the set's trixie arm64: {log}"
+got, log = run("rpm", {"arch-matrix": '["aarch64"]'}, "workflow_dispatch", "branch", "quick")
+assert (got.set, got.jobs) == ("quick", ["fc45, x86_64"]), f"an aarch64-only rpm caller in a quick run builds {got.set} {got.jobs}, not the set's fc45 x86_64: {log}"
 # one Fedora release asked for: the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
@@ -198,7 +205,7 @@ got, _ = run("rpm", {"arch-matrix": '["aarch64", "x86_64"]', "publish": True}, "
 assert got.first == "aarch64", f"a full run ships the source package from {got.first}, not the caller's first architecture"
 got, _ = run("deb", {"staged": True}, "workflow_dispatch", "branch", None)
 assert got.releases == "trixie", f"the quick deb run publishes into {got.releases!r}"
-print("ok   a caller's narrower matrix is kept: x86_64 alone builds the quick cells it has (trixie amd64 for deb), one Fedora release stays one")
+print("ok   a caller's narrower matrix is kept: x86_64 alone builds the quick cells it has (trixie arm64 for deb), one Fedora release stays one")
 
 for what, inputs, var, word in (("matrix: fast", {"matrix": "fast"}, None, "matrix is 'fast'"), ("OMX_RELEASE_MATRIX=some", {}, "some", "OMX_RELEASE_MATRIX is 'some'")):
     for kind in WF:
@@ -340,7 +347,7 @@ ok "quick-deps.sh: a quick-only version is refused by name and cells; full, olde
 note() { KIND=$1 RELEASES=$2 ARCHES=$3 MATRIX=$4 WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=workflow_dispatch REF_TYPE='' \
     GITHUB_OUTPUT=$t/note.out "$act/matrix.sh" 2>&1 | grep '^::notice::[a-z]* matrix'; }
 out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' quick)
-echo "$out" | grep -q '(skipped while quick: bookworm amd64, bookworm arm64)$' || fail "a quick deb run does not name what it skipped: $out"
+echo "$out" | grep -q '(skipped while quick: bookworm amd64, bookworm arm64, trixie amd64)$' || fail "a quick deb run does not name what it skipped: $out"
 out=$(note rpm '["44", "45"]' '["x86_64", "aarch64"]' quick)
 echo "$out" | grep -q '(skipped while quick: fc44 x86_64, fc44 aarch64, fc45 aarch64)$' || fail "a quick rpm run does not name what it skipped: $out"
 out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' full)

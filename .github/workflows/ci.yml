@@ -272,7 +272,7 @@ jobs:
           rpm-releases: '["45"]'
           rpm-arches: '["x86_64"]'
           deb-releases: '["trixie"]'
-          deb-arches: '["amd64"]'
+          deb-arches: '["arm64"]'
 
   langpacks:
     name: language packs (${{ matrix.image }})
