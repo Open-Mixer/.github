@@ -89,6 +89,29 @@ arm_ceiling() {
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
 
+  # a same-pass entry must be a source or a binary in the channel's metadata (.github: omx-clap-core named a REPOSITORY, its
+  # source is omx-clap-host, and the pass passed silently): an entry that matches neither is refused by name, one line each
+  expect 1 'same-pass entry omx-clap-core is neither a source nor a binary package in the channel' \
+    'ceiling: a same-pass entry naming a repository (no source or binary of that name) is refused by name' -- \
+    ceiling --kind deb --published "$d/published" --new "$d/whole-pass" --same-pass 'hostd clap-host omx-clap-core'
+  [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && ok 'ceiling: ... and only that entry is named' || bad 'ceiling: the refusal names more than the unknown entry'
+  # a SOURCE whose binary is named otherwise (Source: field) is a name of the channel: accepted, nothing refused for it
+  { printf 'Package: clap-host\nSource: clap-core (0.30.6-1)\nVersion: 0.30.6\nArchitecture: amd64\nDepends: libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)\n\n'
+    stanza libproto0 0.4.3 amd64
+  } > "$d/src-published"
+  expect 0 - 'ceiling: a same-pass source whose binary is named otherwise is accepted (clap-core builds clap-host)' -- \
+    ceiling --kind deb --published "$d/src-published" --new "$d/lib-patch" --same-pass clap-core
+  ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: clap-core refused'
+  # a binary name is accepted
+  expect 0 - 'ceiling: a same-pass binary name is accepted' -- ceiling --kind deb --published "$d/published" --new "$d/lib-patch" --same-pass clap-host
+  ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: clap-host refused'
+  # a package new to the channel and built in this run is among the metadata: accepted. One named in the pass but not built
+  # in this run is not in the metadata, and is refused (the omx-clap-core arm above)
+  { stanza libproto0 0.4.5 amd64; stanza newsrc 1.0 amd64; } > "$d/patch-and-new"
+  expect 0 - 'ceiling: a brand-new source built in this run is accepted' -- \
+    ceiling --kind deb --published "$d/published" --new "$d/patch-and-new" --same-pass newsrc
+  ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: newsrc refused'
+
   # a pull request's snapshot (<v>~git<time>.<sha>, sorting below <v>) is judged at the <v> it would release (#93): a
   # published consumer's (>= <v>) floor does not refuse it; a snapshot of an older version still is
   { stanza libx7 1.10.4 amd64
@@ -254,6 +277,11 @@ arm_deb_source() {
     deb --channel "$d/c" "${args[@]}" --same-pass clap-core
   grep -E '^(ERROR: |::error::)' "$t/out" | grep -qF unrelated && [ -z "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -vF unrelated)" ] \
     && ok 'deb source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'deb source: (c) a red is not unrelated'
+  # (d) a same-pass entry that is neither a source nor a binary of the channel is refused by name, the rest still covered
+  expect 1 'same-pass entry nosuch-repo is neither a source nor a binary package in the channel' \
+    'deb source: (d) a same-pass repository name is refused by name' -- deb --channel "$d/a" "${args[@]}" --same-pass 'clap-core nosuch-repo'
+  [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
+    && ok 'deb source: (d) ... and the source is still covered' || bad 'deb source: (d) the refusal or the covering changed'
 }
 
 arm_deb_unbuilt() {
@@ -375,6 +403,11 @@ arm_rpm_source() {
     "${args[@]}" --channel "$d/c" --same-pass clap-core
   grep -E '^(ERROR: |::error::)' "$t/out" | grep -qF unrelated && [ -z "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -vF unrelated)" ] \
     && ok 'rpm source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'rpm source: (c) a red is not unrelated'
+  # (d) a same-pass entry that is neither a source nor a binary of the channel is refused by name, the rest still covered
+  expect 1 'same-pass entry nosuch-repo is neither a source nor a binary package in the channel' \
+    'rpm source: (d) a same-pass repository name is refused by name' -- "${args[@]}" --channel "$d/a" --same-pass 'clap-core nosuch-repo'
+  [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
+    && ok 'rpm source: (d) ... and the source is still covered' || bad 'rpm source: (d) the refusal or the covering changed'
 }
 
 # A QUICK RELEASE NEVER REACHES A TREE OUTSIDE THE QUICK SET (omx-dsp 0.32.1, 2026-11-14). The quick set builds fc44 and

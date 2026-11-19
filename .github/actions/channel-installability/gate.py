@@ -32,7 +32,8 @@ it causes: its own release is checked when it publishes. --unbuilt-arch-pass (a 
 architecture) does the same, on an architecture the release brings no binary package for, for the binary packages it
 built on another: the release builds them there at the new version. Every architecture is still checked.
 A same-pass name may be a SOURCE package: it covers every binary the channel's own metadata says it builds (rpm SOURCERPM,
-deb Source field, the Package name when absent). A package that installs alone only through a same-pass binary's unmet
+deb Source field, the Package name when absent). A same-pass name that is neither a source nor a binary of the channel's
+metadata is RED by name (it covers nothing: a repository name, say). A package that installs alone only through a same-pass binary's unmet
 requirement (every unmet requirement on its dependency path is held by binaries of the pass) is reported like the pass's own;
 any breakage through a package outside the pass stays RED. "before" is the published channel without the exact versions
 this release brings, so a gate re-run after a partial publish judges the release, not the channel it already changed.
@@ -482,6 +483,18 @@ def expand_same_pass(same_pass, pkgs):
     return list(same_pass) + covered
 
 
+def unknown_same_pass_reds(same_pass, pkgs):
+    """A same-pass entry that matches NEITHER a source NOR a binary name in the channel's metadata (rpm SOURCERPM and
+    name, deb Source and Package) is refused by name: it covers nothing, and the breakage it was meant to excuse stays
+    red with no hint why (a repository name, omx-clap-core, whose source is omx-clap-host). pkgs is the metadata the gate
+    read for the pass, the packages this pass builds included: a brand-new source built in this run matches here. A
+    brand-new source that this run does not build is not in the metadata and is refused too."""
+    known = {p.name for p in pkgs} | {p.source for p in pkgs}
+    return [f"same-pass entry {n} is neither a source nor a binary package in the channel (a repository name? its source "
+            f"may be named differently; a package new to the channel and not built in this run is refused as well)"
+            for n in dict.fromkeys(same_pass) if n not in known]
+
+
 def held_by_pass(kind, pkgs, req, dep, same_pass):
     """True when every requirement the newest builds leave unmet on the way from req (the package installed alone)
     is held by a binary released in the same pass: the walk follows the dependencies between our own packages at
@@ -869,6 +882,7 @@ def deb_arm(a):
             for suite in [x for x in suites if not any(c.startswith(f"{x}/") for c in a.cell)]:
                 say(f"debian/{suite}: outside the cells of the set, not judged")
             suites = [x for x in suites if any(c.startswith(f"{x}/") for c in a.cell)]
+        read_pkgs = []  # the channel's metadata the gate read, every suite: a same-pass name is checked against it
         for suite in suites:
             pub_src = join(a.channel, "debian", suite, "Packages")
             published = parse_stanzas(open(fetch(pub_src, os.path.join(work, f"pub-{suite}"))).read())
@@ -882,6 +896,7 @@ def deb_arm(a):
             arches = a.arch or sorted({f.get("Architecture") for f, _ in published + new} - {"all", None, ""})
             new_names = {f["Package"] for f, _ in new}
             chan = deb_pkgs(published + new)
+            read_pkgs += chan
             say(f"debian/{suite}: {len(published)} published, {len(new)} new "
                 f"({' '.join(sorted(new_names)) or 'none'}), architectures {' '.join(arches)}")
             # a dry run judges only the architectures it built (the artefacts say which); a real publish judges them all
@@ -917,6 +932,7 @@ def deb_arm(a):
             reds += [f"debian/{suite}: {x}" for x in r]
             warns += [f"debian/{suite}: {x}" for x in w]
             notes += [f"debian/{suite}: {x}" for x in n]
+        reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
     finally:
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1001,6 +1017,7 @@ def rpm_arm(a):
         if not versions:
             raise Cannot(f"no Fedora release served under {a.channel}/fedora and none given")
         arches = a.arch or ["x86_64", "aarch64"]
+        read_pkgs = []  # the channel's metadata the gate read, every cell: a same-pass name is checked against it
         for rel in versions:
             for arch in arches:
                 where = f"fedora/{rel} {arch}"
@@ -1030,6 +1047,7 @@ def rpm_arm(a):
                 ids = [r for r, _ in pub]
                 published = repoquery(base, pub, ids, excl)
                 same_pass = expand_same_pass(unbuilt, published + new_pkgs)
+                read_pkgs += published + new_pkgs
                 excl_opts = [f"--setopt={rid}.excludepkgs={','.join(excl)}" for rid in ids] if excl else []
                 before = run_repoclosure(base + excl_opts, pub + ext, ids, arch)
                 # repoclosure --newest takes the newest of each repository, so the published versions of what the
@@ -1062,6 +1080,8 @@ def rpm_arm(a):
                 reds += [f"{where}: {x}" for x in r]
                 warns += [f"{where}: {x}" for x in w]
                 notes += [f"{where}: {x}" for x in n]
+        # the entries are the pass's own names, not the unbuilt ones the cells derive from their metadata
+        reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
     finally:
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1142,7 +1162,8 @@ def ceiling_cmd(a):
     else:
         pub = parse_rpm_query(open(a.published).read())
         new = sum((parse_rpm_query(open(f).read()) for f in a.new), [])
-    return report("ceiling", *ceiling_check(a.kind, pub, new, a.same_pass))
+    r, w, n = ceiling_check(a.kind, pub, new, a.same_pass)
+    return report("ceiling", unknown_same_pass_reds(a.same_pass, pub + new) + r, w, n)
 
 
 def main(argv=None):
