@@ -89,6 +89,14 @@ arm_ceiling() {
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
 
+  # a published consumer whose upper bound is AT the version (<= 0.32.5): a new snapshot of 0.32.5 is that release, whether
+  # built ~git (below) or +git (above, a staged run, a dry run); judged raw, the +git one fell outside the range
+  { stanza libproto0 0.32.4 amd64; stanza hostd 0.19.1 amd64 'libproto0 (>= 0.32.0), libproto0 (<= 0.32.5)'; } > "$d/pub-le"
+  stanza libproto0 0.32.5+git1795000000.abc1234 amd64 > "$d/new-plus"
+  stanza libproto0 0.32.5~git1795000000.abc1234 amd64 > "$d/new-tilde"
+  expect 0 - 'ceiling: a +git snapshot of 0.32.5 meets a published consumer declaring (<= 0.32.5)' -- ceiling --kind deb --published "$d/pub-le" --new "$d/new-plus"
+  expect 0 - 'ceiling: a ~git snapshot of 0.32.5 meets a published consumer declaring (<= 0.32.5)' -- ceiling --kind deb --published "$d/pub-le" --new "$d/new-tilde"
+
   # a same-pass entry must be a source or a binary in the channel's metadata (.github: omx-clap-core named a REPOSITORY, its
   # source is omx-clap-host, and the pass passed silently): an entry that matches neither is refused by name, one line each
   expect 1 'same-pass entry omx-clap-core is neither a source nor a binary package in the channel' \
