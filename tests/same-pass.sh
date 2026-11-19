@@ -51,7 +51,7 @@ run() {
   local script=$1 built=$2 list=$3 ref=$4 out e
   out=$t/out.$RANDOM; e=$t/err.$RANDOM; : > "$out"
   rc=0
-  (cd "$ws" && env LIST="$list" REF="$ref" GITHUB_SHA="$built" GITHUB_OUTPUT="$out" bash "$script") >"$e" 2>&1 || rc=$?
+  (env SAME_PASS_SRC="$ws" LIST="$list" REF="$ref" GITHUB_SHA="$built" GITHUB_OUTPUT="$out" bash "$script") >"$e" 2>&1 || rc=$?
   got=$(sed -n 's/^list=//p' "$out")
   err=$(cat "$e")
 }

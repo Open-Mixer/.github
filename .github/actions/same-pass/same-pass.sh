@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# same-pass.sh: the reader behind .github/actions/same-pass. It runs in the caller's checkout (the working directory),
-# with LIST (the dispatch input), REF (the commit being built, empty for GITHUB_SHA) and GITHUB_SHA / GITHUB_OUTPUT.
-# It is the samepass job every release.yml carried, moved here unchanged except where marked.
+# same-pass.sh: the reader behind .github/actions/same-pass. It reads the sparse checkout of the caller's repository at
+# SAME_PASS_SRC, with LIST (the dispatch input), REF (the commit being built, empty for GITHUB_SHA) and GITHUB_SHA /
+# GITHUB_OUTPUT. It is the samepass job every release.yml carried, moved here unchanged except where marked.
 set -euo pipefail
+cd "${SAME_PASS_SRC:-.}"
 f=.github/release-same-pass
 # globbing off: a name is validated before it is used, so a '*' in the list or the file must never expand to a path
 set -f
