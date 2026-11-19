@@ -69,6 +69,19 @@ jobs:
       - run: tests/no-retired-debian-release.sh
       - run: tests/resolve-base.sh
       - run: tests/v1-not-behind.sh
+      - run: tests/same-pass.sh
+      - name: The same-pass action reads its list, from the input and from no file here
+        id: same
+        uses: ./.github/actions/same-pass
+        with:
+          list: 'alpha beta'
+      - name: The same-pass action with no list reads the file at this commit, and this repository has none
+        id: none
+        uses: ./.github/actions/same-pass
+      - name: The same-pass list is the input, and no file gives an empty list
+        run: |
+          test "${{ steps.same.outputs.list }}" = 'alpha beta'
+          test -z "${{ steps.none.outputs.list }}"
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test

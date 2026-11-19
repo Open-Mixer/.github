@@ -54,6 +54,12 @@ check() { # <root>
   if [ -n "$wf" ]; then
     (cd "$root" && xargs python3 "$HERE/no-local-copies/release-order.py" <<<"$wf") || bad=1
   fi
+  # the same-pass list has one shared reader (.github/actions/same-pass): a workflow that reads the file itself is a copy of it
+  local sp
+  sp=$(git -c safe.directory="$root" -C "$root" grep -l 'release-same-pass' -- .github/workflows || true)
+  if [ -n "$sp" ]; then
+    echo "no-local-copies: $sp reads release-same-pass itself (a copy of the same-pass reader): call Open-Mixer/.github/.github/actions/same-pass@openmixer-v1" >&2; bad=1
+  fi
   [ "$bad" = 0 ] || return 1
   echo "no-local-copies: the shared checks run from Open-Mixer/.github, and no copy is kept"
 }
@@ -129,6 +135,16 @@ jobs:
     needs: check
     if: \${{ always() }}"
   plant "a deb job that runs after a cancelled or failed rpm is red" .github/workflows/release.yml "$REL_CANCELLED"
+  SAME_COPY="$REL_PLAIN
+  samepass:
+    runs-on: ubuntu-latest
+    steps: [{run: 'f=.github/release-same-pass'}]"
+  SAME_CALLER="$REL_PLAIN
+  samepass:
+    runs-on: ubuntu-latest
+    steps: [{uses: 'Open-Mixer/.github/.github/actions/same-pass@openmixer-v1'}]"
+  plant "a release workflow that reads release-same-pass itself is red" .github/workflows/release.yml "$SAME_COPY"
+  green "a release workflow that calls the same-pass action" "$SAME_CALLER"
   rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/.github/workflows" "$t/r/tools"; echo 'int main(void) { return 0; }' > "$t/r/tools/main.c"
   cp "$STUB" "$t/r/.githooks/commit-msg"; printf '%s\n' "$REL_PLAIN" > "$t/r/.github/workflows/release.yml"; git -C "$t/r" add -A
   if check "$t/r" >/dev/null 2>&1; then echo "ok   a deb job with needs: rpm and no if is green"; else echo "FAIL a deb job with needs: rpm and no if is red"; fail=1; fi
@@ -178,6 +194,11 @@ jobs:
   sed -e "s|^HERE=.*|HERE=$HERE|" -e 's|^  wf=\$(grep.*|  wf=|' "${BASH_SOURCE[0]}" > "$t/sab2.sh"
   rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks" "$t/s/.github/workflows"; cp "$STUB" "$t/s/.githooks/commit-msg"; printf '%s\n' "$REL_CANCELLED" > "$t/s/.github/workflows/release.yml"; git -C "$t/s" add -A
   if (cd "$HERE/no-local-copies" && bash "$t/sab2.sh" "$t/s" >/dev/null 2>&1); then echo "ok   sabotage: without the release-order rule a deb after a red rpm passes"; else echo "FAIL sabotage: the release-order rule is not what catches it"; fail=1; fi
+  # sabotage: with the same-pass rule gone, a release workflow that carries the copy passes, so that arm is what catches it
+  sed -e "s|^HERE=.*|HERE=$HERE|" -e "s|grep -l 'release-same-pass' --|grep -l NEVER-MATCHES --|" "${BASH_SOURCE[0]}" > "$t/sab5.sh"
+  cmp -s "$t/sab5.sh" "${BASH_SOURCE[0]}" && { echo "FAIL sabotage: no same-pass rule to drop"; fail=1; }
+  rm -rf "$t/s"; git init -q "$t/s"; mkdir -p "$t/s/.githooks" "$t/s/.github/workflows" "$t/s/tools"; cp "$STUB" "$t/s/.githooks/commit-msg"; echo 'int main(void) { return 0; }' > "$t/s/tools/main.c"; printf '%s\n' "$SAME_COPY" > "$t/s/.github/workflows/release.yml"; git -C "$t/s" add -A
+  if (cd "$HERE/no-local-copies" && bash "$t/sab5.sh" "$t/s" >/dev/null 2>&1); then echo "ok   sabotage: without the same-pass rule a release workflow with the copy passes"; else echo "FAIL sabotage: the same-pass rule is not what catches the copy"; fail=1; fi
   exit "$fail"
 fi
 check "$(cd "${1:-.}" && pwd)"
