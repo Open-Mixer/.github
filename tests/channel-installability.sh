@@ -23,7 +23,7 @@
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -88,6 +88,34 @@ arm_ceiling() {
     ceiling --kind deb --published "$d/published" --new "$d/no-floor"
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
+
+  # a same-pass entry must be a source or a binary in the channel's metadata (.github: omx-clap-core named a REPOSITORY, its
+  # source is omx-clap-host, and the pass passed silently): an entry that matches neither is refused by name, one line each
+  expect 1 'same-pass entry omx-clap-core is neither a source nor a binary package in the channel' \
+    'ceiling: a same-pass entry naming a repository (no source or binary of that name) is refused by name' -- \
+    ceiling --kind deb --published "$d/published" --new "$d/whole-pass" --same-pass 'hostd clap-host omx-clap-core'
+  [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && ok 'ceiling: ... and only that entry is named' || bad 'ceiling: the refusal names more than the unknown entry'
+  # a SOURCE whose binary is named otherwise (Source: field) is a name of the channel: accepted, nothing refused for it
+  { printf 'Package: clap-host\nSource: clap-core (0.30.6-1)\nVersion: 0.30.6\nArchitecture: amd64\nDepends: libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)\n\n'
+    stanza libproto0 0.4.3 amd64
+  } > "$d/src-published"
+  expect 0 - 'ceiling: a same-pass source whose binary is named otherwise is accepted (clap-core builds clap-host)' -- \
+    ceiling --kind deb --published "$d/src-published" --new "$d/lib-patch" --same-pass clap-core
+  ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: clap-core refused'
+  # ceiling mode expands a same-pass SOURCE to its binaries exactly as the arms do (one expand_same_pass): clap-core builds
+  # clap-host, so clap-host is released in the pass and its ceiling does not refuse the new library
+  expect 0 'same pass: clap-core also covers its binaries clap-host' \
+    'ceiling: a same-pass source covers its differently named binary (clap-host), as in the arms' -- \
+    ceiling --kind deb --published "$d/src-published" --new "$d/lib-alone" --same-pass clap-core
+  # a binary name is accepted
+  expect 0 - 'ceiling: a same-pass binary name is accepted' -- ceiling --kind deb --published "$d/published" --new "$d/lib-patch" --same-pass clap-host
+  ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: clap-host refused'
+  # a package new to the channel and built in this run is among the metadata: accepted. One named in the pass but not built
+  # in this run is not in the metadata, and is refused (the omx-clap-core arm above)
+  { stanza libproto0 0.4.5 amd64; stanza newsrc 1.0 amd64; } > "$d/patch-and-new"
+  expect 0 - 'ceiling: a brand-new source built in this run is accepted' -- \
+    ceiling --kind deb --published "$d/published" --new "$d/patch-and-new" --same-pass newsrc
+  ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: newsrc refused'
 
   # a pull request's snapshot (<v>~git<time>.<sha>, sorting below <v>) is judged at the <v> it would release (#93): a
   # published consumer's (>= <v>) floor does not refuse it; a snapshot of an older version still is
@@ -254,6 +282,11 @@ arm_deb_source() {
     deb --channel "$d/c" "${args[@]}" --same-pass clap-core
   grep -E '^(ERROR: |::error::)' "$t/out" | grep -qF unrelated && [ -z "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -vF unrelated)" ] \
     && ok 'deb source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'deb source: (c) a red is not unrelated'
+  # (d) a same-pass entry that is neither a source nor a binary of the channel is refused by name, the rest still covered
+  expect 1 'same-pass entry nosuch-repo is neither a source nor a binary package in the channel' \
+    'deb source: (d) a same-pass repository name is refused by name' -- deb --channel "$d/a" "${args[@]}" --same-pass 'clap-core nosuch-repo'
+  [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
+    && ok 'deb source: (d) ... and the source is still covered' || bad 'deb source: (d) the refusal or the covering changed'
 }
 
 arm_deb_unbuilt() {
@@ -375,6 +408,11 @@ arm_rpm_source() {
     "${args[@]}" --channel "$d/c" --same-pass clap-core
   grep -E '^(ERROR: |::error::)' "$t/out" | grep -qF unrelated && [ -z "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -vF unrelated)" ] \
     && ok 'rpm source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'rpm source: (c) a red is not unrelated'
+  # (d) a same-pass entry that is neither a source nor a binary of the channel is refused by name, the rest still covered
+  expect 1 'same-pass entry nosuch-repo is neither a source nor a binary package in the channel' \
+    'rpm source: (d) a same-pass repository name is refused by name' -- "${args[@]}" --channel "$d/a" --same-pass 'clap-core nosuch-repo'
+  [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
+    && ok 'rpm source: (d) ... and the source is still covered' || bad 'rpm source: (d) the refusal or the covering changed'
 }
 
 # A QUICK RELEASE NEVER REACHES A TREE OUTSIDE THE QUICK SET (omx-dsp 0.32.1, 2026-11-14). The quick set builds fc44 and
@@ -587,9 +625,22 @@ arm_mirror_client() {
     || bad 'mirror client: the upgrade did not install openmixer-release 8 and freereac-release'
 }
 
+arm_deb_cells() {
+  # a deb run whose cells leave NO suite judged (the cell names only suites this run neither serves nor built) reads no
+  # metadata, so a same-pass name has nothing to match: it is not refused as unknown (a false red); a note says so
+  local d=$t/cells; mkdir -p "$d/a/debian/bookworm"
+  { stanza libc6 2.36-9 amd64; } > "$d/bg"
+  { stanza libproto0 0.4.4 amd64; } > "$d/a/debian/bookworm/Packages"
+  stanza libproto0 0.5.0 amd64 > "$d/lib"
+  expect 0 'same-pass names not checked: no suite judged' \
+    'deb cells: no suite judged, the same-pass names are not refused' -- \
+    deb --channel "$d/a" --suite bookworm --arch amd64 --bg "$d/bg" --new-index "$d/lib" --cell trixie/amd64 --same-pass 'clap-core nosuch-repo'
+  ! grep -q 'same-pass entry' "$t/out" && ok 'deb cells: ... and no entry is named' || bad 'deb cells: a same-pass entry is refused with no suite read'
+}
+
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
-  arms=(ceiling)
+  arms=(ceiling deb_cells)
   command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt external_deb)
   command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm mirror_client)
 fi
