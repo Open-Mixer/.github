@@ -7,7 +7,7 @@ name: mirror-freereac-release
 # pull freereac-release from here, it installs the FreeREAC repository and its one key, and that repository then serves reac-pw.
 #
 # A tag mirror-freereac-release-<Version>-<Release> (the package's own evr; a deb carries Version-Release the same way) is the release:
-# it downloads that package from FreeREAC's channel (fedora 44 and 45 rpm, trixie deb), VERIFIES it against the one FreeREAC key
+# it downloads that package from FreeREAC's channel (fedora 45 rpm, trixie deb), VERIFIES it against the one FreeREAC key
 # committed in actions/mirror-release/freereac-key.fpr (an rpm by its signature, a deb by the signed Release and index), takes the rpm's
 # signature header off, and publishes it through the shared publish actions, which sign it with THIS channel's key: a client of this
 # channel holds only that key, so the FreeREAC signature could not be checked by gpgcheck=1 (actions/mirror-release/mirror.sh explains).
