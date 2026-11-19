@@ -46,3 +46,28 @@ bad = [j for j in jobs if j != "preflight" and can_run(j)]
 assert not bad, f"build-deb.yml: with enabled false these jobs can still run: {bad}"
 print("ok   build-deb.yml: enabled false skips every job")
 PY
+
+# clap-headers-deb.yml is a workflow of its own (a tag clap-headers-*), not a call of build-deb: it ships no Debian
+# package either, so each of its jobs that needs nothing is `if: ${{ false }}`, and every other one needs such a job.
+python3 -I - "$here/../.github/workflows/clap-headers-deb.yml" <<'PY'
+import re, sys, yaml
+jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+off = lambda j: re.sub(r"\s", "", str(jobs[j].get("if", ""))) == "${{false}}"
+def needs(j):
+    n = jobs[j].get("needs", [])
+    return [n] if isinstance(n, str) else n
+def can_run(j):
+    if off(j):
+        return False
+    n = needs(j)
+    if not n:
+        return True
+    cond = str(jobs[j].get("if", ""))
+    if "always()" in cond or "!cancelled()" in cond:
+        return True
+    return all(can_run(x) for x in n)
+bad = [j for j in jobs if can_run(j)]
+assert not bad, f"clap-headers-deb.yml ships no Debian package, yet these jobs can run: {bad}"
+print("ok   clap-headers-deb.yml: no job can run")
+PY
+
