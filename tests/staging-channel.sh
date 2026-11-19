@@ -175,8 +175,17 @@ def check(path, kind):
         assert ev(st["with"]["changelogs-url"], staged).endswith("/staging/deb/changelogs"), f"{path}: staged changelogs URL"
         assert ev(rst["with"]["changelogs-url"], tag, ref_type="tag").endswith("/deb/changelogs") and \
             "staging" not in ev(rst["with"]["changelogs-url"], tag, ref_type="tag"), f"{path}: release changelogs URL"
-        sep = steps[bld[0]]["with"].get("separator")
-        assert ev(sep, staged) == "+git" and ev(sep, dry) == "~git", f"{path}: the staged DEB snapshot separator"
+        # the separator is chosen by the action's separator.sh from what the workflow hands it: staged, and whether the run
+        # is a dry run (not at a release tag); it no longer spells a separator itself
+        w = steps[bld[0]]["with"]
+        assert "separator" not in w, f"{path}: the build step still spells a separator; separator.sh chooses it"
+        assert w.get("staged") == "${{ inputs.staged }}" and w.get("dry-run") == "${{ env.RELEASE_TAG == '' }}", \
+            f"{path}: the staged DEB snapshot separator: the build step does not pass staged and dry-run to the action"
+        import os, subprocess
+        sh = os.path.join(os.path.dirname(os.path.abspath(path)), "..", "actions", "build-deb", "separator.sh")
+        got = lambda *a: subprocess.run([sh, *a], capture_output=True, text=True, check=True).stdout.strip()
+        assert got("", "true", "false") == "+git" and got("", "false", "true") == "+git", \
+            f"{path}: the staged DEB snapshot separator: separator.sh does not give +git for a staged build and a dry run"
 
     # the install check: from staging after a staged publish, from the real channel alone after a release
     v = jobs["verify"]
