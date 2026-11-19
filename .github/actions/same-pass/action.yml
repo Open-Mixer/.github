@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: same-pass
+description: The packages other repositories release later in the same pass, from the dispatch list or .github/release-same-pass
+
+# The packages other repositories release LATER in the same pass, for the channel-installability gate's same-pass: a
+# breakage they cause or suffer is reported, not red. One reader for every release workflow, so none keeps a copy of
+# the samepass job (no-local-copies refuses one). The list is the dispatch input when it names a package; otherwise the
+# tracked .github/release-same-pass at the commit being built (ref, default the triggering commit: the tag on a push,
+# source-ref on a dispatch that names one). The file is one package per line, # comments allowed, reviewed like code and
+# released with its branch; never a repository variable. Names are checked by one rule, and a bad one is refused by name.
+# Output list: the names, space separated; empty when nothing is released in the same pass.
+#
+# A caller's samepass job (a job of a few lines), then its shared build workflows take the output:
+#
+#   samepass:
+#     runs-on: ubuntu-latest
+#     outputs:
+#       list: ${{ steps.same.outputs.list }}
+#     steps:
+#       - id: same
+#         uses: Open-Mixer/.github/.github/actions/same-pass@openmixer-v1
+#         with:
+#           list: ${{ inputs.same_pass }}
+#           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source-ref || github.sha }}
+#
+#   rpm:
+#     needs: samepass
+#     uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
+#     with:
+#       same-pass: ${{ needs.samepass.outputs.list }}
+#
+# The checkout is sparse (the one file) and is the caller's repository, in .same-pass-src under the workspace. A bad name or
+# a ref that cannot be fetched is refused by name; the reader's own proof is tests/same-pass.sh.
+
+inputs:
+  list:
+    description: the dispatch input, packages space separated; when it names any, it wins and the file is not read
+    default: ''
+  ref:
+    description: the commit being built (the source-ref of a dispatch, else github.sha); empty means the triggering commit
+    default: ''
+
+outputs:
+  list:
+    description: the same-pass packages, space separated; empty when nothing is released in the same pass
+    value: ${{ steps.read.outputs.list }}
+
+runs:
+  using: composite
+  steps:
+    # the sparse checkout is a directory of its own under the workspace: a local use (./) keeps its own files, which
+    # a checkout of the workspace itself would delete
+    - uses: actions/checkout@v4
+      with:
+        path: .same-pass-src
+        sparse-checkout: .github/release-same-pass
+        sparse-checkout-cone-mode: false
+    - id: read
+      shell: bash
+      env:
+        LIST: ${{ inputs.list }}
+        REF: ${{ inputs.ref }}
+        SAME_PASS_SRC: .same-pass-src
+      run: bash "$GITHUB_ACTION_PATH/same-pass.sh"
