@@ -40,7 +40,7 @@ test('an exact fc44 row (mod-host) is dropped: Fedora 44 is dropped', () => {
   assert.deepEqual(bakedRows(BAKED, 'p').filter((r) => r.where === 'fedora/44/*'), []);
 });
 
-test('a floor whose package the channel serves in no cell of the release is the named pending form, and an ordinary floor once served', () => {
+test('a floor whose package the channel serves in no cell of the release is the named pending form, and the plain floor once regenerated with the package served', () => {
   const cells = 'omx-plugins\t0.19.3\tquick\tfc45/x86_64\nomx-plugins-devel\t0.19.3\t-\tfc44/x86_64\nplugin-hostd\t0.20.5\t-\tfc45/noarch\n';
   const served = servedPackages(cells, '45');
   assert.deepEqual([...served].sort(), ['omx-plugins', 'plugin-hostd']);

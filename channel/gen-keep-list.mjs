@@ -16,7 +16,9 @@
 //   newest      the package is installed unversioned: the channel must serve it
 //   pending:>=0.19.3  a floor whose package the channel serves in no cell of that release at all (a devel package
 //               a release dropped and has not republished): the prune PRINTS it as pending and does not refuse the
-//               plan; the moment the package is served again the line is an ordinary floor
+//               plan. The PLANNER (open-mixer.github.io prune) judges it: it stays pending only while no build of the
+//               package is served at all; served in any version it is an ordinary floor there (below it: refused). The
+//               next regeneration then writes the plain floor
 // <package> is a binary package name, or source:<name> for every package built from that source. <distro/arch>
 // is e.g. fedora/45/*, debian/bookworm/amd64.
 //
