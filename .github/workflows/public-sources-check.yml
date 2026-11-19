@@ -3,6 +3,8 @@
 name: public-sources-check
 # The checks every OpenMixer repository runs on what it publishes, from this repository and nowhere else:
 #   - its pull request's own commits carry no attribution line (commit-message-check);
+#   - every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
+#     by GitHub (commit-identity-check);
 #   - no tracked file points into a private repository (private-refs-check);
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);
 #   - a public repository keeps no dated document, no dated folder and no folder of evidence or notes
@@ -41,6 +43,20 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: Open-Mixer/.github/.github/actions/commit-message-check@openmixer-v1
+        with:
+          base-ref: ${{ github.event.pull_request.base.ref }}
+
+  commit-identity:
+    name: every commit has the house author and committer and is verified
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: Open-Mixer/.github/.github/actions/commit-identity-check@openmixer-v1
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
 

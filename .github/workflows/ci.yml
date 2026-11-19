@@ -38,6 +38,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: tests/commit-message-check.sh
+      - run: tests/commit-identity-check.sh
       - run: tests/scan-open-pr-subjects.sh
       - run: tests/fedora-cells.sh
       - run: tests/jobs.sh
@@ -78,6 +79,9 @@ jobs:
       - name: The action reads this pull request's own commits
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/commit-message-check
+      - name: The action reads the identity and verification of every commit of this pull request
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/commit-identity-check
 
   # The same-pass action run as a local action: the dispatch list is the input, and with none the file at this commit
   # is read (this repository has none, so the list is empty). Its reader is proven by tests/same-pass.sh.
