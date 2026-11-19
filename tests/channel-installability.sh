@@ -290,19 +290,32 @@ arm_deb_source() {
 }
 
 arm_deb_dryrun_version() {
-  # a release dry run of a tree whose VERSION is already published: the run's own binaries must sort ABOVE the published
-  # ones, or dose --latest 1 prunes them behind the release and refuses their dependents (omx-clap-core#126).
+  # a release dry run of a tree whose VERSION is already published must build above it: the shape of omx-clap-core#126
+  # (the channel serves libcore1 0.32.5; the run builds libcore1 and libcore-dev (= its own libcore1)). With ~git the
+  # run's libcore1 is pruned behind the published one by dose --latest 1 and the new libcore-dev has no libcore1 to
+  # meet; with +git it installs. The version comes from separator.sh, the choice build-deb's action makes.
   command -v dose-debcheck >/dev/null || { bad 'deb dry-run version: dose-debcheck is not installed'; return; }
+  local sep=$here/.github/actions/build-deb/separator.sh
+  # separator.sh <explicit> <staged> <dry-run>: what each kind of run yields
+  [ "$("$sep" '' true false)" = +git ] && ok 'deb dry-run version: a staged build is +git' || bad 'deb dry-run version: a staged build is not +git'
+  [ "$("$sep" '' false true)" = +git ] && ok 'deb dry-run version: a branch dry run is +git' || bad 'deb dry-run version: a branch dry run is not +git'
+  [ "$("$sep" '' false false)" = '~git' ] && ok 'deb dry-run version: a pull request snapshot stays ~git' || bad 'deb dry-run version: a pull request snapshot is not ~git'
+  [ "$("$sep" '+git' false false)" = +git ] && ok 'deb dry-run version: an explicit separator is kept for any other snapshot' || bad 'deb dry-run version: an explicit separator is lost'
+  # a tag release: the workflow tells the action dry-run false when RELEASE_TAG is set, and build-deb.sh -t builds the clean version
+  grep -qF "dry-run: \${{ env.RELEASE_TAG == '' }}" "$here/.github/workflows/build-deb.yml" &&
+    grep -qF "staged: \${{ inputs.staged }}" "$here/.github/workflows/build-deb.yml" &&
+    ok 'deb dry-run version: build-deb.yml passes staged and dry-run (a run not at a tag) to the action' ||
+    bad 'deb dry-run version: build-deb.yml does not pass staged and dry-run to the action'
   local d=$t/debdry; mkdir -p "$d/channel/debian/trixie"
-  { stanza libc6 2.36-9 arm64; } > "$d/bg"
-  { stanza libcore1 0.32.5 arm64; stanza libcore-dev 0.32.5 arm64 'libcore1 (= 0.32.5)'; } > "$d/channel/debian/trixie/Packages"
-  { stanza libcore1 0.32.5+git1795000000.abc1234 arm64; stanza libcore-dev 0.32.5+git1795000000.abc1234 arm64 'libcore1 (= 0.32.5+git1795000000.abc1234)'; } > "$d/plus"
-  local args=(deb --channel "$d/channel" --suite trixie --arch arm64 --bg "$d/bg" --dry-run)
-  expect 0 - 'deb dry-run version: 0.32.5+git... beside a published 0.32.5 is green' -- "${args[@]}" --new-index "$d/plus"
-  # the workflow builds a dry run with +git (a staged run already does), a tag release with the clean version
-  if grep -qF "separator: \${{ inputs.staged || !inputs.publish && '+git' || '~git' }}" "$here/.github/workflows/build-deb.yml"; then
-    ok 'deb dry-run version: build-deb.yml builds a dry run as +git, above the published version'
-  else bad 'deb dry-run version: build-deb.yml does not build a dry run as +git'; fi
+  stanza libc6 2.36-9 arm64 > "$d/bg"
+  stanza libcore1 0.32.5 arm64 > "$d/channel/debian/trixie/Packages"
+  local v args=(deb --channel "$d/channel" --suite trixie --arch arm64 --bg "$d/bg" --dry-run)
+  for v in "0.32.5$("$sep" '' false false)1795000000.abc1234" "0.32.5$("$sep" '' false true)1795000000.abc1234"; do
+    { stanza libcore1 "$v" arm64; stanza libcore-dev "$v" arm64 "libcore1 (= $v)"; } > "$d/new-$v"
+  done
+  expect 1 'which nothing in the channel meets' 'deb dry-run version: a ~git dry run beside the published 0.32.5 is RED (libcore-dev needs its own pruned libcore1)' -- \
+    "${args[@]}" --new-index "$d/new-0.32.5~git1795000000.abc1234"
+  expect 0 - 'deb dry-run version: the +git dry run beside the published 0.32.5 is green' -- "${args[@]}" --new-index "$d/new-0.32.5+git1795000000.abc1234"
 }
 
 arm_deb_unbuilt() {

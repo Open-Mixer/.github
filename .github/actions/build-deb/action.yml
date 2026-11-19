@@ -17,8 +17,14 @@ inputs:
     description: directory the DEBs are copied to
     default: debs
   separator:
-    description: what joins a snapshot's version and its commit time and commit; ~git sorts below the release, +git above it (a staged build, which must meet a consumer's (>= <version>) floor)
-    default: '~git'
+    description: what joins a snapshot's version and its commit time and commit; ~git (the default) sorts below the release, +git above it. A staged build or a dry run always takes +git (separator.sh)
+    default: ''
+  staged:
+    description: 'true for a staged build: its snapshot is <version>+git...'
+    default: 'false'
+  dry-run:
+    description: 'true for a release dry run (a run not at a release tag): its snapshot is <version>+git..., above a published <version>'
+    default: 'false'
 
   max-jobs:
     description: The CPUs the runner is declared with, the cap on the build's parallel jobs (the jobs action); empty reads OMX_RUNNER_CPUS, and with neither only the cgroup's quota bounds them
@@ -35,12 +41,14 @@ runs:
         TAG: ${{ inputs.tag }}
         OUT: ${{ inputs.out }}
         SEPARATOR: ${{ inputs.separator }}
+        STAGED: ${{ inputs.staged }}
+        DRY_RUN: ${{ inputs.dry-run }}
       run: |
         set -euo pipefail
         # the parallel jobs from the cgroup's CPU quota and the runner cap, never the host's nproc (actions/jobs)
         jobs=$("$GITHUB_ACTION_PATH/../jobs/jobs.sh" ${MAX_JOBS:+--max "$MAX_JOBS"})
         export DEB_BUILD_OPTIONS="${DEB_BUILD_OPTIONS:+$DEB_BUILD_OPTIONS }parallel=$jobs"  # debhelper's make -j<jobs>
         git config --global --add safe.directory "$(readlink -f "$TREE")"
-        args=(-C "$TREE" -s "$SEPARATOR")
+        args=(-C "$TREE" -s "$("$GITHUB_ACTION_PATH/separator.sh" "$SEPARATOR" "$STAGED" "$DRY_RUN")")
         [ -z "$TAG" ] || args+=(-t "$TAG")
         "$GITHUB_ACTION_PATH/build-deb.sh" "${args[@]}" "$OUT"
