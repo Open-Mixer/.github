@@ -69,6 +69,7 @@ jobs:
       - run: tests/no-retired-debian-release.sh
       - run: tests/resolve-base.sh
       - run: tests/v1-not-behind.sh
+      - run: tests/same-pass.sh
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test
@@ -76,6 +77,24 @@ jobs:
       - name: The action reads this pull request's own commits
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/commit-message-check
+
+  # The same-pass action run as a local action: the dispatch list is the input, and with none the file at this commit
+  # is read (this repository has none, so the list is empty). Its reader is proven by tests/same-pass.sh.
+  same-pass-action:
+    name: same-pass action reads its list, from the input and from the file
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - id: same
+        uses: ./.github/actions/same-pass
+        with:
+          list: 'alpha beta'
+      - id: none
+        uses: ./.github/actions/same-pass
+      - run: |
+          test "${{ steps.same.outputs.list }}" = 'alpha beta'
+          test -z "${{ steps.none.outputs.list }}"
 
   v1-not-behind:
     name: openmixer-v1 is not behind main
