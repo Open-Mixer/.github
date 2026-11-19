@@ -195,6 +195,17 @@ got, log = run("deb", {"arch-matrix": '["amd64"]'}, "workflow_dispatch", "branch
 assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"an amd64-only caller in a quick run builds {got.set} {got.jobs}, not the set's trixie arm64: {log}"
 got, log = run("rpm", {"arch-matrix": '["aarch64"]'}, "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs) == ("quick", ["fc45, x86_64"]), f"an aarch64-only rpm caller in a quick run builds {got.set} {got.jobs}, not the set's fc45 x86_64: {log}"
+# the development set wins over the caller's releases too: a caller listing fc44 and fc45 (plugin-hostd, plugin-db, ...)
+# builds fc45 only, never a release outside the set, and the publish jobs run in an image of the set, not of the caller's
+# first release (plugin-db 0.4.7's dry run built fc44 and refused "fc44 has no rpm cell in the quick set")
+got, log = run("rpm", {"fedora-versions": '["44", "45"]', "staged": True}, "workflow_dispatch", "branch", None)
+assert (got.set, got.jobs, got.releases) == ("quick", ["fc45, x86_64"], "45"), f"a caller listing 44 45 builds {got.set} {got.jobs} {got.releases}: {log}"
+# no job but the preflight reads the caller's list of releases or suites: a publish job takes the releases and suites the
+# run built (preflight outputs), or a quick run writes empty fc44 staging metadata and runs in a release the set dropped
+for wfname, caller_input in (("build-rpm.yml", "inputs.fedora-versions"), ("build-deb.yml", "inputs.suite-matrix")):
+    bad = [n for n, j in yaml.safe_load(open(f"{here}/.github/workflows/{wfname}"))["jobs"].items()
+           if n != "preflight" and caller_input in json.dumps(j)]
+    assert not bad, f"{wfname}: jobs {bad} read the caller's {caller_input}, not the releases the run built (preflight outputs)"
 # one Fedora release asked for: the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got

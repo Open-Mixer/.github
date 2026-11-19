@@ -166,9 +166,11 @@ def check(path, kind):
         assert group.endswith("-live") == want_stage, f"{path}: {name} publishes in group {group}"
     st = sst
     assert "5f455d37cfb5" in ev(st["with"]["tag"], staged), f"{path}: the staged commit message does not name the commit"
-    rels = ev(st["with"]["releases" if kind == "rpm" else "suites"], staged)
-    assert rels == " ".join(json.loads(base["fedora-versions" if kind == "rpm" else "suite-matrix"])), \
-        f"{path}: the staging skeleton is {rels!r}, not every release of the matrix"
+    # the skeleton is the releases the run BUILT (the preflight's output), not the caller's whole list: a quick run
+    # writes no staging metadata for a release the set dropped
+    built = "45" if kind == "rpm" else "trixie"
+    rels = ev(st["with"]["releases" if kind == "rpm" else "suites"], staged, needs=O(preflight=O(outputs=O(releases=built))))
+    assert rels == built, f"{path}: the staging skeleton is {rels!r}, not the releases the run built ({built!r})"
     if kind == "deb":
         assert ev(st["with"]["changelogs-url"], staged).endswith("/staging/deb/changelogs"), f"{path}: staged changelogs URL"
         assert ev(rst["with"]["changelogs-url"], tag, ref_type="tag").endswith("/deb/changelogs") and \
