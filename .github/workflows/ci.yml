@@ -405,6 +405,7 @@ jobs:
       - run: tests/deb-changelog.sh
       - run: apt-get install -y --no-install-recommends git
       - run: tests/build-deb-same-bytes.sh
+      - run: tests/build-deb-snapshot-lint.sh
 
   deb-rerun-layout:
     name: a rerun of a DEB release keeps its packages
