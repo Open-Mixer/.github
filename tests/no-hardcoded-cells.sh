@@ -213,18 +213,18 @@ check_plan() {
 }
 D=workflow_dispatch
 DEB2='trixie amd64, trixie arm64'
-check_plan "pugl-nanovg deb" pugl-nanovg-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
+check_plan "pugl-nanovg deb" pugl-nanovg-deb.yml plan $D '' 'trixie arm64' "$DEB2" ''
 check_plan "pugl-nanovg rpm" pugl-nanovg-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
-check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie amd64' 'trixie amd64' ''
-check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
+check_plan "clap-headers deb" clap-headers-deb.yml plan $D '' 'trixie arm64' 'trixie arm64' ''
+check_plan "mod-host-protocol deb" mod-host-protocol-deb.yml plan $D '' 'trixie arm64' "$DEB2" ''
 check_plan "mod-host-protocol rpm" mod-host-protocol-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
 check_plan "rncbc-v1 rpm" rncbc-v1-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
-check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie amd64, trixie arm64' "$DEB2" ''
+check_plan "surge-xt deb" surge-xt-deb.yml plan $D '' 'trixie arm64' "$DEB2" ''
 check_plan "surge-xt rpm" surge-xt-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
 check_plan "clap rpm" clap-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64' 'fc45 aarch64'
 # the release package: an Architecture: all deb, built and laid out for the suites of the set; one noarch rpm per Fedora
 # release of the set (the dist tag ties a build to its release); its install check after the publish
-check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie amd64' 'trixie amd64' ''
+check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie arm64' 'trixie arm64' ''
 check_plan "openmixer-release rpm" release-package.yml rpm-plan push tag '45 x86_64' '45 x86_64' ''
 render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
     && yes "openmixer-release verify, quick: fedora:45, debian:trixie" || { no "openmixer-release verify, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }

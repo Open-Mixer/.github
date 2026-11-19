@@ -45,7 +45,7 @@ jobs:
 
   # The cells this run builds, and what it skips: the quick set while OMX_RELEASE_MATRIX is quick, the whole matrix with
   # full (ruling D25, docs/release-operations.md). The build set, so release-matrix. The package is Architecture: all, so
-  # one build per Debian release serves every architecture and amd64 stands for them all.
+  # one build per Debian release serves every architecture and arm64 stands for them all (the development set builds arm64 alone).
   plan:
     name: Plan the cells
     runs-on: ubuntu-latest
@@ -64,7 +64,7 @@ jobs:
           matrix: ${{ inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
           releases: '["trixie"]'
-          arches: '["amd64"]'
+          arches: '["arm64"]'
 
   build:
     name: Build (${{ matrix.suite }})

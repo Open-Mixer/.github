@@ -232,7 +232,7 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on amd64 and arm64), or the whole
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on arm64), or the whole
   matrix when told full ("The quick set and the full matrix" below), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
@@ -316,9 +316,11 @@ set** instead:
 | kind | cells |
 |------|-------|
 | rpm  | fc45 x86_64 |
-| deb  | trixie amd64, trixie arm64 |
+| deb  | trixie arm64 |
 
-trixie amd64 joined the set on 2026-11-13: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
+The quick set is the development set: two cells, fc45 x86_64 and trixie arm64 (Debian packages ship for Zynthian, the Pi, alone). The full set (fc45 x86_64 and aarch64, trixie amd64 and arm64) returns at the end of development: one switch, `OMX_RELEASE_MATRIX=full`, no edit anywhere else; the served amd64 trees stay as they are meanwhile.
+
+trixie amd64 joined the set on 2026-11-13 and left it on 2026-11-19 (Debian packages ship for Zynthian alone): the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
 from the deb channel, and with no quick amd64 cell every one of their runs failed on a version the wave had not
 built there.
 
@@ -344,7 +346,7 @@ names, no others. The run says which set it builds, and why, in a notice.
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
 - The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
-  cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
+  cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie arm64.
 
 ### Checks follow the set
 
@@ -402,7 +404,7 @@ a check uses `check-matrix` (its `images`, or `cells`). Both name what they skip
 
 | Workflow | Primitive | Quick | Full |
 | --- | --- | --- | --- |
-| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie amd64, arm64 | trixie, amd64 and arm64 |
+| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie arm64 | trixie, amd64 and arm64 |
 | `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc45 x86_64 | fc45, x86_64 and aarch64 |
 | `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc45 x86_64 | fc45, x86_64 and aarch64 |
 | `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | trixie |

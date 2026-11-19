@@ -107,7 +107,7 @@ jobs:
           kind: deb
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
           releases: '["trixie"]'
-          arches: '["amd64"]'
+          arches: '["arm64"]'
 
   rpm:
     name: Fetch and verify the RPMs
