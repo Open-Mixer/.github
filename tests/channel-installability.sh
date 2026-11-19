@@ -23,7 +23,7 @@
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -88,6 +88,14 @@ arm_ceiling() {
     ceiling --kind deb --published "$d/published" --new "$d/no-floor"
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
+
+  # a published consumer whose upper bound is AT the version (<= 0.32.5): a new snapshot of 0.32.5 is that release, whether
+  # built ~git (below) or +git (above, a staged run, a dry run); judged raw, the +git one fell outside the range
+  { stanza libproto0 0.32.4 amd64; stanza hostd 0.19.1 amd64 'libproto0 (>= 0.32.0), libproto0 (<= 0.32.5)'; } > "$d/pub-le"
+  stanza libproto0 0.32.5+git1795000000.abc1234 amd64 > "$d/new-plus"
+  stanza libproto0 0.32.5~git1795000000.abc1234 amd64 > "$d/new-tilde"
+  expect 0 - 'ceiling: a +git snapshot of 0.32.5 meets a published consumer declaring (<= 0.32.5)' -- ceiling --kind deb --published "$d/pub-le" --new "$d/new-plus"
+  expect 0 - 'ceiling: a ~git snapshot of 0.32.5 meets a published consumer declaring (<= 0.32.5)' -- ceiling --kind deb --published "$d/pub-le" --new "$d/new-tilde"
 
   # a same-pass entry must be a source or a binary in the channel's metadata (.github: omx-clap-core named a REPOSITORY, its
   # source is omx-clap-host, and the pass passed silently): an entry that matches neither is refused by name, one line each
@@ -287,6 +295,36 @@ arm_deb_source() {
     'deb source: (d) a same-pass repository name is refused by name' -- deb --channel "$d/a" "${args[@]}" --same-pass 'clap-core nosuch-repo'
   [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
     && ok 'deb source: (d) ... and the source is still covered' || bad 'deb source: (d) the refusal or the covering changed'
+}
+
+arm_deb_dryrun_version() {
+  # a release dry run of a tree whose VERSION is already published must build above it: the shape of omx-clap-core#126
+  # (the channel serves libcore1 0.32.5; the run builds libcore1 and libcore-dev (= its own libcore1)). With ~git the
+  # run's libcore1 is pruned behind the published one by dose --latest 1 and the new libcore-dev has no libcore1 to
+  # meet; with +git it installs. The version comes from separator.sh, the choice build-deb's action makes.
+  command -v dose-debcheck >/dev/null || { bad 'deb dry-run version: dose-debcheck is not installed'; return; }
+  local sep=$here/.github/actions/build-deb/separator.sh
+  # separator.sh <explicit> <staged> <dry-run>: what each kind of run yields
+  [ "$("$sep" '' true false)" = +git ] && ok 'deb dry-run version: a staged build is +git' || bad 'deb dry-run version: a staged build is not +git'
+  [ "$("$sep" '' false true)" = +git ] && ok 'deb dry-run version: a branch dry run is +git' || bad 'deb dry-run version: a branch dry run is not +git'
+  [ "$("$sep" '' false false)" = +git ] && ok 'deb dry-run version: a pull-request run (no explicit separator) is +git' || bad 'deb dry-run version: a pull-request run is not +git'
+  [ "$("$sep" '~git' false false)" = '~git' ] && ok 'deb dry-run version: ~git remains for a caller that names it' || bad 'deb dry-run version: an explicit ~git is lost'
+  [ "$("$sep" '~git' false true)" = +git ] && ok 'deb dry-run version: a dry run overrides an explicit ~git' || bad 'deb dry-run version: a dry run kept ~git'
+  # a tag release: the workflow tells the action dry-run false when RELEASE_TAG is set, and build-deb.sh -t builds the clean version
+  grep -qF "dry-run: \${{ env.RELEASE_TAG == '' }}" "$here/.github/workflows/build-deb.yml" &&
+    grep -qF "staged: \${{ inputs.staged }}" "$here/.github/workflows/build-deb.yml" &&
+    ok 'deb dry-run version: build-deb.yml passes staged and dry-run (a run not at a tag) to the action' ||
+    bad 'deb dry-run version: build-deb.yml does not pass staged and dry-run to the action'
+  local d=$t/debdry; mkdir -p "$d/channel/debian/trixie"
+  stanza libc6 2.36-9 arm64 > "$d/bg"
+  stanza libcore1 0.32.5 arm64 > "$d/channel/debian/trixie/Packages"
+  local v args=(deb --channel "$d/channel" --suite trixie --arch arm64 --bg "$d/bg" --dry-run)
+  for v in "0.32.5~git1795000000.abc1234" "0.32.5$("$sep" '' false true)1795000000.abc1234"; do
+    { stanza libcore1 "$v" arm64; stanza libcore-dev "$v" arm64 "libcore1 (= $v)"; } > "$d/new-$v"
+  done
+  expect 1 'which nothing in the channel meets' 'deb dry-run version: a ~git dry run beside the published 0.32.5 is RED (libcore-dev needs its own pruned libcore1)' -- \
+    "${args[@]}" --new-index "$d/new-0.32.5~git1795000000.abc1234"
+  expect 0 - 'deb dry-run version: the +git dry run beside the published 0.32.5 is green' -- "${args[@]}" --new-index "$d/new-0.32.5+git1795000000.abc1234"
 }
 
 arm_deb_unbuilt() {
@@ -641,7 +679,7 @@ arm_deb_cells() {
 arms=("$@")
 if [ ${#arms[@]} = 0 ]; then
   arms=(ceiling deb_cells)
-  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt external_deb)
+  command -v dose-debcheck >/dev/null && arms+=(deb deb_unbuilt deb_dryrun_version external_deb)
   command -v createrepo_c >/dev/null && command -v rpmbuild >/dev/null && arms+=(rpm external_rpm mirror_client)
 fi
 for arm in "${arms[@]}"; do "arm_$arm"; done

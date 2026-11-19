@@ -342,12 +342,12 @@ def r107_ceiling(floor):
     return f"0.{nums[1] + 1}" if nums[0] == 0 else f"{nums[0] + 1}"
 
 
-SNAPSHOT_RE = re.compile(r"^(?P<release>.+?)~git[0-9][^-]*(?P<revision>-.*)?$")
+SNAPSHOT_RE = re.compile(r"^(?P<release>.+?)[~+]git[0-9][^-]*(?P<revision>-.*)?$")
 
 
 def release_version(version):
-    """The version a pull request's snapshot would release: <v>~git<time>.<sha> (build-deb's separator, which sorts
-    below <v>) is <v>, its Debian revision kept; any other version is itself."""
+    """The version a pull request's snapshot would release: <v>~git<time>.<sha> or <v>+git<time>.<sha> (build-deb's
+    separators: ~git sorts below <v>, +git above it) is <v>, its Debian revision kept; any other version is itself."""
     m = SNAPSHOT_RE.match(version)
     return m.group("release") + (m.group("revision") or "") if m else version
 
