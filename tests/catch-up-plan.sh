@@ -96,7 +96,7 @@ ok "arch-independent packages (all, noarch) serve their whole release and are ne
 [ "$(out cells)" = '[{"fedora":"44","arch":"x86_64"}]' ] && [ "$(out first-arch)" = x86_64 ] ||
     fail "omx-thing, missing fc44 x86_64 alone, planned $(out cells) (first arch $(out first-arch))"
 : > "$t/out"; plan rpm v0.3.0 omx-thing quick '["44", "45"]' '["x86_64"]' || { cat "$t/log"; fail "the quick rpm catch-up failed"; }
-[ "$(out cells)" = '[{"fedora":"44","arch":"x86_64"}]' ] || fail "the quick rpm catch-up planned $(out cells), outside the set or served"
+[ "$(out count)" = 0 ] || fail "the quick rpm catch-up planned $(out cells): fc44 is outside the quick set (fc45 x86_64, served)"
 ok "the full matrix plans its missing cells only; aarch64, outside the quick set, is never planned by a quick run"
 
 refused "a version the channel does not serve" 'serves no plugin-qualify 0.21.0 at all' deb v0.21.0 plugin-qualify

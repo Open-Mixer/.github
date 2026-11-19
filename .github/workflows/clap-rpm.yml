@@ -58,7 +58,7 @@ jobs:
           kind: rpm
           matrix: ${{ inputs.matrix || '' }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["44", "45"]'
+          releases: '["45"]'
           arches: '["x86_64", "aarch64"]'
 
   build:
@@ -128,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     concurrency:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
@@ -145,7 +145,7 @@ jobs:
 
       - name: Read the versions the packages carry
         run: |
-          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc44.x86_64.rpm)" >> "$GITHUB_ENV"
+          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc45.x86_64.rpm)" >> "$GITHUB_ENV"
 
       - uses: ./.github/actions/publish-rpms
         with:
@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     env:
       DO_PUBLISH: 'false'
     steps:
@@ -178,7 +178,7 @@ jobs:
 
       - name: Read the versions the packages carry
         run: |
-          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc44.x86_64.rpm)" >> "$GITHUB_ENV"
+          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc45.x86_64.rpm)" >> "$GITHUB_ENV"
 
       - uses: ./.github/actions/publish-rpms
         with:

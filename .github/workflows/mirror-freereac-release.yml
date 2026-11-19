@@ -67,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { kind: rpm, image: 'fedora:44', tools: 'dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign gnupg2 findutils curl diffutils' }
+          - { kind: rpm, image: 'fedora:45', tools: 'dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign gnupg2 findutils curl diffutils' }
           - { kind: deb, image: 'debian:trixie', tools: 'apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev curl ca-certificates' }
     steps:
       - run: ${{ matrix.tools }}
@@ -90,7 +90,7 @@ jobs:
         with:
           kind: rpm
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["44", "45"]'
+          releases: '["45"]'
           arches: '["x86_64"]'
 
   deb-plan:
@@ -115,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-sign gnupg2 findutils curl
       - uses: actions/checkout@v4
@@ -156,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:45
     concurrency:
       group: publish-Open-Mixer/open-mixer.github.io-live
       cancel-in-progress: false

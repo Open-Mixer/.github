@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # The quick and the full release matrix, offline (docs/release-operations.md, "The quick set and the full matrix").
 # Proves:
-#   - the quick set is written once, in .github/actions/release-matrix/quick.txt, and is fc44 x86_64 and fc45 x86_64
+#   - the quick set is written once, in .github/actions/release-matrix/quick.txt, and is fc45 x86_64
 #     for rpm and trixie amd64 and trixie arm64 for deb;
 #   - build-rpm.yml and build-deb.yml, rendered: the first job asks release-matrix once, with the caller's matrix,
 #     the matrix input, the organisation variable, staged and source-ref; the build and the install check both take
@@ -58,7 +58,7 @@ def text(v):
 
 # ---- the quick set, written once
 quick = [l.split() for l in open(f"{act}/quick.txt") if l.strip() and not l.startswith("#")]
-assert quick == [["rpm", "44", "x86_64"], ["rpm", "45", "x86_64"], ["deb", "trixie", "amd64"], ["deb", "trixie", "arm64"]], \
+assert quick == [["rpm", "45", "x86_64"], ["deb", "trixie", "amd64"], ["deb", "trixie", "arm64"]], \
     f"quick.txt is {quick}"
 action = yaml.safe_load(open(f"{act}/action.yml"))
 step = action["runs"]["steps"]
@@ -66,7 +66,7 @@ assert len(step) == 1 and step[0]["run"].strip() == '"$GITHUB_ACTION_PATH/matrix
 sh = open(f"{act}/matrix.sh").read()
 assert "quick.txt" in sh and not re.search(r"\b(trixie|bookworm|x86_64|aarch64|arm64|amd64)\b", re.sub(r"(?m)^\s*#.*$", "", sh)), \
     "matrix.sh names a cell of its own: the quick set is quick.txt alone"
-print("ok   the quick set is fc44 x86_64, fc45 x86_64 (rpm), trixie amd64 and trixie arm64 (deb), written in quick.txt alone")
+print("ok   the quick set is fc45 x86_64 (rpm), trixie amd64 and trixie arm64 (deb), written in quick.txt alone")
 
 WF = {"rpm": (f"{here}/.github/workflows/build-rpm.yml", "fedora-versions", "fedora"),
       "deb": (f"{here}/.github/workflows/build-deb.yml", "suite-matrix", "suite")}
@@ -140,9 +140,9 @@ def run(kind, inputs, event, ref_type, var):
     return O(set=out["set"], jobs=[n.split("(", 1)[1].rstrip(")") for n in names["build"]], first=needs.preflight.outputs["first-arch"],
              releases=out["releases"]), p.stdout
 
-FULL = {"rpm": ["fc44, x86_64", "fc44, aarch64", "fc45, x86_64", "fc45, aarch64"],
+FULL = {"rpm": ["fc45, x86_64", "fc45, aarch64"],
         "deb": ["trixie, amd64", "trixie, arm64"]}
-QUICK = {"rpm": ["fc44, x86_64", "fc45, x86_64"], "deb": ["trixie, amd64", "trixie, arm64"]}
+QUICK = {"rpm": ["fc45, x86_64"], "deb": ["trixie, amd64", "trixie, arm64"]}
 X86 = {"rpm": {"arch-matrix": '["x86_64"]'}, "deb": {"arch-matrix": '["amd64"]'}}
 # (what, inputs, event, ref type, OMX_RELEASE_MATRIX, the set, the jobs)
 cases = [
@@ -172,10 +172,10 @@ for what, inputs, event, rt, var, want_set, want in cases:
         n += 1
 print(f"ok   {n} runs rendered: a tag is full unless the wave is open, a staged run and a dispatch are quick unless told full, a pull request is full")
 
-# the four quick cells and the six of a release, counted across the two workflows
+# the three quick cells and the four of a release, counted across the two workflows
 q = sum(len(run(k, {"staged": True}, "workflow_dispatch", "branch", None)[0].jobs) for k in WF)
 f = sum(len(run(k, {"publish": True}, "push", "tag", None)[0].jobs) for k in WF)
-assert (q, f) == (4, 6), f"a staged run builds {q} cells and a release {f}, want 4 and 8"
+assert (q, f) == (3, 4), f"a staged run builds {q} cells and a release {f}, want 3 and 4"
 print("ok   a staged run is 4 build jobs and 4 install checks, a release 6 and 6")
 
 # a caller built for x86_64 alone: the quick rpm cells, and of the quick deb cells the one it builds, trixie amd64
@@ -342,7 +342,7 @@ note() { KIND=$1 RELEASES=$2 ARCHES=$3 MATRIX=$4 WAVE='' STAGED='' SOURCE_REF=''
 out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' quick)
 echo "$out" | grep -q '(skipped while quick: bookworm amd64, bookworm arm64)$' || fail "a quick deb run does not name what it skipped: $out"
 out=$(note rpm '["44", "45"]' '["x86_64", "aarch64"]' quick)
-echo "$out" | grep -q '(skipped while quick: fc44 aarch64, fc45 aarch64)$' || fail "a quick rpm run does not name what it skipped: $out"
+echo "$out" | grep -q '(skipped while quick: fc44 x86_64, fc44 aarch64, fc45 aarch64)$' || fail "a quick rpm run does not name what it skipped: $out"
 out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' full)
 echo "$out" | grep -q 'skipped' && fail "a full run names a skipped cell: $out"
 out=$(note deb '["bookworm"]' '["amd64"]' quick)

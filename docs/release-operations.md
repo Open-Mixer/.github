@@ -232,7 +232,7 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the quick set (fc44 and fc45 on x86_64, trixie on amd64 and arm64), or the whole
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on amd64 and arm64), or the whole
   matrix when told full ("The quick set and the full matrix" below), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
@@ -308,14 +308,14 @@ pulled copy and pushes nothing.
 
 ## The quick set and the full matrix
 
-A release builds six cells: Fedora 44 and 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
-for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served.
+A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
+for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
 | kind | cells |
 |------|-------|
-| rpm  | fc44 x86_64, fc45 x86_64 |
+| rpm  | fc45 x86_64 |
 | deb  | trixie amd64, trixie arm64 |
 
 trixie amd64 joined the set on 2026-11-13: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
@@ -403,12 +403,12 @@ a check uses `check-matrix` (its `images`, or `cells`). Both name what they skip
 | Workflow | Primitive | Quick | Full |
 | --- | --- | --- | --- |
 | `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie amd64, arm64 | trixie, amd64 and arm64 |
-| `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc44 x86_64 | fc44, x86_64 and aarch64 |
-| `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc44 and fc45 x86_64 | fc44 and fc45, x86_64 and aarch64 |
+| `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc45 x86_64 | fc45, x86_64 and aarch64 |
+| `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc45 x86_64 | fc45, x86_64 and aarch64 |
 | `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | trixie |
 | `release-package.yml` build, install check, layout | `release-matrix`, `Architecture: all` as above; the oldest release of the set builds it | trixie | trixie |
-| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:44, fedora:45, debian:trixie | the same |
-| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:44, fedora:45, debian:trixie | the same |
+| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:45, debian:trixie | the same |
+| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:45, debian:trixie | the same |
 
 A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the quick
 set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
