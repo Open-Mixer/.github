@@ -28,7 +28,7 @@ NAMES='(^|/)(commit-message-check\.sh|commit-message-patterns\.json|private-refs
 CODE='\.(sh|bash|py|mjs|cjs|js|ts|json|pl|rb)$'
 # a READ of the same-pass list: the path as a value (f=, sparse-checkout:, git show REF:) or as a cat argument; the word in a
 # description is not a read
-SAME_READ='(=|:)[[:space:]]*\.github/release-same-pass|cat[[:space:]]+\.github/release-same-pass'
+SAME_READ='(=|:)[[:space:]]*\.github/release-same-pass|<[[:space:]]*\.github/release-same-pass|(^|[^[:alnum:]_.-])(cat|sed|grep|awk|head|tail)[[:space:]]+.*\.github/release-same-pass'
 
 check() { # <root>
   local root=$1 bad=0 files f s
@@ -169,6 +169,21 @@ jobs:
     with: {package-name: x}"
   green "a caller whose input description names the file is green" "$SAME_DESC"
   plant "a release workflow that reads release-same-pass itself is red" .github/workflows/release.yml "$SAME_COPY"
+  SAME_REDIR="$REL_PLAIN
+  samepass:
+    runs-on: ubuntu-latest
+    steps: [{run: 'while read n; do echo \$n; done < .github/release-same-pass'}]"
+  SAME_SED="$REL_PLAIN
+  samepass:
+    runs-on: ubuntu-latest
+    steps: [{run: 'sed -e s/#.*// .github/release-same-pass'}]"
+  SAME_GREP="$REL_PLAIN
+  samepass:
+    runs-on: ubuntu-latest
+    steps: [{run: 'grep -v ^# .github/release-same-pass'}]"
+  plant "a release workflow that reads release-same-pass by a redirect is red" .github/workflows/release.yml "$SAME_REDIR"
+  plant "a release workflow that reads release-same-pass as a sed argument is red" .github/workflows/release.yml "$SAME_SED"
+  plant "a release workflow that reads release-same-pass as a grep argument is red" .github/workflows/release.yml "$SAME_GREP"
   green "a release workflow that calls the same-pass action" "$SAME_CALLER"
   rm -rf "$t/r"; git init -q "$t/r"; mkdir -p "$t/r/.githooks" "$t/r/.github/workflows" "$t/r/tools"; echo 'int main(void) { return 0; }' > "$t/r/tools/main.c"
   cp "$STUB" "$t/r/.githooks/commit-msg"; printf '%s\n' "$REL_PLAIN" > "$t/r/.github/workflows/release.yml"; git -C "$t/r" add -A
