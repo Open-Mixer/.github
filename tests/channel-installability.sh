@@ -20,7 +20,10 @@
 #   external a release package that Requires another channel's release package (openmixer-release requires freereac-release):
 #            refused when the dependency lives only in a channel nobody declared, green when the one declared file names it, the
 #            external channel's own packages never judged, a channel that serves nothing named, a malformed declaration exit 2.
-# Usage: tests/channel-installability.sh [ceiling|deb|deb_unbuilt|rpm|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
+#   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
+#            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
+#            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
+# Usage: tests/channel-installability.sh [ceiling|deb|deb_source|deb_unbuilt|rpm|rpm_source|rpm_quick|external_deb|external_rpm|mirror_client]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -145,6 +148,20 @@ arm_ceiling() {
   expect 1 'py3-proto 3:0.5.0-1.fc45 (noarch, served) carries Epoch 3: no epochs (owner rule)' \
     'epochs: a served rpm Epoch is refused by name' -- ceiling --kind rpm --published "$d/ep-rpm-served" --new "$d/ep-rpm-none"
 
+  # the source of a binary, read from the metadata: a deb Source field (its binNMU version dropped) or the Package name
+  # when it is absent; an rpm SOURCERPM (the name before its version and release), none for a (none)
+  python3 -I -B - "$gate" <<'PY' && ok 'source: deb Source field, absent -> the Package name; rpm SOURCERPM' || bad 'source: the source of a binary'
+import importlib.util, sys
+s = importlib.util.spec_from_file_location("gate", sys.argv[1]); g = importlib.util.module_from_spec(s); s.loader.exec_module(g)
+assert g.deb_source({"Package": "omx-clap-host", "Source": "omx-clap-core"}) == "omx-clap-core"
+assert g.deb_source({"Package": "omx-clap-host", "Source": "omx-clap-core (0.32.5-1)"}) == "omx-clap-core"
+assert g.deb_source({"Package": "omx-panel"}) == "omx-panel"
+assert g.rpm_source_name("omx-clap-core-0.32.5-1.fc45.src.rpm") == "omx-clap-core"
+assert g.rpm_source_name("(none)") is None
+q = g.parse_rpm_query("@@omx-clap-host 0.32.5-1.fc45 x86_64 omx-clap-core-0.32.5-1.fc45.src.rpm\nrtld(GNU_HASH)\n@@old 1.0-1 noarch\n")
+assert [p.source for p in q] == ["omx-clap-core", "old"], [p.source for p in q]
+PY
+
   # the version orders the gate compares with, against the cases that bite
   python3 -I -B - "$gate" <<'PY' && ok 'ceiling: dpkg and rpm version order' || bad 'ceiling: version order'
 import importlib.util, sys
@@ -202,6 +219,40 @@ arm_deb() {
     "${args[@]}" --new-index "$d/lib-patch" --drop libproto0=0.5.0
   expect 2 'could not take the measurement' 'deb: an index that cannot be read is not a pass' -- \
     deb --channel "$d/nowhere" --suite bookworm --arch amd64 --bg "$d/bg" --new-index "$d/lib-patch"
+  arm_deb_source
+}
+
+# SAME-PASS NAMES ARE SOURCES (plugin-hostd-protocol 0.6.0 dry run, 2026-11-19): the list named omx-clap-core, plugin-hostd and
+# omx-panel, and the binaries those SOURCES build (omx-clap-host, libomx-panel-render-dev ...) stayed RED, with whatever
+# installs through them. The gate reads the source of every binary from the channel's metadata (the Source: field, the Package
+# name when absent) and a package whose only unmet requirement on its path is held by a same-pass binary is reported.
+arm_deb_source() {
+  command -v dose-debcheck >/dev/null || { bad 'deb source: dose-debcheck is not installed (apt-get install dose-distcheck)'; return; }
+  local d=$t/debs; mkdir -p "$d/a/debian/bookworm" "$d/c/debian/bookworm"
+  { stanza libc6 2.36-9 amd64; } > "$d/bg"
+  # clap-host is built by the source clap-core; qualify installs through it and names no source (so it is its own)
+  { stanza libproto0 0.4.4 amd64
+    printf 'Package: clap-host\nSource: clap-core (0.30.6-1)\nVersion: 0.30.6\nArchitecture: amd64\nDepends: libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)\n\n'
+    stanza qualify 1.0 amd64 'clap-host (>= 0.30~), libproto0 (>= 0.4.4~)'
+  } > "$d/a/debian/bookworm/Packages"
+  # the same, and an unrelated package capping the protocol too
+  { cat "$d/a/debian/bookworm/Packages"; stanza unrelated 1.0 amd64 'libproto0 (>= 0.4.4~), libproto0 (<< 0.5~)'; } > "$d/c/debian/bookworm/Packages"
+  stanza libproto0 0.5.0 amd64 > "$d/lib"
+  local args=(--suite bookworm --arch amd64 --bg "$d/bg" --new-index "$d/lib")
+  # (control) no same-pass: all three are red
+  expect 1 'clap-host 0.30.6 was installable and is not' 'deb source: without a same-pass list the cap is red' -- deb --channel "$d/a" "${args[@]}"
+  # (a) the SOURCE is listed, its binary is not named: reported, and nothing is red
+  expect 0 'clap-host 0.30.6 is uninstallable until the rest of the pass (clap-host)' \
+    'deb source: (a) a binary of a listed source is reported, not red' -- deb --channel "$d/a" "${args[@]}" --same-pass clap-core
+  ! grep -q '^ERROR: ' "$t/out" && ok 'deb source: (a) ... and no line is an error' || bad 'deb source: (a) an error line'
+  # (b) qualify names no same-pass package; it is broken only through clap-host, which the pass caps
+  grep -F 'newest: apt-get install qualify fails' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
+    && ok 'deb source: (b) a consumer broken only through a same-pass binary is reported' || bad 'deb source: (b) the consumer is not reported'
+  # (c) an unrelated package caps the protocol too: not through any package of the pass, so red, and only it
+  expect 1 'unrelated 1.0 was installable and is not' 'deb source: (c) a breakage outside the pass stays red' -- \
+    deb --channel "$d/c" "${args[@]}" --same-pass clap-core
+  grep '^ERROR: ' "$t/out" | grep -qF unrelated && [ -z "$(grep '^ERROR: ' "$t/out" | grep -vF unrelated)" ] \
+    && ok 'deb source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'deb source: (c) a red is not unrelated'
 }
 
 arm_deb_unbuilt() {
@@ -277,6 +328,51 @@ arm_rpm() {
     rpm --channel "$d/nowhere" --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new-patch"
   arm_rpm_unbuilt "$d"
   arm_rpm_quick
+  arm_rpm_source
+}
+
+arm_rpm_source() {
+  for tool in rpmbuild createrepo_c dnf; do command -v $tool >/dev/null || { bad "rpm source: $tool is not installed"; return; }; done
+  local d=$t/rpms; mkdir -p "$d/top" "$d/a/fedora/44/noarch" "$d/a/fedora/44/x86_64" "$d/c/fedora/44/noarch" "$d/c/fedora/44/x86_64" "$d/new" "$d/empty"
+  mks() { # source binary version requires... ; the source's spec builds the binary as a subpackage, so its SOURCERPM names the source
+    local src=$1 n=$2 v=$3; shift 3
+    { printf 'Name: %s\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\nBuildArch: noarch\n' "$src" "$v"
+      [ "$n" != "$src" ] || for r in "$@"; do printf 'Requires: %s\n' "$r"; done
+      printf '%%description\nt\n'
+      if [ "$n" != "$src" ]; then
+        printf '%%package -n %s\nSummary: t\n' "$n"
+        for r in "$@"; do printf 'Requires: %s\n' "$r"; done
+        printf '%%description -n %s\nt\n%%files -n %s\n' "$n" "$n"
+      fi
+      printf '%%files\n'; } > "$d/top/$src-$n-$v.spec"
+    rpmbuild -bb -D "_topdir $d/top" -D 'dist .fc44' "$d/top/$src-$n-$v.spec" >/dev/null 2>&1 || { echo "rpmbuild $n $v failed" >&2; return 1; }
+    find "$d/top/RPMS" -name "$n-$v-1.fc44.noarch.rpm"
+  }
+  local ch lib_rpm; lib_rpm=$(mks libproto libproto 0.4.4)
+  cp "$lib_rpm" "$d/a/fedora/44/noarch/"; cp "$lib_rpm" "$d/c/fedora/44/noarch/"
+  # clap-host is built by the source clap-core; qualify installs through it and is its own source
+  local ch_rpm; ch_rpm=$(mks clap-core clap-host 0.30.6 '(libproto >= 0.4.4 with libproto < 0.5)')
+  local q_rpm; q_rpm=$(mks qualify qualify 1.0 'clap-host >= 0.30' 'libproto >= 0.4.4')
+  local u_rpm; u_rpm=$(mks unrelated unrelated 1.0 '(libproto >= 0.4.4 with libproto < 0.5)')
+  cp "$ch_rpm" "$q_rpm" "$d/a/fedora/44/noarch/"; cp "$ch_rpm" "$q_rpm" "$u_rpm" "$d/c/fedora/44/noarch/"
+  cp "$(mks libproto libproto 0.5.0)" "$d/new/"
+  for ch in a c; do createrepo_c -q "$d/$ch/fedora/44/x86_64"; createrepo_c -q "$d/$ch/fedora/44/noarch"; done
+  local args=(rpm --fedora 44 --arch x86_64 --reposdir "$d/empty" --new-dir "$d/new")
+  expect 1 'clap-host 0.30.6-1.fc44.noarch was installable and is not' 'rpm source: without a same-pass list the cap is red' -- \
+    "${args[@]}" --channel "$d/a"
+  # (a) the SOURCE is listed, its binary is not named: reported, and nothing is red
+  expect 0 'clap-host 0.30.6-1.fc44.noarch is uninstallable until the rest of the pass (clap-host)' \
+    'rpm source: (a) a binary of a listed source is reported, not red' -- "${args[@]}" --channel "$d/a" --same-pass clap-core
+  ! grep -q '^ERROR: ' "$t/out" && ok 'rpm source: (a) ... and no line is an error' || bad 'rpm source: (a) an error line'
+  # (b) qualify names no same-pass package; it is broken only through clap-host, which the pass caps
+  grep -qF 'newest: installing qualify falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44' "$t/out" \
+    && grep -F 'newest: installing qualify falls back' "$t/out" | grep -qF '(every unmet requirement on its path is held by clap-host, of the pass)' \
+    && ok 'rpm source: (b) a consumer broken only through a same-pass binary is reported' || bad 'rpm source: (b) the consumer is not reported'
+  # (c) an unrelated package caps the protocol too: not through any package of the pass, so red
+  expect 1 'unrelated 1.0-1.fc44.noarch was installable and is not' 'rpm source: (c) a breakage outside the pass stays red' -- \
+    "${args[@]}" --channel "$d/c" --same-pass clap-core
+  grep '^ERROR: ' "$t/out" | grep -qF unrelated && [ -z "$(grep '^ERROR: ' "$t/out" | grep -vF unrelated)" ] \
+    && ok 'rpm source: (c) ... every red names unrelated alone, not clap-host nor qualify' || bad 'rpm source: (c) a red is not unrelated'
 }
 
 # A QUICK RELEASE NEVER REACHES A TREE OUTSIDE THE QUICK SET (omx-dsp 0.32.1, 2026-11-14). The quick set builds fc44 and
