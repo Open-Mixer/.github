@@ -45,6 +45,7 @@ jobs:
       - run: tests/channel-keep-list.sh
       - run: tests/pinned-keys.sh
       - run: tests/no-cosign.sh
+      - run: tests/deb-disabled.sh
       - run: tests/single-key.sh
       - run: tests/install-clean-retry.sh
       - run: tests/quick-unbuilt-pass.sh

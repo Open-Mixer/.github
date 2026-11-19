@@ -154,6 +154,10 @@ on:
         type: boolean
         default: false
         description: 'Let the release go out over a version the channel already serves. Off, the preflight refuses it (a moved old tag re-running its release); on only to finish a partial publish.'
+      enabled:
+        type: boolean
+        default: true
+        description: 'false: this source ships no Debian package. Every job of the workflow is skipped (the preflight is, and every other job needs it), nothing is built, published or checked, and what the channel already serves stays. The caller declares it here, in the one place its release workflow passes to this one; the debian/ directory stays.'
       verify-install:
         type: boolean
         default: true
@@ -209,6 +213,7 @@ defaults:
 jobs:
   preflight:
     name: Check the release can publish
+    if: ${{ inputs.enabled }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     outputs:
