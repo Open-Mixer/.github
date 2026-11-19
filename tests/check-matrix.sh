@@ -13,6 +13,10 @@
 #   - a kind whose matrix holds no quick cell renders no cell while quick (count 0, the job skipped), never the full
 #     matrix: a check never runs a cell the set does not build;
 #   - a variable that is neither quick nor full fails;
+#   - every cell names the runner of its own architecture (an arm64 or aarch64 cell ubuntu-24.04-arm, an x86 cell
+#     ubuntu-latest), so a deb job writes runs-on: matrix.cell.runner and never installs an arm64 -dev package in an
+#     amd64 container (omx-panel ci 44563540081); while quick, no deb cell is left on an x86 runner; the sabotage, a
+#     check-matrix.sh that names ubuntu-latest for every cell, goes red here;
 #   - one source: the cells come from release-matrix's quick.txt, through matrix.sh; the action restates no cell, and
 #     a quick.txt changed in a copy changes the rendered matrix (the sabotage: a check-matrix.sh that ignores the set
 #     renders bookworm while quick, and goes red here).
@@ -50,9 +54,9 @@ PHD_RPM='["45"]' PHD_RPMA='["x86_64", "aarch64"]' PHD_DEB='["bookworm", "trixie"
 # ---- plugin-hostd's full-stack checks while the wave is quick
 render quick '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA" || { no "quick render failed"; cat "$t/log"; }
 expect "quick, plugin-hostd" set quick
-expect "quick, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45"}]'
+expect "quick, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45","runner":"ubuntu-latest"}]'
 expect "quick, plugin-hostd" rpm-count 1
-expect "quick, plugin-hostd" deb '[{"suite":"trixie","arch":"arm64","image":"debian:trixie"}]'
+expect "quick, plugin-hostd" deb '[{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]'
 expect "quick, plugin-hostd" deb-count 1
 expect "quick, plugin-hostd" images '["fedora:45","debian:trixie"]'
 for c in 'fc45 aarch64' 'bookworm amd64' 'bookworm arm64' 'trixie amd64'; do
@@ -63,7 +67,7 @@ done
 for w in full ''; do
     render "$w" '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA" || { no "${w:-unset} render failed"; cat "$t/log"; }
     expect "${w:-unset}, plugin-hostd" set full
-    expect "${w:-unset}, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45"},{"fedora":"45","arch":"aarch64","image":"fedora:45"}]'
+    expect "${w:-unset}, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45","runner":"ubuntu-latest"},{"fedora":"45","arch":"aarch64","image":"fedora:45","runner":"ubuntu-24.04-arm"}]'
     expect "${w:-unset}, plugin-hostd" deb-count 4
     expect "${w:-unset}, plugin-hostd" images '["fedora:45","debian:bookworm","debian:trixie"]'
 done
@@ -94,8 +98,23 @@ expect "bookworm alone, full" deb-count 2
 # ---- a variable that is neither quick nor full fails
 if render fast '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA"; then no "OMX_RELEASE_MATRIX=fast passed"; else yes "OMX_RELEASE_MATRIX=fast fails"; fi
 
+# ---- a cell runs on the runner of its own architecture: the dev debs are trixie arm64 only, and apt in an amd64
+# container resolves an arm64 package that dpkg then refuses
+render quick '' '' '' '["trixie"]' '["amd64", "arm64"]'
+expect "runner, quick deb" deb '[{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]'
+if grep -q '"runner":"ubuntu-latest"' <<< "$(out deb)"; then no "quick: a deb cell is left on an x86 runner"; else yes "quick: no deb cell is on an x86 runner"; fi
+render full '' '' '' '["trixie"]' '["amd64", "arm64"]'
+expect "runner, full deb" deb '[{"suite":"trixie","arch":"amd64","image":"debian:trixie","runner":"ubuntu-latest"},{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]'
+# sabotage: every cell on the x86 runner is what omx-panel ci 44563540081 ran; the arms above must go red on it
+cp -a "$actions" "$t/xcopy"
+sed -i 's/"runner":"ubuntu-24.04-arm"/"runner":"ubuntu-latest"/' "$t/xcopy/check-matrix/check-matrix.sh"
+: > "$t/out"
+GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/xcopy/check-matrix WAVE=quick MATRIX='' RPM_RELEASES='' RPM_ARCHES='' \
+    DEB_RELEASES='["trixie"]' DEB_ARCHES='["amd64", "arm64"]' bash "$t/step.sh" > "$t/log" 2>&1
+if grep -q '"runner":"ubuntu-latest"' <<< "$(out deb)"; then yes "sabotage: the arm64 cell on an x86 runner is red"; else no "sabotage: the arm64 cell on an x86 runner passed"; fi
+
 # ---- one source: no cell restated, and quick.txt is what is read
-if grep -nE '\b(bookworm|trixie|x86_64|aarch64|amd64|arm64)\b' "$actions/check-matrix/check-matrix.sh" "$t/step.sh" | grep -v '^[^:]*:[0-9]*:#'; then
+if grep -nE '\b(bookworm|trixie|x86_64|aarch64|amd64|arm64)\b' "$actions/check-matrix/check-matrix.sh" "$t/step.sh" | grep -v '^[^:]*:[0-9]*:#' | grep -v '# runner label$'; then
     no "check-matrix restates a cell"
 else
     yes "check-matrix restates no cell"

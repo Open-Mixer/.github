@@ -22,9 +22,13 @@
 # nothing); a check renders no cell then, because a check never runs a cell the set does not build. The caller skips the
 # job on a count of 0.
 #
-# Each cell is matrix.sh's row with the container image added: {"fedora": "45", "arch": "x86_64", "image": "fedora:45"}
-# or {"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}. images is the images of every cell, each once, in
-# order: the matrix of a CI job that runs on the runner's own architecture.
+# Each cell is matrix.sh's row with the container image and the runner added: {"fedora": "45", "arch": "x86_64",
+# "image": "fedora:45", "runner": "ubuntu-latest"} or {"suite": "trixie", "arch": "arm64", "image": "debian:trixie",
+# "runner": "ubuntu-24.04-arm"}. The runner is the one of the cell's own architecture: a container of one architecture
+# cannot install the packages of another (apt resolves libomxdsp-dev arm64 and dpkg refuses it in an amd64 container,
+# omx-panel ci 44563540081), and the channel's development debs are trixie arm64 only. A caller writes
+# runs-on: ${{ matrix.cell.runner }} instead of choosing the runner by hand. images is the images of every cell, each
+# once, in order: the matrix of a CI job that runs on the runner's own architecture.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 matrix_sh=$here/../release-matrix/matrix.sh
@@ -45,9 +49,11 @@ ask() { # <kind> <releases> <arches> <set>: the key=value lines matrix.sh writes
     cat "$tmp/out"
 }
 field() { sed -n "s/^$1=//p" <<< "$2"; }
-with_image() { # matrix.sh's cells with the container image of each
+with_image() { # matrix.sh's cells with the container image and the runner of each
     sed -E 's/\{"fedora":"([^"]+)","arch":"([^"]+)"\}/{"fedora":"\1","arch":"\2","image":"fedora:\1"}/g;
-            s/\{"suite":"([^"]+)","arch":"([^"]+)"\}/{"suite":"\1","arch":"\2","image":"debian:\1"}/g' <<< "$1"
+            s/\{"suite":"([^"]+)","arch":"([^"]+)"\}/{"suite":"\1","arch":"\2","image":"debian:\1"}/g' <<< "$1" |
+        sed -E 's/"arch":"(aarch64|arm64)"(,"image":"[^"]+")\}/"arch":"\1"\2,"runner":"ubuntu-24.04-arm"}/g;  # runner label
+               s/("image":"[^"]+")\}/\1,"runner":"ubuntu-latest"}/g'
 }
 shown() { # <kind> <cells json>: the cells as a notice shows them, fc<release> <arch> or <suite> <arch>
     grep -oE '"(fedora|suite)":"[^"]+","arch":"[^"]+"' <<< "$2" |

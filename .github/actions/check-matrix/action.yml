@@ -22,6 +22,7 @@ description: Say which cells a check runs, the quick set's alone while a release
 #   full-deb:
 #     needs: checks
 #     if: needs.checks.outputs.deb-count != '0'
+#     runs-on: ${{ matrix.cell.runner }}
 #     container: { image: '${{ matrix.cell.image }}' }
 #     strategy: { matrix: { cell: '${{ fromJSON(needs.checks.outputs.deb) }}', mode: [default, headless] } }
 
@@ -50,13 +51,13 @@ outputs:
     description: "'quick' or 'full'"
     value: ${{ steps.matrix.outputs.set }}
   rpm:
-    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45"}'
+    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45", "runner": "ubuntu-latest"}'
     value: ${{ steps.matrix.outputs.rpm }}
   rpm-count:
     description: how many rpm cells; 0 skips the job
     value: ${{ steps.matrix.outputs.rpm-count }}
   deb:
-    description: 'the deb cells, a JSON array: {"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}'
+    description: 'the deb cells, a JSON array: {"suite": "trixie", "arch": "arm64", "image": "debian:trixie", "runner": "ubuntu-24.04-arm"}'
     value: ${{ steps.matrix.outputs.deb }}
   deb-count:
     description: how many deb cells; 0 skips the job
