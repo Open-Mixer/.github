@@ -30,8 +30,8 @@ description: The packages other repositories release later in the same pass, fro
 #     with:
 #       same-pass: ${{ needs.samepass.outputs.list }}
 #
-# The checkout is sparse (the one file) and is the caller's repository, in the runner's temp directory. A bad name or a
-# ref that cannot be fetched is refused by name; the reader's own proof is tests/same-pass.sh.
+# The checkout is sparse (the one file) and is the caller's repository, in .same-pass-src under the workspace. A bad name or
+# a ref that cannot be fetched is refused by name; the reader's own proof is tests/same-pass.sh.
 
 inputs:
   list:
@@ -49,11 +49,11 @@ outputs:
 runs:
   using: composite
   steps:
-    # the sparse checkout goes to the runner's temp directory, never the caller's workspace: a local use (./) keeps its
-    # own files there, and the caller's checkout is left as it is
+    # the sparse checkout is a directory of its own under the workspace: a local use (./) keeps its own files, which
+    # a checkout of the workspace itself would delete
     - uses: actions/checkout@v4
       with:
-        path: ${{ runner.temp }}/same-pass
+        path: .same-pass-src
         sparse-checkout: .github/release-same-pass
         sparse-checkout-cone-mode: false
     - id: read
@@ -61,5 +61,5 @@ runs:
       env:
         LIST: ${{ inputs.list }}
         REF: ${{ inputs.ref }}
-        SAME_PASS_SRC: ${{ runner.temp }}/same-pass
+        SAME_PASS_SRC: .same-pass-src
       run: bash "$GITHUB_ACTION_PATH/same-pass.sh"
