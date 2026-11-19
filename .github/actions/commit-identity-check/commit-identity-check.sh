@@ -24,7 +24,12 @@ check() { # author-email committer-email range
     n=$((n + 1))
     IFS=' ' read -r ae ce < <(git log -1 --format='%ae %ce' "$sha")
     [ "$ae" = "$want_a" ] || { echo "$sha: [author-email] $ae (expected $want_a)"; bad=$((bad + 1)); }
-    [ "$ce" = "$want_c" ] || { echo "$sha: [committer-email] $ce (expected $want_c)"; bad=$((bad + 1)); }
+    [ "$ce" = "$want_c" ] || {
+      echo "$sha: [committer-email] $ce (expected $want_c)"; bad=$((bad + 1))
+      case "$ce" in
+        *@github.com) echo "$sha: made by GitHub (Update branch?): merge the base into the branch LOCALLY with a plain signed git merge (house author and committer), push plainly; never rebase or force-push" ;;
+      esac
+    }
     v=$(verified_of "$sha") || { echo "commit-identity-check: the API gave no answer for $sha" >&2; return 2; }
     read -r v reason <<<"$v"
     case "$v" in

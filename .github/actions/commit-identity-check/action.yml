@@ -12,7 +12,7 @@ description: Fail when a commit of the pull request has the wrong author or comm
 # The range is the commits the pull request adds to the base branch AS IT IS NOW (origin/<base>..HEAD): a base that
 # moved on is not a problem, what is reachable from its tip is not read, so a commit that landed on the base meanwhile
 # is not charged to the pull request. A commit GitHub makes for the pull request itself ("Update branch" merges the base
-# in, committer GitHub) IS in the range and fails: rebase locally. The merge button's commit is made after the checks
+# in, committer GitHub) IS in the range and fails: merge the base into the branch locally (plain signed git merge, house author and committer) and push plainly, never rebase or force. The merge button's commit is made after the checks
 # and is never in a range.
 # The caller checks out with fetch-depth: 0 and the pull request head, and passes the token (the default one reads commits).
 

@@ -74,6 +74,13 @@ rc=0; run main..HEAD >/dev/null 2>&1 || rc=$?
 rc=0; run nosuch..HEAD >/dev/null 2>&1 || rc=$?
 [ "$rc" = 2 ] || fail "an unreadable range gave $rc, not 2"
 
+# a GitHub-made merge commit is named with the fix: a local signed merge, not a rebase
+git checkout -q -b t5 topic~3 2>/dev/null || git checkout -q -b t5 main
+mk noreply@github.com noreply@github.com true "Merge branch main into t5"
+rc=0; run main..HEAD >"$tmp/out" || rc=$?
+grep -q 'merge the base into the branch LOCALLY with a plain signed git merge' "$tmp/out" || fail "a GitHub-made commit got no local-merge advice: $(cat "$tmp/out")"
+! grep -qi 'rebase' <(grep -v 'never rebase' "$tmp/out") || fail "the advice names a rebase"
+
 # sabotage: the checker with a head-only reader (rev-list -1) is green on a range whose bad commits are not the head,
 # which the real one names; the assertion that both are named goes red on it
 git checkout -q topic

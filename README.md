@@ -51,8 +51,7 @@ range, `origin/<base>..HEAD`, not only the head: the author email must be `linux
 commit (workflow token). The two emails are the action's inputs, whose defaults in its `action.yml` are the one place
 they are written. Each offending commit is named by sha, field and value (a committer of `linuxnow@gmail.com` reads
 `bad_email`, unverified). There is no bypass list. A base that moved on is not charged to the pull request (what the
-base tip reaches is not in the range); GitHub's own "Update branch" commit is in the range and fails, so rebase
-locally; the merge button's commit is made after the checks and is never read. A missing API answer is exit 2, never
+base tip reaches is not in the range); GitHub's own "Update branch" commit is in the range and fails, so merge the base into the branch locally (a plain signed `git merge`, house author and committer) and push plainly, never a rebase or force; the merge button's commit is made after the checks and is never read. A missing API answer is exit 2, never
 a pass. `tests/commit-identity-check.sh` proves it on planted ranges, including the head-only sabotage.
 
 Call the shared workflows and actions by the `v1` tag, never by `main`:
