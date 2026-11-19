@@ -30,6 +30,7 @@ permissions:
 jobs:
   preflight:
     name: Check the release can publish
+    if: ${{ false }} # clap-headers ships no Debian package (owner ruling 2026-11-19); every other job needs this one or plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -48,6 +49,7 @@ jobs:
   # one build per Debian release serves every architecture and arm64 stands for them all (the development set builds arm64 alone).
   plan:
     name: Plan the cells
+    if: ${{ false }} # clap-headers ships no Debian package (owner ruling 2026-11-19)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
