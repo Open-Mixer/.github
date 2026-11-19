@@ -1,8 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# fedora-cells: no Fedora release is written into a job of the caller's workflows (rule 11-10: fc45 beside fc44 in
-# every check; ruling D25: every job's cells come from release-matrix or check-matrix, whose quick.txt carries both).
+# fedora-cells: no Fedora release is written into a job of the caller's workflows (rule 11-10, fc45 beside fc44, ended
+# 2026-11-19: fc45 alone is built and checked, the fc44 trees stay served; ruling D25: every job's cells come from
+# release-matrix or check-matrix, whose quick.txt carries it).
 #
 #   check.sh [DIR]   DIR the workflows (default .github/workflows); exit 0 green, 1 red (each finding named with its
 #                    file, job and line), 2 not measured (no workflow)

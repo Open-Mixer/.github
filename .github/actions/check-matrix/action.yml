@@ -50,7 +50,7 @@ outputs:
     description: "'quick' or 'full'"
     value: ${{ steps.matrix.outputs.set }}
   rpm:
-    description: 'the rpm cells, a JSON array: {"fedora": "44", "arch": "x86_64", "image": "fedora:44"}'
+    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45"}'
     value: ${{ steps.matrix.outputs.rpm }}
   rpm-count:
     description: how many rpm cells; 0 skips the job
@@ -68,7 +68,7 @@ outputs:
     description: how many cells in all
     value: ${{ steps.matrix.outputs.count }}
   images:
-    description: 'the container images of the cells, each once, a JSON array: ["fedora:44", "debian:trixie"]'
+    description: 'the container images of the cells, each once, a JSON array: ["fedora:45", "debian:trixie"]'
     value: ${{ steps.matrix.outputs.images }}
 
 runs:

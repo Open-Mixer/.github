@@ -1101,7 +1101,7 @@ def main(argv=None):
                             "none by default")
         p.add_argument("--no-newest", action="store_true", help="skip the arm that installs each package alone")
         p.add_argument("--cell", action="append",
-                       help="judge only these cells, RELEASE/ARCH (44/x86_64, trixie/arm64); every other cell is named and "
+                       help="judge only these cells, RELEASE/ARCH (45/x86_64, trixie/arm64); every other cell is named and "
                             "left out. A release of the quick set passes its cells: the trees outside it stay as served")
         p.add_argument("--dry-run", action="store_true",
                        help="a release dry run (nothing is published): the deb arm judges only the architectures the "
