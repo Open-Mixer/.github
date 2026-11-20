@@ -57,6 +57,7 @@ jobs:
       - run: tests/langpacks-fill-runner.sh
       - run: tests/release-checks.sh
       - run: tests/publish-only-by-tag.sh
+      - run: tests/cancel-scope.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
