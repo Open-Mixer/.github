@@ -22,7 +22,7 @@ of a person (`"by": "human"`), is for a person and never written here. Then one 
 
 Environment: OMX_TRANSLATE_URL, OMX_TRANSLATE_KEY (read by omx-contract translate), FILL_FORK=true (a pull request from a
 fork), RUNNER_ENVIRONMENT (github-hosted refuses), GITHUB_HEAD_REF (the pull request's branch; none, nothing to push to),
-SIGNING_KEY (armored; or SIGNING_KEY_ID of one already imported), SIGNING_PASSPHRASE, PUSH_TOKEN, COMMITTER_NAME, COMMITTER_EMAIL. Exit 0 whole, 1 a gap left or pushed, 2 usage.
+DEFAULT_BRANCH (the repository's; with main, openmixer-v*, release/* and settle/* a branch the fill refuses to push to), SIGNING_KEY (armored; or SIGNING_KEY_ID of one already imported), SIGNING_PASSPHRASE, PUSH_TOKEN, COMMITTER_NAME, COMMITTER_EMAIL. Exit 0 whole, 1 a gap left or pushed, 2 usage.
 """
 import argparse
 import json
@@ -166,6 +166,11 @@ def import_signing_key(env):
     return fpr
 
 
+def kept_ref(ref, default=""):
+    """a branch the fill never pushes to: the repository's default branch, main, openmixer-v*, release/*, settle/*"""
+    return bool(ref) and (ref == default or ref == "main" or ref.startswith(("openmixer-v", "release/", "settle/")))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="fill.py", description=__doc__.split("\n")[0])
     ap.add_argument("--gate", required=True)
@@ -201,6 +206,8 @@ def main(argv):
     if not a.no_push:
         if not env.get("GITHUB_HEAD_REF"):
             why.append("this is not a pull request's branch to push to")
+        elif kept_ref(env["GITHUB_HEAD_REF"], env.get("DEFAULT_BRANCH", "")):
+            why.append("%s is the default branch or a kept name (main, openmixer-v*, release/*, settle/*): the fill never commits to it" % env["GITHUB_HEAD_REF"])
         if not (env.get("SIGNING_KEY_ID") or env.get("SIGNING_KEY")):
             why.append("no signing key (the organisation secret OPENMIXER_CI_SIGNING_KEY, passed as signing-key)")
         elif not shutil.which("gpg"):

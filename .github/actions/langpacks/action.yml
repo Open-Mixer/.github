@@ -106,6 +106,13 @@ inputs:
     description: Its passphrase, empty for a key without one
     required: false
     default: ''
+  dispatch-head:
+    description: >-
+      On a workflow_dispatch run, the head sha of the ONE open same-repository pull request whose head branch is the
+      dispatched ref, which the caller's job proved before this step (workflows/langpacks-fill.yml does); the fill then
+      pushes to that ref only. Empty: a dispatch is no pull request to push to and the gaps are named.
+    required: false
+    default: ''
   push-token:
     description: A token whose push starts workflows (default the checkout's own credentials, whose push starts none)
     required: false
@@ -145,7 +152,9 @@ runs:
         COMMITTER_NAME: ${{ inputs.committer-name }}
         COMMITTER_EMAIL: ${{ inputs.committer-email }}
         FILL_FORK: ${{ github.event.pull_request.head.repo.fork }}
-        EXPECT_HEAD: ${{ github.event.pull_request.head.sha }}
+        EXPECT_HEAD: ${{ github.event.pull_request.head.sha || inputs.dispatch-head }}
+        DISPATCH_HEAD: ${{ inputs.dispatch-head }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         HEAD_REF: ${{ github.event.pull_request.head.ref }}
         SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
       run: |
@@ -172,6 +181,8 @@ runs:
         done
         if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "${SAME_REPO:-}" = true ] && [ "$FILL_FORK" != true ]; then
           export GITHUB_HEAD_REF=$HEAD_REF
+        elif [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] && [ "${GITHUB_REF_TYPE:-}" = branch ] && [ -n "${DISPATCH_HEAD:-}" ]; then
+          export GITHUB_HEAD_REF=$GITHUB_REF_NAME
         else
           unset OMX_TRANSLATE_KEY SIGNING_KEY SIGNING_PASSPHRASE PUSH_TOKEN GITHUB_HEAD_REF
         fi

@@ -262,17 +262,22 @@ step_run "$work/evpush" GITHUB_EVENT_NAME=push SAME_REPO= >"$work/evpush.out" 2>
 rc=$?
 [ "$rc" -eq 1 ] && grep -q "not a pull request" "$work/evpush.out" && grep -q 'catalogs/ca.json: fix.new' "$work/evpush.out"
 step $? "a push event is no pull request to push to: the gaps are named (rc=$rc)"
+fresh evdispatch
+step_run "$work/evdispatch" GITHUB_EVENT_NAME=workflow_dispatch SAME_REPO= GITHUB_REF_TYPE=branch GITHUB_REF_NAME=feature >"$work/evdispatch.out" 2>&1
+rc=$?
+[ "$rc" -eq 1 ] && grep -q "not a pull request" "$work/evdispatch.out" && grep -q 'catalogs/ca.json: fix.new' "$work/evdispatch.out"
+step $? "a dispatch run with no proved open pull request has nothing to push to: the gaps are named (rc=$rc)"
 fresh evhosted
 step_run "$work/evhosted" RUNNER_ENVIRONMENT=github-hosted >"$work/evhosted.out" 2>&1
 rc=$?
 [ "$rc" -eq 1 ] && grep -q 'GitHub-hosted' "$work/evhosted.out" && diff -r "$fix/catalogs" "$work/evhosted/catalogs" >/dev/null
 step $? "a GitHub-hosted runner is refused through the step (rc=$rc)"
 [ "$(grep -c '^router: ' "$work/router.log")" -eq "$calls_before" ]
-step $? "none of the three reached the router"
+step $? "none of the four reached the router"
 
 if [ "$failures" -ne 0 ]; then
     echo "--- router.log"; tail -5 "$work/router.log"
-    for f in evfork evpush evhosted; do echo "--- $f.out"; head -3 "$work/$f.out" 2>/dev/null; done
+    for f in evfork evpush evdispatch evhosted; do echo "--- $f.out"; head -3 "$work/$f.out" 2>/dev/null; done
     echo "langpacks-fill: $failures failed"
     exit 1
 fi

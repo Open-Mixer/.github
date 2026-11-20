@@ -31,11 +31,17 @@ PUSH_HELPER = "channel-push"
 # coordinator, Open-Mixer/.github#177, the language-pack fill): every publishing thing in the job is such a push AND the
 # job-level `if` is exactly PR_JOB, so the job never runs on a push, a tag, a dispatch or a fork's pull request.
 PR_JOB = "github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork"
+# The dispatch form (callers' ci.yml is workflow_dispatch only): the same push, from a dispatched run on the head branch of one
+# OPEN same-repository pull request, which a step before the push must have proved (PR_CHECK: it reads the open pull
+# requests of that head, `pulls?head=` with `state=open`, and fails by name when there is not exactly one).
+PR_OR_DISPATCH = PR_JOB + " || github.event_name == 'workflow_dispatch'"
+PR_CHECK = ("pulls?head=", "state=open")
+PR_REF_RUN = re.compile(r"HEAD:(?:refs/heads/)?(?:\$\{\{\s*github\.ref_name\s*\}\}|\$GITHUB_REF_NAME|\$\{GITHUB_REF_NAME\})(?=[\s\"']|$)")
 PR_HEAD_RUN = re.compile(r"HEAD:(?:refs/heads/)?(?:\$\{\{\s*github\.head_ref\s*\}\}|\$GITHUB_HEAD_REF|\$\{GITHUB_HEAD_REF\})(?=[\s\"']|$)")
 PR_HEAD_PY = re.compile(r"\"HEAD:refs/heads/%s\"\s*%\s*ref\b")
 PR_HEAD_PY_REF = re.compile(r"^\s*ref\s*=\s*(?:env|os\.environ)\[\"GITHUB_HEAD_REF\"\]\s*$", re.M)
 PUSH_LINE = re.compile(r"\bgit\b[^\n]*\bpush\b")
-PUSH_WIDENED = re.compile(r"--tags|--force|--mirror|--delete|--follow-tags|--all\b|\s-[fd]\b|refs/tags/|:refs/(?!heads/)")
+PUSH_WIDENED = re.compile(r"--tags|--force|--mirror|--delete|--follow-tags|--all\b|\s-[fd]\b|refs/tags/|:refs/(?!heads/)|(?:^|[\s\"'])\+\S*:")
 
 RUN_PUBLISHES = [
     (re.compile(r"\bgh\s+release\s+(create|upload|edit|delete)\b"), "gh release"),
@@ -89,15 +95,14 @@ def run_publishes(t):
 
 
 def pr_head_only(text, py=False):
-    """True when `text` pushes only to the triggering pull request's own head branch and does nothing else publishing"""
+    """'pr' when `text` pushes only to the triggering pull request's own head branch (and the script reads it from
+    GITHUB_HEAD_REF), 'dispatch' when some push is to the dispatched run's ref name, None otherwise"""
     lines = [l for l in text.splitlines() if PUSH_LINE.search(l)]
-    if not lines or any(PUSH_WIDENED.search(l) for l in lines): return False
+    if not lines or any(PUSH_WIDENED.search(l) for l in lines): return None
     if py:
-        if not PR_HEAD_PY_REF.search(text): return False
-        ok = PR_HEAD_PY
-    else:
-        ok = PR_HEAD_RUN
-    return all(ok.search(l) for l in lines)
+        return "pr" if PR_HEAD_PY_REF.search(text) and all(PR_HEAD_PY.search(l) for l in lines) else None
+    if not all(PR_HEAD_RUN.search(l) or PR_REF_RUN.search(l) for l in lines): return None
+    return "dispatch" if any(PR_REF_RUN.search(l) for l in lines) else "pr"
 
 
 def only_git_push(text):
@@ -148,7 +153,7 @@ class Repo:
                 if re.search(r"^\s*(?:\w+=\S+\s+)*(?:" + rx.pattern.replace("^\\s*", "").replace("\\b", "", 1) + ")", txt, re.M): what = w; break
             if what is None and any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in txt.splitlines()): what = "a curl upload"
             if not what: continue
-            prhead = what == "git push" and only_git_push(txt) and pr_head_only(txt, py=fn.endswith(".py"))
+            prhead = (what == "git push" and only_git_push(txt) and pr_head_only(txt, py=fn.endswith(".py"))) or None
             for st in [x for x in steps if fn in str(x.get("run", ""))] or [{}]:
                 out.append({"what": what + " in " + fn, "dest": None, "prhead": prhead, "gated": norm_if(st["if"]) if "if" in st and norm_if(st["if"]) in SIGN_GATES else None})
         self.memo[name] = out
@@ -177,7 +182,7 @@ class Repo:
             if what:
                 rt = run_text(st)
                 found.append({"what": what, "dest": None, "gated": None, "sign": None, "staging": None,
-                              "prhead": what == "git push" and only_git_push(rt) and pr_head_only(rt)})
+                              "prhead": (what == "git push" and only_git_push(rt) and pr_head_only(rt)) or None})
         return found
 
 
@@ -201,10 +206,14 @@ def check_workflow(repo, path, doc, bad):
     for job, body in (doc.get("jobs") or {}).items():
         if "steps" not in body: continue
         pub = []
-        pr_job = "if" in body and norm_if(body["if"]) == PR_JOB
+        jif = norm_if(body["if"]) if "if" in body else None
+        check = next((i for i, x in enumerate(body["steps"]) if all(m in run_text(x) for m in PR_CHECK)), None)
         for n, st in enumerate(body["steps"]):
             for f in repo.step_findings(st):
-                if f.get("prhead") and pr_job and "if" not in st: continue
+                kind = f.get("prhead")
+                if kind and "if" not in st:
+                    if jif == PR_JOB and kind == "pr": continue
+                    if jif == PR_OR_DISPATCH and check is not None and check < n: continue
                 if publishing(f): pub.append((st.get("name") or st.get("uses") or f"step {n + 1}", f["what"]))
         if pub and ("if" not in body or norm_if(body["if"]) != TAG):
             label, what = pub[0]
@@ -340,6 +349,34 @@ def selftest(real):
         "the pr-head action script whose ref is not read from GITHUB_HEAD_REF": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok.replace('env["GITHUB_HEAD_REF"]', '"main"'), "workflows/a.yml": call("./.github/actions/pyfill", job_if=PRJ)},
         "a pr-head push job that also calls the channel push on the real tree": dict(helper, **{"workflows/a.yml": ("name: w\non:\n  pull_request: {}\njobs:\n  j:\n    runs-on: x\n    if: " + PR_JOB + "\n    steps:\n      - run: " + head + "\n      - uses: " + CP + "\n        with:\n          what: rpm\n")}),
     })
+    DISP = "${{ " + PR_OR_DISPATCH + " }}"
+    chk = ("      - name: c\n        run: |\n          curl \"$GITHUB_API_URL/repos/$R/pulls?head=$O:$GITHUB_REF_NAME&state=open\"\n")
+    def dwf(push, check=True, job_if=DISP, on="workflow_dispatch: {}\n  pull_request: {}", pre="", step_if=""):
+        return ("name: w\non:\n  " + on + "\njobs:\n  j:\n    runs-on: x\n    if: " + job_if + "\n    steps:\n" + pre
+                + (chk if check else "") + "      - name: p\n" + (f"        if: {step_if}\n" if step_if else "") + "        run: |\n          " + push + "\n")
+    dref = "git push origin HEAD:${{ github.ref_name }}"
+    reds.update({
+        "a force push by refspec to the pr head": {"workflows/a.yml": wf(run="git push origin +HEAD:${{ github.head_ref }}", on=PRON, job_if=PRJ)},
+        "a force push by refspec to the dispatch ref": {"workflows/a.yml": dwf("git push origin +HEAD:$GITHUB_REF_NAME")},
+        "a force push by quoted refspec": {"workflows/a.yml": wf(run='git push origin "+HEAD:$GITHUB_HEAD_REF"', on=PRON, job_if=PRJ)},
+        "dispatch fill without the open-pr check": {"workflows/a.yml": dwf(dref, check=False)},
+        "dispatch push to main": {"workflows/a.yml": dwf("git push origin HEAD:main")},
+        "dispatch push to a release branch": {"workflows/a.yml": dwf("git push origin HEAD:refs/heads/release/1.2")},
+        "dispatch push of a tag": {"workflows/a.yml": dwf("git push origin HEAD:refs/tags/v1")},
+        "dispatch push of a tag by name": {"workflows/a.yml": dwf("git push origin v1")},
+        "dispatch push, the check step after the push": {"workflows/a.yml": dwf(dref, check=False).replace("        run: |\n          " + dref + "\n", "        run: |\n          " + dref + "\n") + chk},
+        "dispatch push in a job that also runs on push": {"workflows/a.yml": dwf(dref, job_if="${{ " + PR_OR_DISPATCH + " || github.event_name == 'push' }}", on="push: {}\n  workflow_dispatch: {}")},
+        "dispatch push in a job whose if is only workflow_dispatch": {"workflows/a.yml": dwf(dref, job_if="github.event_name == 'workflow_dispatch'")},
+        "the ref_name push in a pull-request-only job": {"workflows/a.yml": wf(run=dref, on=PRON, job_if=PRJ)},
+        "dispatch push beside a release creation": {"workflows/a.yml": dwf(dref + "\n          gh release create v1")},
+        "dispatch check with a step if on the push": {"workflows/a.yml": dwf(dref, step_if="always()")},
+    })
+    greens.update({
+        "a dispatched fill pushing to its ref name after the open-pr check": {"workflows/a.yml": dwf(dref)},
+        "the same with the env var": {"workflows/a.yml": dwf('git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"')},
+        "an action script pushing to the pr head, dispatch job with the check": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok,
+            "workflows/a.yml": ("name: w\non:\n  workflow_dispatch: {}\njobs:\n  j:\n    runs-on: x\n    if: " + DISP + "\n    steps:\n" + chk + "      - uses: ./.github/actions/pyfill\n")},
+    })
     greens.update({
         "a push to the pull request's own head branch, same-repo pr job": {"workflows/a.yml": wf(run=head, on=PRON, job_if=PRJ)},
         "the same, refs/heads/ and the env var": {"workflows/a.yml": wf(run='git push origin "HEAD:refs/heads/$GITHUB_HEAD_REF"', on=PRON, job_if=PRJ)},
@@ -350,10 +387,12 @@ def selftest(real):
         "the real publish-rpms from a dispatch job, sign an expression": call("./.github/actions/publish-rpms", "          sign: ${{ inputs.go }}\n          rpm-dir: x\n"),
         "the real publish-debs from a dispatch job, sign true": call("./.github/actions/publish-debs", "          sign: 'true'\n          deb-dir: x\n"),
         "the real purge-staging is fine but the real channel-push on the real tree is not": call(CP, "          what: deb\n"),
+        "the real langpacks fill in a dispatch job with no open-pr check": call("./.github/actions/langpacks", "          name: x\n          owner: x\n", job_if="${{ " + PR_OR_DISPATCH + " }}"),
         "the real langpacks fill in a job with no if": call("./.github/actions/langpacks", "          name: x\n          owner: x\n"),
         "the real langpacks fill in a job that is true on push": call("./.github/actions/langpacks", "          name: x\n          owner: x\n", job_if="${{ " + PR_JOB + " || github.event_name == 'push' }}"),
     }, "greens": {
         "the real langpacks fill in a same-repo pull request job": call("./.github/actions/langpacks", "          name: x\n          owner: x\n", job_if="${{ " + PR_JOB + " }}"),
+        "the real langpacks fill in a dispatch job after the open-pr check": ("name: w\non:\n  workflow_dispatch: {}\njobs:\n  j:\n    runs-on: x\n    if: " + "${{ " + PR_OR_DISPATCH + " }}" + "\n    steps:\n" + chk + "      - uses: ./.github/actions/langpacks\n        with:\n          name: x\n          owner: x\n"),
         "the real publish-rpms with a literal sign false": call("./.github/actions/publish-rpms", "          sign: 'false'\n          rpm-dir: x\n"),
         "the real publish-debs with no sign": call("./.github/actions/publish-debs", "          deb-dir: x\n"),
         "the real publish-rpms with sign true in a tag job": call("./.github/actions/publish-rpms", "          sign: 'true'\n          rpm-dir: x\n", job_if="${{ " + T + " }}"),

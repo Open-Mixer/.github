@@ -66,7 +66,7 @@ action closes the gap itself, in CI, or names it; it never stays silent. `fill.p
 for entries that are missing, stale or a missing catalog, and only then:
 
 - **fills** when it can: a pull request of the same repository, a runner that is not GitHub-hosted (the fill job of `langpacks-fill.yml`, `runs-on: arc-freemixer`, where the
-  router answers at `router-url`; check-only jobs stay on `vars.OMX_RUNNER`, which stays `ubuntu-latest`), `router-key` (the organisation secret `OMX_ROUTER_KEY`) and `signing-key` (`OPENMIXER_CI_SIGNING_KEY`)
+  router answers at `router-url`; check-only jobs stay on `vars.OMX_RUNNER`, which stays `ubuntu-latest`). The callers' ci.yml is workflow_dispatch only, so a caller dispatches ci.yml on the lane branch that has an OPEN same-repository pull request: the fill job first reads that pull request (exactly one, not a fork, base the default branch) and fails by name when there is none; it pushes to that same branch only, and never to the default branch, `main`, `openmixer-v*`, `release/*` or `settle/*` (fill.py refuses them by name, on a pull request and on a dispatch alike), `router-key` (the organisation secret `OMX_ROUTER_KEY`) and `signing-key` (`OPENMIXER_CI_SIGNING_KEY`)
   passed, the checkout at the pull request's head, `gpg` installed. It runs `omx-contract translate --model draft-prose`
   once per language with a gap (`fill-command`, `--lang` and `--model` appended), so every entry made is `"by": "machine"`
   with the model that served it and the hash of its source sentence. It then holds the result to what it may change: an entry

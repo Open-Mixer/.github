@@ -15,8 +15,13 @@ name: langpacks-fill
 #               gate: tools/catalogs-gate.sh, fill-command: tools/catalogs-gate.sh }
 #       secrets: inherit
 #
-# It runs only on a pull request of the caller's own repository (never a fork: a fork never reaches our pool). The
-# langpacks action fills and pushes signed to the pull request's branch, or names the gaps and fails.
+# It runs on a pull request of the caller's own repository (never a fork: a fork never reaches our pool), OR on a
+# workflow_dispatch: the callers' ci.yml is dispatch-only (no heavy Action on push or pull request), so the fill is
+# reached by dispatching ci.yml on the lane branch that has an OPEN same-repository pull request into the default
+# branch. A first step reads that pull request (pulls?head=<owner>:<ref>&state=open: exactly one, not a fork, base the
+# default branch, the ref neither the default branch nor main, openmixer-v*, release/*, settle/*) and fails by name when
+# there is not one; the push then goes to that same ref only. The langpacks action fills and pushes signed to it, or
+# names the gaps and fails.
 on:
   workflow_call:
     inputs:
@@ -53,7 +58,7 @@ on:
 jobs:
   fill:
     name: language packs fill
-    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork || github.event_name == 'workflow_dispatch'
     runs-on: arc-freemixer
     timeout-minutes: 30
     permissions:
@@ -63,9 +68,39 @@ jobs:
       options: --dns 10.43.0.10 --dns-search llm-router.svc.cluster.local --dns-search svc.cluster.local --dns-search cluster.local
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False git python3 nodejs gnupg2 ${{ inputs.packages }}
+      - name: The dispatched branch is the head of one open same-repository pull request
+        id: pr
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, urllib.request
+          e = os.environ
+          ref, repo, owner = e["GITHUB_REF_NAME"], e["GITHUB_REPOSITORY"], e["GITHUB_REPOSITORY_OWNER"]
+          def refuse(why):
+              print("::error::langpacks fill: " + why); sys.exit(1)
+          if e.get("GITHUB_REF_TYPE") != "branch":
+              refuse("the dispatched ref %s is not a branch" % ref)
+          if ref == e["DEFAULT_BRANCH"] or ref == "main" or ref.startswith(("openmixer-v", "release/", "settle/")):
+              refuse("%s is the default branch or a kept name: dispatch ci.yml on the lane branch of the pull request" % ref)
+          url = "%s/repos/%s/pulls?head=%s:%s&state=open" % (e["GITHUB_API_URL"], repo, owner, ref)
+          req = urllib.request.Request(url, headers={"Authorization": "Bearer " + e["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+          prs = json.load(urllib.request.urlopen(req))
+          if len(prs) != 1:
+              refuse("%d open pull requests have %s as their head (exactly one is needed): open one into %s, then dispatch again" % (len(prs), ref, e["DEFAULT_BRANCH"]))
+          pr = prs[0]
+          if pr["head"]["repo"]["full_name"] != repo or pr["head"]["repo"].get("fork") or pr["head"]["ref"] != ref:
+              refuse("the pull request of %s is not from this repository's own branch" % ref)
+          if pr["base"]["ref"] != e["DEFAULT_BRANCH"]:
+              refuse("the pull request of %s targets %s, not %s" % (ref, pr["base"]["ref"], e["DEFAULT_BRANCH"]))
+          open(e["GITHUB_OUTPUT"], "a").write("head-sha=%s\n" % pr["head"]["sha"])
+          print("langpacks fill: %s is the head of open pull request #%d" % (ref, pr["number"]))
+          PYEOF
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || steps.pr.outputs.head-sha }}
       - name: Add the OpenMixer channel
         uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
       - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract-data >= 3.16.0'
@@ -76,5 +111,6 @@ jobs:
           spec: ${{ inputs.spec }}
           gate: ${{ inputs.gate }}
           fill-command: ${{ inputs.fill-command }}
+          dispatch-head: ${{ steps.pr.outputs.head-sha }}
           router-key: ${{ secrets.OMX_ROUTER_KEY }}
           signing-key: ${{ secrets.OPENMIXER_CI_SIGNING_KEY }}
