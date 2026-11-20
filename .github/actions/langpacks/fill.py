@@ -33,8 +33,8 @@ import shutil
 import subprocess
 import sys
 
-# the house identity of the fill's commit, the one place it is spelt: the author is the owner, the committer the signing
-# key's only uid (GitHub verifies a signature only when the committer email matches a uid of the key)
+# the house identity of the fill's commit, the one place it is spelt: the author is the owner, the committer a uid of the signing
+# key (GitHub verifies a signature only when the committer email matches a uid of the key)
 AUTHOR_NAME, AUTHOR_EMAIL = "Pau Aliagas", "linuxnow@gmail.com"
 COMMITTER_NAME, COMMITTER_EMAIL = "Pau Aliagas", "commits@openmixer.org"
 INVALID = object()  # a catalog that is no JSON catalog
