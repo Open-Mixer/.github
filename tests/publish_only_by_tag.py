@@ -214,6 +214,11 @@ def check_workflow(repo, path, doc, bad):
                 if kind and "if" not in st:
                     if jif == PR_JOB and kind == "pr": continue
                     if jif == PR_OR_DISPATCH and check is not None and check < n: continue
+                # the dispatch form may SKIP on a kept ref: a step `if` that is exactly the check step's own kept != 'true'
+                # only narrows where the push runs (never widens it); any other step `if` stays refused
+                if kind and "if" in st and jif == PR_OR_DISPATCH and check is not None and check < n:
+                    cid = body["steps"][check].get("id")
+                    if cid and norm_if(st["if"]) == f"steps.{cid}.outputs.kept != 'true'": continue
                 if publishing(f): pub.append((st.get("name") or st.get("uses") or f"step {n + 1}", f["what"]))
         if pub and ("if" not in body or norm_if(body["if"]) != TAG):
             label, what = pub[0]
@@ -351,9 +356,9 @@ def selftest(real):
     })
     DISP = "${{ " + PR_OR_DISPATCH + " }}"
     chk = ("      - name: c\n        run: |\n          curl \"$GITHUB_API_URL/repos/$R/pulls?head=$O:$GITHUB_REF_NAME&state=open\"\n")
-    def dwf(push, check=True, job_if=DISP, on="workflow_dispatch: {}\n  pull_request: {}", pre="", step_if=""):
+    def dwf(push, check=True, job_if=DISP, on="workflow_dispatch: {}\n  pull_request: {}", pre="", step_if="", cid=""):
         return ("name: w\non:\n  " + on + "\njobs:\n  j:\n    runs-on: x\n    if: " + job_if + "\n    steps:\n" + pre
-                + (chk if check else "") + "      - name: p\n" + (f"        if: {step_if}\n" if step_if else "") + "        run: |\n          " + push + "\n")
+                + ((chk.replace("      - name: c\n", "      - name: c\n        id: " + cid + "\n") if cid else chk) if check else "") + "      - name: p\n" + (f"        if: {step_if}\n" if step_if else "") + "        run: |\n          " + push + "\n")
     dref = "git push origin HEAD:${{ github.ref_name }}"
     reds.update({
         "a force push by refspec to the pr head": {"workflows/a.yml": wf(run="git push origin +HEAD:${{ github.head_ref }}", on=PRON, job_if=PRJ)},
@@ -370,9 +375,15 @@ def selftest(real):
         "the ref_name push in a pull-request-only job": {"workflows/a.yml": wf(run=dref, on=PRON, job_if=PRJ)},
         "dispatch push beside a release creation": {"workflows/a.yml": dwf(dref + "\n          gh release create v1")},
         "dispatch check with a step if on the push": {"workflows/a.yml": dwf(dref, step_if="always()")},
+        "a kept-skip step if naming a step that is not the check": {"workflows/a.yml": dwf(dref, cid="pr", step_if="steps.other.outputs.kept != 'true'")},
+        "a kept-skip step if with the check carrying no id": {"workflows/a.yml": dwf(dref, step_if="steps.pr.outputs.kept != 'true'")},
+        "the inverted kept step if (push only ON a kept ref)": {"workflows/a.yml": dwf(dref, cid="pr", step_if="steps.pr.outputs.kept == 'true'")},
+        "a kept-skip step if widened with or always": {"workflows/a.yml": dwf(dref, cid="pr", step_if="steps.pr.outputs.kept != 'true' || always()")},
+        "a kept-skip step if in the pull-request-only job": {"workflows/a.yml": wf(run=head, on=PRON, job_if=PRJ, step_if="steps.pr.outputs.kept != 'true'")},
     })
     greens.update({
         "a dispatched fill pushing to its ref name after the open-pr check": {"workflows/a.yml": dwf(dref)},
+        "a dispatched fill skipped on a kept ref (step if is the check's kept != 'true')": {"workflows/a.yml": dwf(dref, cid="pr", step_if="steps.pr.outputs.kept != 'true'")},
         "the same with the env var": {"workflows/a.yml": dwf('git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"')},
         "an action script pushing to the pr head, dispatch job with the check": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok,
             "workflows/a.yml": ("name: w\non:\n  workflow_dispatch: {}\njobs:\n  j:\n    runs-on: x\n    if: " + DISP + "\n    steps:\n" + chk + "      - uses: ./.github/actions/pyfill\n")},

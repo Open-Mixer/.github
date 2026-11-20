@@ -68,4 +68,81 @@ ksab "the kept-name check removed" 's/^    return bool(ref) and (ref == default.
 ksab "the release branches no longer kept" 's/"openmixer-v", "release\/", "settle\/"/"openmixer-v", "settle\/"/'
 ksab "the default branch no longer kept" 's/ref == default or //'
 grep -q 'kept_ref(env\["GITHUB_HEAD_REF"\]' "$fillpy" || { echo "FAIL fill.py does not apply kept_ref to the push target"; fail=1; }
+# The dispatch check, run for real (its inline script is lifted out of the workflow, the API is a fixture server). %7 ruling
+# 2026-11-20 (plugin-qualify run 44796868078): a dispatch on a KEPT ref (default branch, main, openmixer-v*, release/*,
+# settle/*) SKIPS the fill cleanly, exit 0, output kept=true and one named line; every later step runs only when kept is not
+# true, so nothing is checked out, filled or pushed there. A lane ref with ONE open same-repository pull request still fills
+# (head-sha output, no kept); a lane ref with none still fails by name (a misuse, not a release).
+cat > "$t/extract.py" <<'PY'
+import sys, textwrap, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+st = [x for x in d["jobs"]["fill"]["steps"] if x.get("id") == "pr"]
+assert len(st) == 1, "no single step with id pr"
+run = st[0]["run"]
+body = run.split("<<'PYEOF'\n", 1)[1].rsplit("PYEOF", 1)[0]
+sys.stdout.write(textwrap.dedent(body))
+PY
+cat > "$t/api.py" <<'PY'
+import http.server, json, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        ref = self.path.split("head=owner:", 1)[1].split("&", 1)[0] if "head=owner:" in self.path else ""
+        prs = []
+        if ref == "lane/with-pr":
+            prs = [{"number": 7, "head": {"sha": "abc123", "ref": ref, "repo": {"full_name": "owner/repo", "fork": False}}, "base": {"ref": "trunk"}}]
+        b = json.dumps(prs).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+print(s.server_address[1], flush=True)
+s.serve_forever()
+PY
+dispatch_check() { # workflow-file ref -> sets rc, out (stdout+stderr), outputs file content
+  python3 -I "$t/extract.py" "$1" > "$t/step.py" || { echo "FAIL cannot lift the dispatch check out of $1"; fail=1; return 1; }
+  : > "$t/gh_out"
+  rc=0; out=$(env -i PATH="$PATH" GITHUB_REF_NAME="$2" GITHUB_REF_TYPE=branch GITHUB_REPOSITORY=owner/repo GITHUB_REPOSITORY_OWNER=owner \
+    GITHUB_API_URL="http://127.0.0.1:$port" GH_TOKEN=x DEFAULT_BRANCH=trunk GITHUB_OUTPUT="$t/gh_out" python3 -I "$t/step.py" 2>&1) || rc=$?
+  outputs=$(cat "$t/gh_out")
+}
+python3 -I "$t/api.py" > "$t/port" & apid=$!
+trap 'kill "$apid" 2>/dev/null; rm -rf "$t"' EXIT
+for _ in $(seq 50); do [ -s "$t/port" ] && break; sleep 0.1; done
+port=$(cat "$t/port")
+nokept() { grep -q 'kept=true' <<<"$outputs" && return 1; return 0; }
+case_all() { # workflow-file tag
+  local w=$1 n=$2 r
+  for r in release/plugin-qualify-0.20.7 settle/12 openmixer-v1 main trunk; do
+    dispatch_check "$w" "$r" || continue
+    if [ "$rc" = 0 ] && grep -q '^kept=true$' <<<"$outputs" && grep -qF "fill skipped: $r is a kept ref; no strings are filled on a release branch" <<<"$out"; then echo "ok   $n: a dispatch on $r skips cleanly"; else echo "FAIL $n: a dispatch on $r: rc=$rc outputs=[$outputs] out=[$out]"; fail=1; fi
+  done
+  dispatch_check "$w" lane/with-pr
+  if [ "$rc" = 0 ] && grep -q '^head-sha=abc123$' <<<"$outputs" && nokept; then echo "ok   $n: a lane with an open pull request still fills"; else echo "FAIL $n: lane with a PR: rc=$rc outputs=[$outputs] out=[$out]"; fail=1; fi
+  dispatch_check "$w" lane/no-pr
+  if [ "$rc" != 0 ] && nokept && grep -q '0 open pull requests' <<<"$out"; then echo "ok   $n: a lane with no open pull request still fails by name"; else echo "FAIL $n: lane without a PR: rc=$rc outputs=[$outputs] out=[$out]"; fail=1; fi
+}
+case_all "$w" "fill"
+# every step after the check is guarded by it, so the push stays behind the proved branch
+python3 -I - "$w" <<'PY' || fail=1
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["fill"]["steps"]
+i = [k for k, x in enumerate(steps) if x.get("id") == "pr"][0]
+for x in steps[i + 1:]:
+    assert "steps.pr.outputs.kept != 'true'" in str(x.get("if", "")), f"step after the check is not skipped on a kept ref: {x}"
+print("ok   every step after the dispatch check is skipped on a kept ref")
+PY
+ssab() { # name sed-expr: the workflow with a fault must make the cases red
+  sed "$2" "$w" > "$t/ss.yml"; cmp -s "$w" "$t/ss.yml" && { echo "FAIL sabotage $1: nothing to break"; fail=1; return; }
+  if ( fail=0; case_all "$t/ss.yml" sab >/dev/null 2>&1; [ "$fail" = 0 ] ) && python3 -I - "$t/ss.yml" >/dev/null 2>&1 <<'PY'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["fill"]["steps"]
+i = [k for k, x in enumerate(steps) if x.get("id") == "pr"][0]
+for x in steps[i + 1:]:
+    assert "steps.pr.outputs.kept != 'true'" in str(x.get("if", ""))
+PY
+  then echo "FAIL sabotage: $1 passes"; fail=1; else echo "ok   sabotage: $1 is red"; fi
+}
+ssab "a skip on ANY ref (a lane with a pull request no longer fills)" 's/^          if ref == e\["DEFAULT_BRANCH"\] or ref == "main" or ref.startswith/          if True or ref.startswith/'
+ssab "a skip that does not say so" 's/fill skipped: /fill: /'
+ssab "a skip that still fails" 's/sys.exit(0)  # kept/sys.exit(1)  # kept/'
+ssab "a push step not guarded by the skip" "s/steps.pr.outputs.kept != 'true'/true/"
 exit "$fail"
