@@ -5,8 +5,6 @@ name: public-sources-check
 #   - its pull request's own commits carry no attribution line (commit-message-check);
 #   - (commit-identity: true) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
 #     by GitHub (commit-identity-check);
-#   - (pr-fixes-issue: true) every pull request body closes an issue of Open-Mixer or FreeREAC ("Fixes #N", "Fixes Open-Mixer/<repo>#N")
-#     (pr-fixes-issue);
 #   - (fedora-workflows: true) no workflow names a Fedora release outside allowed-fedora (fedora-workflow-check);
 #   - no tracked file points into a private repository (private-refs-check);
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);
@@ -19,7 +17,6 @@ name: public-sources-check
 #       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@openmixer-v1
 #       with:
 #         commit-identity: true      # optional, off by default; author-email / committer-email override the house pair
-#         pr-fixes-issue: true       # optional, off by default; the body of every pull request carries a closing reference
 #         fedora-workflows: true     # optional, off by default; allowed-fedora (default "45") is the list of releases a workflow may name
 #         runner: arc-freemixer      # optional: a private repository's own runners (default ubuntu-latest)
 on:
@@ -41,10 +38,6 @@ on:
         description: the committer email commit-identity-check expects; empty takes the action's default
         type: string
         default: ''
-      pr-fixes-issue:
-        description: run pr-fixes-issue on pull requests (the body has a closing keyword followed by #N, Open-Mixer/<repo>#N or FreeREAC/<repo>#N). Off by default: a survey of the open pull requests of both organisations found 223 of 280 with no such reference, so on by default would turn most callers red the day openmixer-v1 moves; a repository passes true once its own open pull requests carry one
-        type: boolean
-        default: false
       fedora-workflows:
         description: run fedora-workflow-check (no workflow of the repository names a Fedora release outside allowed-fedora). Off by default so moving openmixer-v1 turns no caller red; a repository that drops its own copy of the check passes true
         type: boolean
@@ -91,17 +84,6 @@ jobs:
           base-ref: ${{ github.event.pull_request.base.ref }}
           author-email: ${{ inputs.author-email }}
           committer-email: ${{ inputs.committer-email }}
-
-  pr-fixes-issue:
-    name: the pull request body closes an issue
-    if: github.event_name == 'pull_request' && inputs.pr-fixes-issue
-    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
-    timeout-minutes: 5
-    steps:
-      # reads the CURRENT body from the API: an edited body starts no run, and a re-run replays the old payload
-      - uses: Open-Mixer/.github/.github/actions/pr-fixes-issue@openmixer-v1
-        with:
-          number: ${{ github.event.pull_request.number }}
 
   fedora-workflows:
     name: no workflow names a Fedora release outside the allowed list

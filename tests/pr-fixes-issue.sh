@@ -73,18 +73,26 @@ rc=0; PR_NUMBER=7 PR_BODY="Fixes #12" python3 -I "$chk" >/dev/null 2>&1 || rc=$?
 runc "$chk" '$(touch '"$tmp"'/pwned) `touch '"$tmp"'/pwned2` Fixes #1' || fail "a body with shell syntax was refused"
 [ ! -e "$tmp/pwned" ] && [ ! -e "$tmp/pwned2" ] || fail "the body was executed"
 
-# the workflow: off by default, the job skipped when off, body and number passed as inputs, the action reads them by env
+# the workflow: its own reusable file, its job reads the API with pull-requests: read, the shared public-sources-check.yml
+# declares no pull-requests permission (so every existing caller stays valid) and carries no trace of this check
 python3 -I - "$here" <<'PY' || fail "workflow wiring"
 import sys, yaml
 h = sys.argv[1]
-w = yaml.safe_load(open(h + "/.github/workflows/public-sources-check.yml"))
-i = w[True]["workflow_call"]["inputs"]
-assert i["pr-fixes-issue"]["default"] is False, "the switch must default off"
+w = yaml.safe_load(open(h + "/.github/workflows/pr-fixes-issue.yml"))
+assert "workflow_call" in w[True], list(w[True])
 j = w["jobs"]["pr-fixes-issue"]
-assert "inputs.pr-fixes-issue" in j["if"] and "pull_request" in j["if"], j["if"]
+assert j["permissions"] == {"contents": "read", "pull-requests": "read"}, j.get("permissions")
+assert w["permissions"] == {"contents": "read", "pull-requests": "read"}, w.get("permissions")
+assert "pull_request" in j["if"], j["if"]
+assert j["name"] == "the pull request body closes an issue", j["name"]
 st = [s for s in j["steps"] if "pr-fixes-issue" in s.get("uses", "")][0]["with"]
 assert st == {"number": "${{ github.event.pull_request.number }}"}, "no body is passed from the payload: " + str(st)
-assert "permissions" not in j, "a nested permission would break callers that grant less"
+raw = open(h + "/.github/workflows/public-sources-check.yml").read()
+ps = yaml.safe_load(raw)
+assert ps["permissions"] == {"contents": "read"}, ps["permissions"]
+assert "pull-requests" not in raw and "pr-fixes-issue" not in raw, "public-sources-check.yml carries the check or its permission"
+for name, jj in ps["jobs"].items():
+    assert "pull-requests" not in str(jj.get("permissions", "")), name
 a = open(h + "/.github/actions/pr-fixes-issue/action.yml").read()
 run = [l for l in a.splitlines() if l.strip().startswith("run:")]
 assert len(run) == 1 and "inputs." not in run[0] and "event." not in run[0], run
