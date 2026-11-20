@@ -53,6 +53,11 @@ export default [
     languageOptions: { parserOptions: { projectService: true } },
   },
   {
+    // typescript-eslint's eslint-recommended set switches no-undef off (tsc covers it in .ts); a .js file has no tsc
+    files: JS,
+    rules: { 'no-undef': 'error' },
+  },
+  {
     files: [...TS, ...JS],
     languageOptions: { globals: { ...globals.node, ...globals.es2025 } },
     plugins: { jsdoc },
