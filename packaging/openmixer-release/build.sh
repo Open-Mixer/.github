@@ -5,9 +5,10 @@
 #
 #   build.sh rpm|deb <key file> <output dir>
 #
-# The key file is the one the channel serves to the package manager the package is for (rpm/RPM-GPG-KEY-openmixer,
-# deb/openmixer.asc), fetched by the caller: the package ships those bytes, so a machine verifies with what the
-# channel serves and a key added to the channel reaches it as an update. The RPM's Version-Release and the DEB's
+# The package ships ONE key: the release signing key committed to this repository (channel-keys.sh ship), not the
+# channel's bytes. <key file> is the file the channel serves to the package manager the package is for
+# (rpm/RPM-GPG-KEY-openmixer, deb/openmixer.asc), fetched by the caller; build.sh only refuses a served file that
+# holds a key this repository does not pin, and ships none of its content. The RPM's Version-Release and the DEB's
 # version are one release: a build where they differ is refused. rpm runs in a Fedora container with rpm-build
 # and gnupg2; deb in a Debian one with dpkg-dev, debhelper, lintian and gnupg, as root.
 set -euo pipefail
@@ -34,12 +35,10 @@ primaries=$(gpg --batch --with-colons --import-options show-only --import < "$ke
 mkdir -p "$out"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-# what ships is the served file plus the public keys committed to this repository (a new signing key reaches a
-# machine here, before it meets a package that key signed; the old key stays in the served file)
-"$here/../../.github/actions/import-gpg-key/channel-keys.sh" emit "$key" |
-    GNUPGHOME=$(mkdir -m 700 "$work/gnupg" && echo "$work/gnupg") gpg --batch --quiet --import 2>/dev/null || true
-GNUPGHOME=$work/gnupg gpg --batch --armor --export > "$work/keys.asc" 2>/dev/null || true
-[ -s "$work/keys.asc" ] || { echo "no public key to ship from $key" >&2; exit 1; }
+# what ships is the ONE release signing key, the one committed to this repository (channel-keys.sh ship, which
+# refuses anything but exactly one key with the release uid), whatever the served file still holds
+"$here/../../.github/actions/import-gpg-key/channel-keys.sh" ship "$key" > "$work/keys.asc"
+"$here/../../.github/actions/import-gpg-key/channel-keys.sh" single "$work/keys.asc" > /dev/null
 primaries=$(gpg --batch --with-colons --import-options show-only --import < "$work/keys.asc" 2>/dev/null |
     awk -F: '/^pub:/ {p = 1; next} /^fpr:/ && p {print $10; p = 0}')
 key=$work/keys.asc

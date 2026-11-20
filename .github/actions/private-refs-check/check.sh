@@ -10,6 +10,7 @@
 #
 #   check.sh [ROOT]               the check, over every file ROOT (default: the current directory) tracks
 #   check.sh --messages RANGE     the same patterns, over the message of every commit in RANGE
+#                                 (less the paths of git's own conflict block that name files of that commit)
 #   check.sh --msg-file FILE      the same patterns, over one message before its commit exists (the commit-msg hook,
 #                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
@@ -69,6 +70,25 @@ check() { # <root>
   echo "private-refs-check: no tracked file points into a private repository"
 }
 
+without_conflict_block() { # <sha>: its message on stdin, less the paths of git's own conflict block
+  # git writes a line "# Conflicts:" and then one "#<TAB><path>" line per file it could not merge. Such a line is
+  # skipped only when <path> is a file in this commit's own tree; any other line of the block, and every line after
+  # it (the block ends at the first line that is not "#<TAB>..."), is read like the rest of the message.
+  local sha="$1" line p in=0 tab=$'\t'
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = '# Conflicts:' ]; then in=1; printf '%s\n' "$line"; continue; fi
+    if [ "$in" = 1 ] && [ "${line:0:2}" = "#$tab" ]; then
+      p="${line:2}"
+      # git names it from the top of the tree: never empty, absolute, dotted or doubled, so <sha>:<path> reads only it
+      if [ -n "$p" ] && [[ "$p" != /* && "$p" != */ && "$p" != ./* && "$p" != ../* && "$p" != *//* && "$p" != */./* && "$p" != */../* ]] &&
+        [ "$(git -c safe.directory="$PWD" cat-file -t "$sha:$p" 2>/dev/null)" = blob ]; then continue; fi
+    else
+      in=0
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
 messages() { # <range>, in the current directory
   local range="$1" args=() hargs=() p shas sha bad=0 n=0 text
   for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
@@ -83,6 +103,7 @@ messages() { # <range>, in the current directory
   while IFS= read -r sha; do
     n=$((n + 1))
     text=$(git -c safe.directory="$PWD" log -1 --format=%B "$sha") || { echo "private-refs-check: git cannot read $sha" >&2; return 1; }
+    text=$(without_conflict_block "$sha" <<<"$text")
     if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
       echo "private-refs-check: commit ${sha:0:12} points into a private repository; the lines above" >&2; bad=1
     fi
@@ -96,7 +117,7 @@ msg_file() { # <file>: one commit message as the commit-msg hook hands it over
   [ -f "$f" ] && [ -r "$f" ] || { echo "private-refs-check: cannot read the message $f, so nothing was judged" >&2; return 2; }
   for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
   for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
-  text=$(grep -v '^#' "$f" || true)
+  text=$(grep -vE '^#( |	|$)' "$f" || true)   # git's comment lines only: a hash and a space or tab, or a bare hash
   if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
     echo "private-refs-check: the commit message points into a private repository; the lines above. State the fact instead." >&2
     return 1
@@ -173,10 +194,33 @@ if [ "${1:-}" = --self-test ]; then
     if ( cd "$scratch/t" && messages base..HEAD >/dev/null 2>&1 ); then echo "SABOTAGE message [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE message: red"; fi
     g reset -q --hard HEAD~1
   done
+  # git's own conflict block names files of the commit's own tree: those lines are skipped, and nothing else is
+  cp='packages''/server/src/x.test.ts' LF=$'\n' T=$'\t'
+  mkdir -p "$scratch/t/${cp%/*}"; printf 'x\n' > "$scratch/t/$cp"; g add -A; g commit -q -m 'a file'
+  cmsg() { # <name> <green|red> <message>: one commit with that message, read with the file in the commit's tree
+    local out rc=0
+    printf '%s\n' "$3" > "$scratch/cmsg"; g commit -q --allow-empty --cleanup=verbatim -F "$scratch/cmsg"
+    out=$(cd "$scratch/t" && messages HEAD~1..HEAD 2>&1) || rc=$?
+    g reset -q --hard HEAD~1
+    if [ "$2" = green ]; then
+      if [ "$rc" = 0 ]; then echo "MESSAGES $1: green"; else echo "MESSAGES $1: RED"; printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+    elif [ "$rc" = 0 ]; then echo "SABOTAGE $1: STAYED GREEN"; fail=1
+    elif grep -q 'points into a private repository' <<<"$out"; then echo "SABOTAGE $1: red"
+    else echo "SABOTAGE $1: red for another reason: $out"; fail=1; fi; }
+  cmsg conflict-block           green "Merge main into the branch${LF}${LF}# Conflicts:${LF}#${T}$cp"
+  cmsg conflict-path-not-in-tree red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}#${T}${cp%.test.ts}.gone.ts"
+  cmsg conflict-host            red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}#${T}ms""i.example.lan"
+  cmsg conflict-absolute-path   red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}/var/tmp/w/$cp"
+  cmsg conflict-dot-path        red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}./$cp"
+  cmsg conflict-line-after      red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}see openmixer""-ops"
+  cmsg conflict-other-spelling  red   "Merge main${LF}${LF}# conflicts:${LF}#${T}$cp"
+  cmsg conflict-block-ended     red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}${LF}#${T}$cp"
+  g reset -q --hard HEAD~1
   # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
-  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n' > "$scratch/msg-clean"
+  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n# On branch integration''/x\n#\tmodified:   harness''/a.sh\n#\n' > "$scratch/msg-clean"
   if ( bash "$0" --msg-file "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
-  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight'; do
+  # a line that starts with an issue number is the message's own, not a git comment: it is judged
+  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight' '#345 regenerated packages''/pipewire-native/src/x.h'; do
     printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
     if ( bash "$0" --msg-file "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
   done

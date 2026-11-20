@@ -38,24 +38,44 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: tests/commit-message-check.sh
+      - run: tests/commit-identity-check.sh
+      - run: tests/scan-open-pr-subjects.sh
+      - run: tests/fedora-cells.sh
+      - run: tests/fedora-workflow-check.sh
+      - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
       - run: tests/channel-keep-list.sh
       - run: tests/pinned-keys.sh
+      - run: tests/no-cosign.sh
+      - run: tests/deb-disabled.sh
+      - run: tests/single-key.sh
       - run: tests/install-clean-retry.sh
       - run: tests/quick-unbuilt-pass.sh
       - run: tests/reusable-workflows.sh
       - run: tests/runner-selection.sh
+      - run: tests/hosted-default-runner.sh
+      - run: tests/langpacks-fill-runner.sh
       - run: tests/release-checks.sh
+      - run: tests/publish-only-by-tag.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
+      - run: tests/add-openmixer-release-package.sh
+      - run: tests/build-rpm-channel-repos.sh
       - run: tests/release-matrix.sh
       - run: tests/check-matrix.sh
+      - run: tests/build-deb-install-cells.sh
       - run: tests/no-hardcoded-cells.sh
+      - run: tests/release-package-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
-      - run: tests/bookworm-asan.sh
+      - run: tests/ci-steps.sh
+      - run: tests/no-retired-debian-release.sh
+      - run: tests/resolve-base.sh
+      - run: tests/v1-not-behind.sh
+      - run: tests/same-pass.sh
+      - run: tests/eslint-standard.sh
       - name: The layout check proves itself, then reads this repository
         run: |
           .github/actions/public-layout-check/check.sh --self-test
@@ -63,6 +83,44 @@ jobs:
       - name: The action reads this pull request's own commits
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/commit-message-check
+      - name: The action reads the identity and verification of every commit of this pull request
+        if: github.event_name == 'pull_request'
+        uses: ./.github/actions/commit-identity-check
+      - name: The action reads this repository's own workflows
+        uses: ./.github/actions/fedora-workflow-check
+
+  # The same-pass action run as a local action: the dispatch list is the input, and with none the file at this commit
+  # is read (this repository has none, so the list is empty). Its reader is proven by tests/same-pass.sh.
+  same-pass-action:
+    name: same-pass action reads its list, from the input and from the file
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - id: same
+        uses: ./.github/actions/same-pass
+        with:
+          list: 'alpha beta'
+      - id: none
+        uses: ./.github/actions/same-pass
+      - run: |
+          test "${{ steps.same.outputs.list }}" = 'alpha beta'
+          test -z "${{ steps.none.outputs.list }}"
+
+  v1-not-behind:
+    name: openmixer-v1 is not behind main
+    # The ff rule as a gate: a pull request cannot merge while openmixer-v1 lacks a commit of main. Only on pull
+    # requests into main (the base the rule is about): after a merge to main, v1 is behind until it is fast-forwarded, which is the step the gate forces.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - env:
+          BASE_REF: ${{ github.base_ref }}
+        run: .github/scripts/v1-not-behind.sh origin "$BASE_REF" openmixer-v1
 
   key-transition:
     name: Key transition (${{ matrix.kind }})
@@ -75,7 +133,7 @@ jobs:
       matrix:
         include:
           - kind: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
           - kind: deb
             image: debian:trixie
@@ -111,6 +169,14 @@ jobs:
         shell: bash
         run: tests/key-transition.sh ${{ matrix.kind }}
 
+      - name: Another project's channel serves its own key under its own name, and none of OpenMixer's
+        shell: bash
+        run: tests/channel-profile.sh ${{ matrix.kind }}
+
+      - name: The mirror of freereac-release verifies its source and refuses every lie
+        shell: bash
+        run: tests/mirror-release.sh ${{ matrix.kind }}
+
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}
@@ -134,6 +200,11 @@ jobs:
         shell: bash
         run: tests/noarch-pin.sh
 
+      - name: The noarch pin guard judges only the architectures the release matrix publishes
+        if: matrix.kind == 'rpm'
+        shell: bash
+        run: tests/noarch-pin-matrix-arches.sh
+
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
     runs-on: ubuntu-latest
@@ -145,7 +216,7 @@ jobs:
       matrix:
         include:
           - kind: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git
           - kind: deb
             image: debian:trixie
@@ -176,7 +247,7 @@ jobs:
       matrix:
         include:
           - kind: rpm
-            image: fedora:44
+            image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git curl
           - kind: deb
             image: debian:trixie
@@ -197,7 +268,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c dnf5-plugins python3 git findutils
 
@@ -213,7 +284,7 @@ jobs:
           tests/staging-installability.sh
 
   # The images the language packs are checked in: the cells the release set builds, no others while OMX_RELEASE_MATRIX
-  # is quick (ruling D25); the whole list, bookworm among it, with full. check-matrix names what it skips.
+  # is quick (ruling D25); the whole list with full. check-matrix names what it skips.
   plan:
     name: plan the matrix checks
     runs-on: ubuntu-latest
@@ -228,10 +299,10 @@ jobs:
         uses: ./.github/actions/check-matrix
         with:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          rpm-releases: '["44", "45"]'
+          rpm-releases: '["45"]'
           rpm-arches: '["x86_64"]'
-          deb-releases: '["bookworm", "trixie"]'
-          deb-arches: '["amd64"]'
+          deb-releases: '["trixie"]'
+          deb-arches: '["arm64"]'
 
   langpacks:
     name: language packs (${{ matrix.image }})
@@ -275,8 +346,8 @@ jobs:
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
           - arm: rpm
-            image: fedora:44
-            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 findutils
+            image: fedora:45
+            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
     steps:
       - run: ${{ matrix.tools }}
       - uses: actions/checkout@v4
@@ -287,7 +358,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - name: The tools
         run: dnf install -y --setopt=install_weak_deps=False git nodejs python3 gnupg2 diffutils findutils
@@ -295,7 +366,7 @@ jobs:
       # an ordinary run reads the channel: the staging channel is for a run that is itself staged
       - name: omx-contract from the channel (3.16.0 or later, translate and the language list)
         uses: ./.github/actions/add-openmixer
-      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract < 4'
+      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0'
       - run: tests/langpacks-fill.sh
 
   changelog:
@@ -313,7 +384,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c python3-rpm dnf5 findutils
       - uses: actions/checkout@v4
@@ -326,7 +397,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build gcc git python3 findutils diffutils
       - uses: actions/checkout@v4
@@ -344,6 +415,7 @@ jobs:
       - run: tests/deb-changelog.sh
       - run: apt-get install -y --no-install-recommends git
       - run: tests/build-deb-same-bytes.sh
+      - run: tests/build-deb-snapshot-lint.sh
 
   deb-rerun-layout:
     name: a rerun of a DEB release keeps its packages
@@ -378,7 +450,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False git gcc make python3 pkgconf-pkg-config libasan diffutils
       - uses: actions/checkout@v4
@@ -397,7 +469,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False rpm-build
       - uses: actions/checkout@v4
@@ -408,7 +480,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - run: dnf install -y --setopt=install_weak_deps=False git
       - uses: actions/checkout@v4
@@ -424,7 +496,7 @@ jobs:
           echo "built $evr"
           cmp() { rpm --eval "%{lua: print(rpm.vercmp('$1', '$2'))}"; }
           fail=0
-          for old in 0.10.6.f14a230-11.3.omx.fc44 0.10.6.f14a230-11.1 0.10.6.f14a230-12.fc44 0.10.6.f14a230-13.fc44; do
+          for old in 0.10.6.f14a230-11.3.omx.fc45 0.10.6.f14a230-11.1 0.10.6.f14a230-12.fc45 0.10.6.f14a230-13.fc45; do
             got=$(cmp "$evr" "$old")
             if [ "$got" = 1 ]; then echo "ok      $evr above $old"; else echo "::error::$evr does not sort above $old"; fail=1; fi
           done
@@ -459,6 +531,18 @@ jobs:
           dpkg --compare-versions "$ver" gt 0.1.0-8~omx
           dpkg --compare-versions "$ver" ge 0.1.0-6~fmx
 
+  # The shared documentation gate (actions/doc-gate, docs/doc-gate.md), with resolve-base under it: every arm of its
+  # self-test on planted trees, under the stand-in doxygen and the runner's real 1.9.8, and ruff.
+  doc-gate:
+    name: doc-gate and resolve-base engines, sabotaged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends doxygen && pipx install ruff==0.17.5
+      - run: tests/resolve-base.sh
+      - run: tests/doc-gate.sh
+
   # The checks repositories run from here: dependency floors from one packaging/deps.txt, no tracked file pointing
   # into a private repository, and a licence header wherever a format can hold one. Each engine proves itself red on
   # every planted drift. The private-refs and spdx-check actions then read this tree, which is their clean control;
@@ -470,5 +554,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: .github/actions/deps-render/render.sh --self-test
+      # this repository's own tree, the one that defines the rule: no ceiling in its workflows or any other file it ships
+      - run: .github/actions/deps-render/render.sh --check .
       - uses: ./.github/actions/private-refs-check
       - uses: ./.github/actions/spdx-check
+      - run: tests/trigger-gate.sh
+      - name: The trigger gate reads this repository's own workflows (this file is the one lint)
+        run: .github/actions/trigger-gate/check.sh --lint ci.yml .

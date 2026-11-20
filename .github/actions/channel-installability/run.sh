@@ -5,7 +5,8 @@
 # container, its tools installed when missing. <channel> is the deb/ or rpm/ tree, served (a URL) or pulled (a
 # directory); empty is the served channel at BASE_URL. The environment narrows it: SUITES (Debian releases),
 # FEDORA_VERSIONS, ARCHES, all space separated and empty for what the channel serves and the release brings, and
-# SAME_PASS, the packages other repositories release in the same pass. UNBUILT_ARCH_PASS=true (a dry run, which builds one
+# SAME_PASS, the packages other repositories release in the same pass. MATRIX_SET=quick, or CELLS, judges only the cells
+# of the set (below). UNBUILT_ARCH_PASS=true (a dry run, which builds one
 # architecture) counts, on an architecture it built nothing for, the binary packages it built on another as released in
 # the same pass. Exit 0 green, 1 red, 2 not measured.
 set -euo pipefail
@@ -13,9 +14,23 @@ kind=$1 dir=$2 channel=${3:-}
 here=$(cd "$(dirname "$0")" && pwd)
 base=${BASE_URL:-https://www.openmixer.org}
 [ -n "$channel" ] || channel=$base/$kind
+# the one declared place of the channels this channel's packages may depend on (external-channels.txt); EXTERNAL_CHANNELS names
+# another file for a test, an empty value none. Never inferred from the packages.
+external=${EXTERNAL_CHANNELS-$here/external-channels.txt}
 args=("$kind" --channel "$channel" --new-dir "$dir" --same-pass "${SAME_PASS:-}")
 for a in ${ARCHES:-}; do args+=(--arch "$a"); done
+[ -z "$external" ] || args+=(--external-channels "$external")
 [ "${UNBUILT_ARCH_PASS:-}" != true ] || args+=(--unbuilt-arch-pass)
+# DRY_RUN=true (nothing is published): the deb arm judges only the architectures the pass built
+[ "${DRY_RUN:-}" != true ] || args+=(--dry-run)
+# A release of the quick set (MATRIX_SET=quick) judges the quick set's cells alone, release-matrix/quick.txt: its
+# packages reach those trees only, and every other tree stays as served until the full matrix publishes. CELLS
+# (RELEASE/ARCH, space separated) names the cells outright.
+if [ -z "${CELLS:-}" ] && [ "${MATRIX_SET:-}" = quick ]; then
+  CELLS=$(awk -v k="$kind" '$1 == k {print $2 "/" $3}' "$here/../release-matrix/quick.txt")
+  [ -n "$CELLS" ] || { echo "run.sh: the quick set has no $kind cell" >&2; exit 2; }
+fi
+for c in ${CELLS:-}; do args+=(--cell "$c"); done
 case $kind in
   deb)
     if ! command -v dose-debcheck >/dev/null || ! python3 -c 'import yaml' 2>/dev/null; then
@@ -27,7 +42,9 @@ case $kind in
     if ! dnf repoclosure --help >/dev/null 2>&1 || ! command -v createrepo_c >/dev/null || ! command -v python3 >/dev/null; then
       dnf install -y -q --setopt=install_weak_deps=False dnf5-plugins createrepo_c python3 >/dev/null
     fi
-    for v in ${FEDORA_VERSIONS:-}; do args+=(--fedora "$v"); done ;;
+    for v in ${FEDORA_VERSIONS:-}; do args+=(--fedora "$v"); done
+    # the system repositories read from here (an empty directory: none, for an offline test)
+    [ -z "${REPOSDIR:-}" ] || args+=(--reposdir "$REPOSDIR") ;;
   *) echo "run.sh: deb or rpm, not '$kind'" >&2; exit 2 ;;
 esac
 exec nice -n 10 python3 -I "$here/gate.py" "${args[@]}"

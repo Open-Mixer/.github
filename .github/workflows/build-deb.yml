@@ -2,8 +2,8 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: Build DEB (reusable)
 
-# The Debian half of the release path of build-rpm.yml, for Raspberry Pi OS and Zynthian (Debian bookworm,
-# arm64), Debian trixie and amd64. Called from the same thin workflow, on the same v* tag:
+# The Debian half of the release path of build-rpm.yml, for Raspberry Pi OS and Zynthian (Debian trixie,
+# arm64 and amd64). Called from the same thin workflow, on the same v* tag:
 #
 #   jobs:
 #     deb:
@@ -16,7 +16,7 @@ name: Build DEB (reusable)
 # target Pages repository. Anything that is not a tag is a dry run: it builds, lints and assembles an UNSIGNED
 # tree as an artifact.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the quick set (trixie on amd64 and arm64) or, told
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the quick set (trixie on arm64) or, told
 # full, every suite of suite-matrix on every architecture of arch-matrix, against the staging channel, and
 # publishes it to the staging channel of the release wave:
 # staging/deb of the same target repository, signed with the same key, by the same tree script and channel-push as a
@@ -42,8 +42,8 @@ name: Build DEB (reusable)
 # (plugin-hostd-dev) comes from the channel's apt source, added inside the build container only.
 #
 # Secrets (organisation secrets, passed by `secrets: inherit`): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN,
-# and the original key RPM_GPG_KEY, RPM_GPG_PASSPHRASE. The packages key signs the apt index as it signs the
-# RPMs; the original key co-signs the index while apt installs may hold only it in their signed-by file.
+# and RPM_GPG_KEY, RPM_GPG_PASSPHRASE, no longer read (declared optional so a caller that still passes them does not fail).
+# The packages key signs the apt index as it signs the RPMs, alone.
 
 on:
   workflow_call:
@@ -51,7 +51,7 @@ on:
       runner:
         type: string
         default: 'ubuntu-latest'
-        description: 'Runner label for the x86 jobs (a private repo passes its own runners, e.g. arc-freemixer; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
+        description: 'Runner label for the x86 jobs, GitHub-hosted by default (a private repo, or a job that needs a private runner, passes its own runners, e.g. arc-freemixer; the organisation variable OMX_RUNNER is not read; arm builds keep ubuntu-24.04-arm; a tag or release of a PUBLIC repository builds its x86 jobs on ubuntu-latest so a release never queues behind pull-request CI; a pull request from a fork always runs on GitHub-hosted runners)'
       package-name:
         required: true
         type: string
@@ -84,7 +84,7 @@ on:
       matrix:
         type: string
         default: ''
-        description: "'quick' builds the quick set alone (fc44 and fc45 x86_64 rpm, trixie amd64 and arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
+        description: "'quick' builds the quick set alone (fc45 x86_64 rpm, trixie arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
       stage:
         type: string
         default: 'all'
@@ -107,8 +107,8 @@ on:
         description: 'JSON array of architectures, each built natively'
       suite-matrix:
         type: string
-        default: '["bookworm", "trixie"]'
-        description: 'JSON array of Debian releases (bookworm is Raspberry Pi OS and Zynthian)'
+        default: '["trixie"]'
+        description: 'JSON array of Debian releases (trixie: Raspberry Pi OS and Zynthian)'
       dependencies:
         type: string
         default: 'mod-host-protocol clap-headers'
@@ -154,6 +154,10 @@ on:
         type: boolean
         default: false
         description: 'Let the release go out over a version the channel already serves. Off, the preflight refuses it (a moved old tag re-running its release); on only to finish a partial publish.'
+      enabled:
+        type: boolean
+        default: true
+        description: 'false: this source ships no Debian package. Every job of the workflow is skipped (the preflight is, and every other job needs it), nothing is built, published or checked, and what the channel already serves stays. The caller declares it here, in the one place its release workflow passes to this one; the debian/ directory stays.'
       verify-install:
         type: boolean
         default: true
@@ -166,6 +170,26 @@ on:
         type: string
         default: 'openmixer-package-published'
         description: 'event_type of that repository_dispatch; the worker image build listens for it (client_payload: package, tag, format)'
+      release-package:
+        type: string
+        default: openmixer-release
+        description: "The release package that adds the channel's repository to a build container: openmixer-release, or freereac-release for FreeREAC's channel"
+      key-file:
+        type: string
+        default: ''
+        description: "The name of the public key file the channel serves in its deb/ tree; empty means openmixer.asc, OpenMixer's. FreeREAC's channel passes its own (docs/channel-by-input.md)"
+      committed-keys:
+        type: boolean
+        default: true
+        description: "false keeps the public keys committed in this repository, which are OpenMixer's, out of the channel's key file: another project's channel serves exactly the key it signs with"
+      signing-fingerprint:
+        type: string
+        default: ''
+        description: "The primary fingerprint the signing key must have; a secret mapped to another channel's key refuses the run before anything is signed. Empty checks none"
+      label:
+        type: string
+        default: ''
+        description: "The Origin and Label of the real channel's Release files; empty means OpenMixer"
     secrets:
       DISPATCH_TOKEN:
         required: false
@@ -174,6 +198,8 @@ on:
       RPM_GPG_KEY:
         required: false
       RPM_GPG_PASSPHRASE:
+        required: false
+      PACKAGES_SIGNING_PASSPHRASE:
         required: false
       PAGES_TOKEN:
         required: false
@@ -187,10 +213,12 @@ defaults:
 jobs:
   preflight:
     name: Check the release can publish
+    if: ${{ inputs.enabled }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     outputs:
       set: ${{ steps.matrix.outputs.set }}
+      releases: ${{ steps.matrix.outputs.releases }}
       cells: ${{ steps.matrix.outputs.cells }}
       first-arch: ${{ steps.matrix.outputs.first-arch }}
       count: ${{ steps.matrix.outputs.count }}
@@ -274,16 +302,12 @@ jobs:
     needs: preflight
     # a catch-up of a version served in every cell plans nothing: no build, no publish, and the first job said so
     if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0'
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
     timeout-minutes: 90
-    # bookworm privileged only to lower the runner kernel's mmap_rnd_bits: with the hosted image's 32 bits, bookworm's
-    # gcc 12 AddressSanitizer dies in DEADLYSIGNAL loops until the timeout (plugin-hostd-protocol v0.5.2's package
-    # tests: 90 minutes and a 3.6 GB log); newer libasan copes
     container:
       image: debian:${{ matrix.suite }}
-      options: ${{ matrix.suite == 'bookworm' && '--privileged' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -291,18 +315,12 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
     steps:
-      - name: Address space randomisation AddressSanitizer can run under
-        if: matrix.suite == 'bookworm'
-        run: |
-          if [ "$(cat /proc/sys/vm/mmap_rnd_bits)" -gt 28 ]; then echo 28 > /proc/sys/vm/mmap_rnd_bits; fi
-          echo "vm.mmap_rnd_bits=$(cat /proc/sys/vm/mmap_rnd_bits)"
-          [ "$(cat /proc/sys/vm/mmap_rnd_bits)" -le 28 ]
-
       - name: Install the build tools
         env:
           EXTRA: ${{ inputs.build-packages }}
         run: |
           apt-get update -qq
+          # shellcheck disable=SC2086 # EXTRA is a list of package names, split on purpose
           apt-get install -y --no-install-recommends ca-certificates git dpkg-dev debhelper build-essential lintian python3 $EXTRA
 
       - uses: actions/checkout@v4
@@ -331,15 +349,18 @@ jobs:
         if: inputs.channel-deps || inputs.staged || inputs.staging
         with:
           base-url: ${{ inputs.base-url }}
+          release-package: ${{ inputs.release-package }}
           staging: ${{ inputs.staged || inputs.staging }}
           staging-bootstrap: ${{ inputs.staging-bootstrap }}
 
-      # a staged snapshot is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
-      # floor, and above the staged build of any earlier commit
+      # a staged snapshot or a dry run (a run not at a release tag) is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
+      # floor, above the staged build of any earlier commit, and is not pruned behind a published <version> by the installability gate
       - uses: Open-Mixer/.github/.github/actions/build-deb@openmixer-v1
         with:
+          max-jobs: ${{ vars.OMX_RUNNER_CPUS || '3' }}
           tag: ${{ env.RELEASE_TAG }}
-          separator: ${{ inputs.staged && '+git' || '~git' }}
+          staged: ${{ inputs.staged }}
+          dry-run: ${{ env.RELEASE_TAG == '' }}
 
       # the full matrix never goes out on top of a version the channel has for the quick set alone: the cells the
       # dependency lacks could not install what this release publishes (docs/release-operations.md)
@@ -376,27 +397,34 @@ jobs:
           name: ${{ inputs.package-name }}-debs-${{ matrix.suite }}-${{ matrix.arch }}
           path: out
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
-  publish:
-    name: Sign and publish
+  publish-go:
+    name: Release publish gate
     needs: [preflight, build]
-    # the publish stage takes the packages a build stage of this run left; channel-installability inside the
-    # publish action refuses a release that would leave a package of the channel uninstallable
-    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) }}
+    # the conditions of the publish stage live here, so that the job which signs and pushes can carry the tag condition alone
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "the release publish of this stage may run"
+
+  publish-release:
+    name: Sign and publish
+    needs: [preflight, publish-go]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     outputs:
       commit: ${{ steps.publish.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 30
     container:
       image: debian:trixie
-    # A dry run (publish false) pushes nothing, so it gets its own group per run.
+    # one group per target serialises this organisation's runs: the tree is shared by every package
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ (inputs.publish || inputs.staged) && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-live
       cancel-in-progress: false
     env:
-      # a release (publish on a tag) to the real channel, or a staged run to the staging channel
-      DO_PUBLISH: ${{ (inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged }}
+      DO_PUBLISH: 'true'
     steps:
       # <suite>-<arch> only: artifacts outlive their attempt, and the published copies an earlier attempt uploaded
       # as -debs-signed are flat, which publish-tree.sh refuses (tests/deb-rerun-layout.sh)
@@ -411,51 +439,139 @@ jobs:
         with:
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
-          tag: ${{ inputs.staged && format('staged {0}', github.sha) || inputs.source-ref || github.ref_name }}
-          sign: ${{ env.DO_PUBLISH }}
+          tag: ${{ inputs.source-ref || github.ref_name }}
+          sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
+          key-file: ${{ inputs.key-file }}
+          committed-keys: ${{ inputs.committed-keys }}
+          signing-fingerprint: ${{ inputs.signing-fingerprint }}
+          label: ${{ inputs.label }}
+          gpg-passphrase: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          requires: ${{ inputs.requires }}
+          changelogs-url: ${{ inputs.base-url }}/deb/changelogs
+          staging: 'false'
+          # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
+          matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
+          catch-up: ${{ inputs.catch-up }}
+          suites: ${{ needs.preflight.outputs.releases }}
+
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.package-name }}-debs-signed
+          path: signed/*.deb
+          if-no-files-found: error
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
+
+  publish:
+    name: Stage the build, or assemble the unsigned tree (a release is publish-release)
+    needs: [preflight, build]
+    # the publish stage takes the packages a build stage of this run left; channel-installability inside the
+    # publish action refuses a release that would leave a package of the channel uninstallable
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && !(inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
+    outputs:
+      commit: ${{ steps.staged.outputs.commit }}
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    # A dry run (publish false) pushes nothing, so it gets its own group per run.
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ inputs.staged && 'live' || github.run_id }}
+      cancel-in-progress: false
+    steps:
+      # <suite>-<arch> only: artifacts outlive their attempt, and the published copies an earlier attempt uploaded
+      # as -debs-signed are flat, which publish-tree.sh refuses (tests/deb-rerun-layout.sh)
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.package-name }}-debs-*-*
+          merge-multiple: true
+          path: collected
+
+      - id: staged
+        if: inputs.staged
+        uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
+        with:
+          same-pass: ${{ inputs.same-pass }}
+          deb-dir: collected
+          tag: ${{ format('staged {0}', github.sha) }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          key-file: ${{ inputs.key-file }}
+          committed-keys: ${{ inputs.committed-keys }}
+          signing-fingerprint: ${{ inputs.signing-fingerprint }}
+          label: ${{ inputs.label }}
+          gpg-passphrase: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
           requires: ${{ inputs.requires }}
           changelogs-url: ${{ inputs.base-url }}/${{ inputs.staged && 'staging/deb' || 'deb' }}/changelogs
-          staging: ${{ inputs.staged }}
+          staging: 'true'
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}
-          suites: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
+          suites: ${{ needs.preflight.outputs.releases }}
+
+
+      - id: dry
+        if: ${{ !inputs.staged }}
+        uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
+        with:
+          same-pass: ${{ inputs.same-pass }}
+          deb-dir: collected
+          tag: ${{ inputs.source-ref || github.ref_name }}
+          sign: 'false'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          key-file: ${{ inputs.key-file }}
+          committed-keys: ${{ inputs.committed-keys }}
+          signing-fingerprint: ${{ inputs.signing-fingerprint }}
+          label: ${{ inputs.label }}
+          gpg-passphrase: ${{ secrets.PACKAGES_SIGNING_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          requires: ${{ inputs.requires }}
+          changelogs-url: ${{ inputs.base-url }}/deb/changelogs
+          staging: 'false'
+          # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
+          matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
+          catch-up: ${{ inputs.catch-up }}
+          suites: ${{ needs.preflight.outputs.releases }}
+
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH == 'true'
+        if: inputs.staged
         with:
           name: ${{ inputs.package-name }}-debs-signed
           path: signed/*.deb
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
+        if: ${{ !inputs.staged }}
         with:
           name: ${{ inputs.package-name }}-unsigned-apt-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: env.DO_PUBLISH != 'true'
+        if: ${{ !inputs.staged }}
         run: |
           echo "::warning::dry run: nothing was signed or published. The unsigned tree is attached to this run."
 
   # Runs beside build-rpm.yml's release job, which may create the release first: create it only when it
   # is absent, otherwise upload with --clobber. File names repeat across Debian releases, so the release
   # is part of the asset name.
+
   release:
     name: GitHub release
-    needs: publish
-    if: inputs.publish && inputs.create-github-release && github.ref_type == 'tag'
+    needs: publish-release
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 10
     permissions:
@@ -463,23 +579,27 @@ jobs:
     steps:
       # the release notes are the commit subjects since the previous tag, not GitHub's list of merged pull requests
       - uses: actions/checkout@v4
+        if: ${{ inputs.publish && inputs.create-github-release }}
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - uses: Open-Mixer/.github/.github/actions/changelog@openmixer-v1
+        if: ${{ inputs.publish && inputs.create-github-release }}
         with:
           mode: notes
           tag: ${{ github.ref_name }}
           notes-file: ${{ runner.temp }}/release-notes.md
 
       - uses: actions/download-artifact@v4
+        if: ${{ inputs.publish && inputs.create-github-release }}
         with:
           pattern: ${{ inputs.package-name }}-debs-*-*
           merge-multiple: true
           path: collected
 
       - name: Attach the DEBs to the release
+        if: ${{ inputs.publish && inputs.create-github-release }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -508,15 +628,15 @@ jobs:
   # after 30 minutes.
   live:
     name: Pages deployment
-    needs: publish
-    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.commit != '' }}
+    needs: [publish, publish-release]
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && (needs.publish.outputs.commit || needs.publish-release.outputs.commit) != '' }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 40
     steps:
       - uses: Open-Mixer/.github/.github/actions/pages-live@openmixer-v1
         with:
           channel: ${{ inputs.target-repo }}
-          commit: ${{ needs.publish.outputs.commit }}
+          commit: ${{ needs.publish.outputs.commit || needs.publish-release.outputs.commit }}
           token: ${{ secrets.PAGES_TOKEN }}
 
   # The last proof: the version the tag names installs from the channel, in a Debian that holds nothing else.
@@ -524,9 +644,9 @@ jobs:
   # every target the same way, with the staging channel added: the build of this commit installs, from staging.
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
-    needs: [preflight, publish, release, live]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.verify-install && ((inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag')) || inputs.staged) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || (inputs.runner != 'ubuntu-latest' && inputs.runner) || vars.OMX_RUNNER || 'ubuntu-latest' }}
+    needs: [preflight, publish, publish-release, release, live]
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || inputs.staged) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
       image: debian:${{ matrix.suite }}
@@ -539,6 +659,7 @@ jobs:
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
           base-url: ${{ inputs.base-url }}
+          release-package: ${{ inputs.release-package }}
           staging: ${{ inputs.staged }}
 
       - name: Install the new version from the channel
@@ -599,8 +720,8 @@ jobs:
   # calls this workflow). Without it the step fails loudly with an error naming the missing permission.
   report-failure:
     name: Report a failed release
-    needs: [preflight, build, publish, release, live, verify]
-    if: ${{ always() && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    needs: [preflight, build, publish-go, publish, publish-release, release, live, verify]
+    if: ${{ always() && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     permissions:
@@ -619,10 +740,19 @@ jobs:
   # used only when DISPATCH_TOKEN is unset, and the notice says so: its scope is not recorded, so a 403 there
   # is expected and not a release failure. With verify-install false the install check is skipped and the
   # dispatch still goes out once the publish succeeded.
+  notify-go:
+    name: Worker image gate
+    needs: [publish-release, verify]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "the worker image build may be told"
+
   notify-worker-image:
     name: Tell the worker image build
-    needs: [publish, verify]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') && inputs.publish && (inputs.source-ref != '' || github.ref_type == 'tag') && (inputs.dispatch-repo != '' || vars.OMX_DISPATCH_REPO != '') }}
+    needs: [notify-go]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     continue-on-error: true

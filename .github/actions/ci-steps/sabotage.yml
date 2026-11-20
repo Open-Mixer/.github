@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+#
+# The sabotage rows: for each arm, a break of the reader's handling of it. arms.py --sabotage applies each `old` -> `new`
+# (old must occur once in ci_steps.py) to a copy of the reader, runs the table on it, and asks that the named arm go red.
+# A row whose break leaves its arm green is a row that does not notice its rule being removed.
+- {"arm": 1, "name": "a <<- delimiter must be at column 0", "old": "if (text.lstrip(\"\\t\") if tok.text == \"<<-\" else text) == delimiter:", "new": "if text == delimiter:"}
+- {"arm": 2, "name": "a backslash-newline is no continuation", "old": "            if s.startswith(\"\\\\\\n\", self.i):", "new": "            if False:"}
+- {"arm": 3, "name": "|| true no longer takes the failure", "old": "return False, \"its failure is taken by", "new": "return True, \"its failure is taken by"}
+- {"arm": 4, "name": "continue-on-error is ignored", "old": "if carry_on is not None and not literal(carry_on, \"false\"):", "new": "if False:"}
+- {"arm": 5, "name": "a pipe's first command keeps its gate without pipefail", "old": "elif k < last and not shell.pipefail and gate[0]:", "new": "elif False:"}
+- {"arm": 6, "name": "bash -n is a plain bash", "old": "noexec=\"%s only parses (-n)\" % said if found[\"noexec\"] else \"\",", "new": "noexec=\"\","}
+- {"arm": 7, "name": "a backgrounded command keeps its gate", "old": "            if background:\n                c.lost", "new": "            if False:\n                c.lost"}
+- {"arm": 8, "name": "|| exit N is not a certain failure", "old": "if kind == \"exit\":\n                    return ctx.exits, ctx.exits_why", "new": "if False:\n                    return ctx.exits, ctx.exits_why"}
+- {"arm": 9, "name": "prefix words are not skipped", "old": "            if name in PREFIXES:", "new": "            if False:"}
+- {"arm": 10, "name": "exec does not end the script", "old": "                    replaced = True\n", "new": "                    replaced = False\n"}
+- {"arm": 11, "name": "a literal false if: is ignored", "old": "if literal(cond, \"false\"):", "new": "if False:"}
+- {"arm": 13, "name": "set +e is not followed", "old": "if found[\"errexit\"] is not None and (sure or not found[\"errexit\"]):", "new": "if False:"}
+- {"arm": 14, "name": "a substitution inside a command is not read", "old": "        self.substitutions(subs, shell, ctx, None if argv else gate)\n", "new": ""}
+- {"arm": 15, "name": "cond && x is as certain as x", "old": "elif not self.element_gate(node, i - 1, shell, kept(ctx))[0]:", "new": "elif False:"}
+- {"arm": 16, "name": "any shell template is read", "old": "if not words or words[0].rsplit(\"/\", 1)[-1] not in SHELLS or \"{0}\" not in words:", "new": "if False:"}
+- {"arm": 17, "name": "a leading ./ is not the same command", "edits": [["(word == want[0] or word.endswith(\"/\" + want[0]))", "word == want[0]"], ["cmd[\"command\"][2:] if cmd[\"command\"].startswith(\"./\") else cmd[\"command\"]", "cmd[\"command\"]"]]}
+- {"arm": 18, "name": "shell: bash has no pipefail", "old": "\"bash\": \"bash --noprofile --norc -eo pipefail {0}\",", "new": "\"bash\": \"bash --noprofile --norc -e {0}\","}
+- {"arm": 19, "name": "set +o pipefail is not followed", "old": "if found[\"pipefail\"] is not None and (sure or not found[\"pipefail\"]):", "new": "if found[\"pipefail\"]:"}
+- {"arm": 20, "name": "a pipefail set in a branch counts", "old": "if found[\"pipefail\"] is not None and (sure or not found[\"pipefail\"]):", "new": "if found[\"pipefail\"] is not None:"}
+- {"arm": 21, "name": "a bash -c string is not read", "old": "Script.read(self, rest[0] if rest else \"\", nested, inner, line)", "new": "self.emit(line, [name] + words, text, shell, ctx, gate)"}
+- {"arm": 22, "name": "on: as a string is not read", "old": "        names = [on]", "new": "        return None"}
+- {"arm": 22, "name": "on: as a list is not read", "old": "        names = on\n", "new": "        return None\n"}
+- {"arm": 22, "name": "on: as a map is not read", "old": "        names = list(on)", "new": "        return None"}
+- {"arm": 22, "name": "the key on read as a string only", "old": "doc.get(\"on\", doc.get(True))", "new": "doc.get(\"on\")"}
+- {"arm": 22, "name": "workflow_call is not undecidable", "old": "\"workflow_call\" in names", "new": "False"}
+- {"arm": 22, "name": "!= is taken as ==", "old": "(event == name) == (op == \"==\")", "new": "event == name"}
+- {"arm": 22, "name": "a literal on the left is misread", "old": "(m.group(4), m.group(3))", "new": "(m.group(1), m.group(2))"}
+- {"arm": 22, "name": "|| is not split", "old": "for conj in text.split(\"||\"):", "new": "for conj in [text]:"}
+- {"arm": 22, "name": "&& is not split", "old": "for atom in conj.split(\"&&\"):", "new": "for atom in [conj]:"}
+- {"arm": 22, "name": "an expression with a call is judged", "old": "if \"(\" in text or \"!\" in text.replace(\"!=\", \"\"):", "new": "if False:"}
+- {"arm": 22, "name": "an undecidable term counts as false", "old": "                got = None\n", "new": "                got = False\n"}
+- {"arm": 22, "name": "a job-level if gets no triggers", "old": "for c in s[\"commands\"]], events)", "new": "for c in s[\"commands\"]], None)"}
+- {"arm": 22, "name": "one matching trigger is enough to refuse", "old": "all(holds_on(cond, e) is False for e in events)", "new": "any(holds_on(cond, e) is False for e in events)"}
+- {"arm": 22, "name": "a dead step is not marked never", "old": "        elif dead:", "new": "        elif False:"}
+- {"arm": 23, "name": "the script length is not bounded", "old": "MAX_SCRIPT = 1 << 18", "new": "MAX_SCRIPT = 1 << 40"}
+- {"arm": 23, "name": "nesting is not bounded and the recursion backstop is gone", "edits": [["MAX_DEPTH = 64", "MAX_DEPTH = 10 ** 6"], ["        except RecursionError:", "        except ZeroDivisionError:"]]}
+- {"arm": 23, "name": "the recursion backstop is gone from a chain the depth cap does not count", "edits": [["        except RecursionError:", "        except ZeroDivisionError:"]]}
+- {"arm": 12, "name": "a quote ends a word without moving: the lexer refuses to loop", "edits": [["if c in \";&|()<>\":\n                if c in \"<>\"", "if c in \";&|()<>'\\\"\":\n                if c in \"<>\""]]}

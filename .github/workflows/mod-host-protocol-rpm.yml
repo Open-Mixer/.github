@@ -5,18 +5,17 @@ name: mod-host-protocol RPMs
 # Builds mod-host, mod-host-protocol, which carries libmod-host-protocol.so.0, and mod-host-protocol-devel from the
 # OpenMixer fork of mod-host at the commit .github/pins.txt names, by the fork's own packaging/mod-host.spec, for
 # every architecture and publishes them into rpm/ of the Pages repository, where omx-clap-host and plugin-hostd
-# Require them. Move the pin to the fork's release tag, then run this by hand: a published NEVRA is never rebuilt
+# Require them. Move the pin to the fork's release tag, then tag the release: a published NEVRA is never rebuilt
 # with new bytes (docs/mod-host.md).
 #
-# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+# A push of a tag `mod-host-protocol-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
+# artifact and signs and pushes nothing (docs/release-operations.md, "Publish only by tagging").
 
 on:
+  push:
+    tags: ['mod-host-protocol-*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Sign and publish; only a run on the main branch publishes'
-        type: boolean
-        default: false
       matrix:
         description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
         type: string
@@ -31,15 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse to publish from anywhere but main
-        if: inputs.publish && github.ref != 'refs/heads/main'
-        run: echo "::error::publish is only for a run on main"; exit 1
-
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/release-preflight
         with:
-          publish: ${{ inputs.publish }}
+          publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           require-tag: 'false'
           target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -64,7 +59,7 @@ jobs:
           kind: rpm
           matrix: ${{ inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["44", "45"]'
+          releases: '["45"]'
           arches: '["x86_64", "aarch64"]'
 
   build:
@@ -90,7 +85,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           FEDORA: ${{ matrix.fedora }}
-          PUBLISH: ${{ inputs.publish }}
+          PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
         run: |
           set -euo pipefail
           mkdir -p release
@@ -125,20 +120,21 @@ jobs:
           name: mod-host-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   publish:
     name: Sign and publish
     needs: [plan, build]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     concurrency:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -155,7 +151,48 @@ jobs:
         with:
           rpm-dir: collected
           tag: mod-host-${{ env.EVR }}
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+      # the release record: where each Fedora release's source package is served and its sha256, for a consumer to pin
+      - name: Record the source packages
+        run: |
+          set -euo pipefail
+          # a signed publish serves the signed copy, whose bytes differ from the built file's
+          if [ "$DO_PUBLISH" = true ]; then dir=signed; else dir=collected; fi
+          ./.github/actions/publish-rpms/record-srpm.sh "$dir" mod-host | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "- published: $DO_PUBLISH ($dir copy)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+
+  publish-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [plan, build]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:45
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mod-host-rpms-*
+          merge-multiple: true
+          path: collected
+
+      - name: Read the version the packages carry
+        run: echo "EVR=$(rpm -qp --qf '%{VERSION}-%{RELEASE}\n' collected/mod-host-protocol-[0-9]*.rpm | sort -u | head -1)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: mod-host-${{ env.EVR }}
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
@@ -170,9 +207,8 @@ jobs:
           echo "- published: $DO_PUBLISH ($dir copy)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: mod-host-unsigned-rpm-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}

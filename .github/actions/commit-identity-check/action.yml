@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: commit-identity-check
+description: Fail when a commit of the pull request has the wrong author or committer email, or GitHub does not call it verified
+
+# Every commit published is authored by the house author, committed by the signing key's uid, and signed so that GitHub
+# says verified. A committer of linuxnow@gmail.com is GitHub's bad_email: the signature stands and reads unverified.
+# EVERY commit of the range base..head is read (never only the head): the author and committer emails from git, and
+# .commit.verification.verified from the GitHub API with the workflow token. There is no bypass list and no bot
+# exception. The expected emails are these two inputs, the one place they are written; they reach the script through
+# the environment, and an empty value (a caller workflow that sets none) means the defaults below, which the script reads
+# from this file.
+# The range is the commits the pull request adds to the base branch AS IT IS NOW (origin/<base>..HEAD): a base that
+# moved on is not a problem, what is reachable from its tip is not read, so a commit that landed on the base meanwhile
+# is not charged to the pull request. A commit GitHub makes for the pull request itself ("Update branch" merges the base
+# in, committer GitHub) IS in the range and fails: merge the base into the branch locally (plain signed git merge, house author and committer) and push plainly, never rebase or force. The merge button's commit is made after the checks
+# and is never in a range.
+# The caller checks out with fetch-depth: 0 and the pull request head, and passes the token (the default one reads commits).
+
+inputs:
+  base-ref:
+    description: the branch the pull request targets
+    default: ${{ github.base_ref }}
+  author-email:
+    description: the one email every commit is authored by
+    default: linuxnow@gmail.com
+  committer-email:
+    description: the one email every commit is committed by (the uid of the signing key)
+    default: commits@openmixer.org
+  token:
+    description: token that reads repos/{owner}/{repo}/commits/{sha}
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: The checker goes red on a wrong committer and an unverified commit, whatever their place in the range
+      shell: bash
+      run: ${{ github.action_path }}/commit-identity-check.sh --selftest
+    - name: Read every commit of the pull request
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        AUTHOR_EMAIL: ${{ inputs.author-email }}
+        COMMITTER_EMAIL: ${{ inputs.committer-email }}
+      run: |
+        set -euo pipefail
+        [ -n "$BASE_REF" ] || { echo 'commit-identity-check: no base-ref (run on a pull_request)' >&2; exit 2; }
+        "${{ github.action_path }}/commit-identity-check.sh" \
+          --author-email "$AUTHOR_EMAIL" --committer-email "$COMMITTER_EMAIL" "origin/$BASE_REF..HEAD"

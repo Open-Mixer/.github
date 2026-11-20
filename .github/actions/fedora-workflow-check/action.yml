@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: fedora-workflow-check
+description: Fail when a workflow of the calling repository names a Fedora release that is not in the allowed list
+
+# The one Fedora workflow guard (it replaces the per-repository tools/test/workflow-fedora-check.sh copies). It reads the
+# CALLING repository's .github/workflows/*.yml, outside comments, and refuses a Fedora release not in allowed-fedora:
+# fedora:NN images, fcNN names, fedora lists and releases / rpm-releases lists. The allowed list is this input, the one
+# place it is written: the development matrix is Fedora 45 only (OMX_RELEASE_MATRIX=quick), and the full set returns by
+# passing "44 45" here, never by editing the script. The value reaches the script through the environment, never spliced
+# into a run line. The caller checks out first.
+
+inputs:
+  allowed-fedora:
+    description: the Fedora releases the workflows may name, space or comma separated
+    default: "45"
+
+runs:
+  using: composite
+  steps:
+    - name: The checker goes red on each planted Fedora reference and green on the allowed ones
+      shell: bash
+      run: ${{ github.action_path }}/fedora-workflow-check.sh --self-test
+    - name: Read the workflows of the calling repository
+      shell: bash
+      env:
+        ALLOWED_FEDORA: ${{ inputs.allowed-fedora }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        "${{ github.action_path }}/fedora-workflow-check.sh" "$WORKSPACE"

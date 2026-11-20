@@ -8,6 +8,8 @@
 # when one is in state success and is that commit or ahead of it. Pages cancels a deployment when the next push
 # arrives, so a later deployment may carry the commit. A deployment that failed, or none at all after
 # REDEPLOY_AFTER seconds, makes it ask Pages for one more build (every REDEPLOY_AFTER seconds while not live).
+# Pages builds are read too (pages/builds and pages/builds/latest): a build in status built of the commit, or of
+# one ahead of it, counts as live even with no deployment record, and says so.
 # After LIVE_TIMEOUT seconds (1800) it fails naming the deployment of the commit and its state.
 # Env: CURL (default curl), GH_TOKEN or GITHUB_TOKEN, GITHUB_API_URL (default https://api.github.com),
 # LIVE_TIMEOUT (1800), REDEPLOY_AFTER (300), POLL (20).
@@ -22,10 +24,11 @@ get() { # get <path>: the JSON body, or nothing
         $CURL -fsSL -H @- "$api/repos/$repo/$1" 2>/dev/null
 }
 
-# sets live=1 when served; ours="id state" of the deployment of the commit ("none" when there is none)
+# sets live=1 when served; ours="id state" of the deployment of the commit ("none" when there is none);
+# proof names the evidence ("deployment" or "build")
 check() {
-    local list id sha state rel
-    live= ours=none
+    local list id sha state rel bstate
+    live= ours=none proof=
     list=$(get "deployments?environment=github-pages&per_page=10") || return 0
     while read -r id sha; do
         [ -n "$id" ] || continue
@@ -33,10 +36,19 @@ check() {
         [ -n "$state" ] || state=none
         [ "$sha" != "$commit" ] || { [ "$ours" != none ] || ours="$id $state"; }
         [ "$state" = success ] || continue
-        if [ "$sha" = "$commit" ]; then live=1; return 0; fi
+        if [ "$sha" = "$commit" ]; then live=1 proof=deployment; return 0; fi
         rel=$(get "compare/$commit...$sha" | jq -r '.status // ""' 2>/dev/null)
-        case $rel in ahead|identical) live=1; return 0 ;; esac
+        case $rel in ahead|identical) live=1 proof=deployment; return 0 ;; esac
     done < <(jq -r '.[] | "\(.id) \(.sha)"' <<<"$list" 2>/dev/null)
+    # Pages can build a commit without ever recording a deployment: a build in status built that is the commit,
+    # or ahead of it, is evidence too
+    while read -r bstate sha; do
+        [ "$bstate" = built ] && [ -n "$sha" ] || continue
+        if [ "$sha" = "$commit" ]; then live=1 proof=build; return 0; fi
+        rel=$(get "compare/$commit...$sha" | jq -r '.status // ""' 2>/dev/null)
+        case $rel in ahead|identical) live=1 proof=build; return 0 ;; esac
+    done < <({ get "pages/builds/latest"; get "pages/builds?per_page=10"; } |
+        jq -r 'if type == "array" then .[] else . end | select(type == "object") | "\(.status // "") \(.commit // "")"' 2>/dev/null)
 }
 
 request_build() { # never fails the wait
@@ -44,9 +56,14 @@ request_build() { # never fails the wait
         echo "::warning::no token (GH_TOKEN or GITHUB_TOKEN) -- not asking Pages for another build; still waiting"
         return 0
     fi
-    printf 'Authorization: Bearer %s\nAccept: application/vnd.github+json\nX-GitHub-Api-Version: 2022-11-28\n' "$token" |
-        $CURL -fsS -o /dev/null -H @- -X POST "$api/repos/$repo/pages/builds" ||
-        echo "::warning::the Pages build request was refused"
+    local code
+    code=$(printf 'Authorization: Bearer %s\nAccept: application/vnd.github+json\nX-GitHub-Api-Version: 2022-11-28\n' "$token" |
+        $CURL -sS -o /dev/null -w '%{http_code}' -H @- -X POST "$api/repos/$repo/pages/builds") || code=000
+    case $code in
+        ""|2??) ;;
+        403) echo "::warning::the Pages build request was refused (HTTP 403: the publish token cannot request a Pages build)" ;;
+        *) echo "::warning::the Pages build request was refused (HTTP $code)" ;;
+    esac
     return 0
 }
 
@@ -54,7 +71,11 @@ start=$SECONDS next_redeploy=$REDEPLOY_AFTER
 while :; do
     check
     if [ -n "$live" ]; then
-        echo "pages: $repo deployed $commit (deployment ${ours})"
+        if [ "$proof" = build ]; then
+            echo "pages: built $commit of $repo (build, no deployment record)"
+        else
+            echo "pages: $repo deployed $commit (deployment ${ours})"
+        fi
         exit 0
     fi
     waited=$((SECONDS - start))

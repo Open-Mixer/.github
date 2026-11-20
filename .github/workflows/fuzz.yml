@@ -25,7 +25,7 @@ on:
         default: dnf install -y --setopt=install_weak_deps=False git dnf5-plugins clang compiler-rt llvm make gawk diffutils python3 pkgconf-pkg-config
       image:
         type: string
-        default: fedora:44
+        default: fedora:45
       channel:
         type: boolean
         default: false

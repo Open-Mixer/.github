@@ -6,17 +6,16 @@ name: Surge XT DEBs
 # .github/actions/deb-deps/surge-xt at the commit of .github/pins.txt (packaging/surge-xt/make-source.sh lays out the
 # source with its submodules), for every Debian release and architecture, installs the result in a clean container
 # with omx-clap-host from the channel and loads it there (packaging/surge-xt/load-check.sh), and publishes it into
-# deb/ of the Pages repository. Run by hand, once per change: a published version is never rebuilt with new bytes.
+# deb/ of the Pages repository. Released by a tag, once per change: a published version is never rebuilt with new bytes.
 #
-# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+# A push of a tag `surge-xt-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
+# artifact and signs and pushes nothing (docs/release-operations.md, "Publish only by tagging").
 
 on:
+  push:
+    tags: ['surge-xt-*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Sign and publish; only a run on the main branch publishes'
-        type: boolean
-        default: false
       matrix:
         description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
         type: string
@@ -31,15 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse to publish from anywhere but main
-        if: inputs.publish && github.ref != 'refs/heads/main'
-        run: echo "::error::publish is only for a run on main"; exit 1
-
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/release-preflight
         with:
-          publish: ${{ inputs.publish }}
+          publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           require-tag: 'false'
           target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -64,7 +59,7 @@ jobs:
           kind: deb
           matrix: ${{ inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["bookworm", "trixie"]'
+          releases: '["trixie"]'
           arches: '["amd64", "arm64"]'
 
   build:
@@ -120,11 +115,12 @@ jobs:
           name: surge-xt-debs-${{ matrix.suite }}-${{ matrix.arch }}
           path: out
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   publish:
     name: Sign and publish
     needs: [plan, build]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -133,7 +129,7 @@ jobs:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -147,18 +143,43 @@ jobs:
         with:
           deb-dir: collected
           tag: surge-xt
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the original key co-signs the apt index while installs may hold only it (publish-debs)
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+
+  publish-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [plan, build]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: surge-xt-debs-*
+          merge-multiple: true
+          path: collected
+
+      - uses: ./.github/actions/publish-debs
+        with:
+          deb-dir: collected
+          tag: surge-xt
+          sign: 'false'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: surge-xt-unsigned-apt-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
