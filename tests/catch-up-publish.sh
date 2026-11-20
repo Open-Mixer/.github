@@ -5,8 +5,8 @@
 # up"), on a fixture channel published by the real tree script with a throwaway key:
 #   deb  plugin-qualify 0.20.4 served for trixie arm64 with its language pack (all), and a bookworm package beside it;
 #        the catch-up brings trixie amd64 and a rebuilt language pack of other bytes
-#   rpm  plugin-qualify 0.20.4 served for fc44 x86_64 with its source and a noarch language pack, and an fc45 package;
-#        the catch-up brings fc44 aarch64 and a rebuilt source and language pack of other bytes
+#   rpm  plugin-qualify 0.20.4 served for fc45 x86_64 with its source and a noarch language pack, and an fc45 package;
+#        the catch-up brings fc45 aarch64 and a rebuilt source and language pack of other bytes
 # Proves: the new cell's package is placed and indexed; the rebuilt arch-independent package (and source rpm) is
 # dropped by path, saying so, and the served one is byte-identical after; every file the channel held is byte-identical
 # after except the index of the one release (deb) or directory (rpm) that received the package and cells.tsv; cells.tsv
@@ -72,31 +72,31 @@ rpm)
         find "$work/rb-$1-$2-$3-$4" -name '*.rpm' -exec cp {} "$5/" \;
     }
     publish() { CATCH_UP=${CU:-} "$actions/publish-rpms/publish-tree.sh" "$tree" "$1" "$key"; }
-    mkrpm plugin-qualify x86_64 44 first "$work/first" a
-    mkrpm plugin-qualify-langpack-ca noarch 44 first "$work/first"
+    mkrpm plugin-qualify x86_64 45 first "$work/first" a
+    mkrpm plugin-qualify-langpack-ca noarch 45 first "$work/first"
     mkrpm other x86_64 45 first "$work/first"
     MATRIX_SET=quick publish "$work/first" > /dev/null
     sleep 1 # another build time: the rebuilt source and language pack get other bytes
-    mkrpm plugin-qualify aarch64 44 catchup "$work/catchup" a
-    mkrpm plugin-qualify-langpack-ca noarch 44 rebuilt "$work/catchup"
-    new=fedora/44/aarch64/plugin-qualify-0.20.4-1.fc44.aarch64.rpm
-    # the first publish is a quick release: its noarch language pack is served from the quick tree, fc44 x86_64, alone
-    indep=fedora/44/x86_64/plugin-qualify-langpack-ca-0.20.4-1.fc44.noarch.rpm
+    mkrpm plugin-qualify aarch64 45 catchup "$work/catchup" a
+    mkrpm plugin-qualify-langpack-ca noarch 45 rebuilt "$work/catchup"
+    new=fedora/45/aarch64/plugin-qualify-0.20.4-1.fc45.aarch64.rpm
+    # the first publish is a quick release: its noarch language pack is served from the quick tree, fc45 x86_64, alone
+    indep=fedora/45/x86_64/plugin-qualify-langpack-ca-0.20.4-1.fc45.noarch.rpm
     # and the catch-up hands the served file, the same bytes, to the cell it fills
-    handed=fedora/44/aarch64/plugin-qualify-langpack-ca-0.20.4-1.fc44.noarch.rpm
-    srpm=fedora/44/SRPMS/plugin-qualify-0.20.4-1.fc44.src.rpm
+    handed=fedora/45/aarch64/plugin-qualify-langpack-ca-0.20.4-1.fc45.noarch.rpm
+    srpm=fedora/45/SRPMS/plugin-qualify-0.20.4-1.fc45.src.rpm
     [ -f "$tree/$srpm" ] && [ -f "$work/catchup/$(basename "$srpm")" ] || fail "the fixture has no source rpm on both sides"
     cmp -s "$work/catchup/$(basename "$srpm")" "$tree/$srpm" && fail "the fixture's rebuilt source rpm has the served bytes"
-    index='fedora/44/aarch64/repodata/.*'
-    served_cells='fc44/aarch64 fc44/x86_64'
-    clash=$work/catchup/plugin-qualify-0.20.4-1.fc44.aarch64.rpm
-    same() { mkdir -p "$work/same"; cp "$tree/fedora/44/x86_64/plugin-qualify-0.20.4-1.fc44.x86_64.rpm" "$work/same/"; echo fedora/44/x86_64/plugin-qualify-0.20.4-1.fc44.x86_64.rpm; }
+    index='fedora/45/aarch64/repodata/.*'
+    served_cells='fc45/aarch64 fc45/x86_64'
+    clash=$work/catchup/plugin-qualify-0.20.4-1.fc45.aarch64.rpm
+    same() { mkdir -p "$work/same"; cp "$tree/fedora/45/x86_64/plugin-qualify-0.20.4-1.fc45.x86_64.rpm" "$work/same/"; echo fedora/45/x86_64/plugin-qualify-0.20.4-1.fc45.x86_64.rpm; }
     indexed() { # the primary metadata, whatever createrepo_c compressed it with
         local f x=
-        for f in "$tree"/fedora/44/aarch64/repodata/*primary.xml*; do
+        for f in "$tree"/fedora/45/aarch64/repodata/*primary.xml*; do
             case $f in *.zst) x+=$(zstd -dcq "$f") ;; *.xz) x+=$(xz -dc "$f") ;; *.gz) x+=$(gzip -dc "$f") ;; *) x+=$(cat "$f") ;; esac
         done
-        grep -qF 'plugin-qualify-0.20.4-1.fc44.aarch64.rpm' <<< "$x"
+        grep -qF 'plugin-qualify-0.20.4-1.fc45.aarch64.rpm' <<< "$x"
     }
     ;;
 *) fail "usage: catch-up-publish.sh rpm|deb" ;;
@@ -125,8 +125,8 @@ unexpected=$(grep -vxE "$new|${handed:-$new}|cells\.tsv|$index" <<< "$ch" || tru
 grep -qxF "$new" <<< "$ch" || fail "the snapshot does not see the new file: $ch"
 if [ -n "${handed:-}" ]; then
     cmp -s "$tree/$handed" "$tree/$indep" || fail "the cell the catch-up filled did not get the served $(basename "$indep"), byte for byte"
-    [ ! -e "$tree/fedora/44/noarch/$(basename "$indep")" ] || fail "the catch-up wrote $(basename "$indep") into fedora/44/noarch"
-    ok "$kind: the filled cell gets the noarch file the quick tree serves, the same bytes, and fedora/44/noarch is untouched"
+    [ ! -e "$tree/fedora/45/noarch/$(basename "$indep")" ] || fail "the catch-up wrote $(basename "$indep") into fedora/45/noarch"
+    ok "$kind: the filled cell gets the noarch file the quick tree serves, the same bytes, and fedora/45/noarch is untouched"
 fi
 ok "$kind: the missing cell placed and indexed; the rebuilt arch-independent package dropped; every other file byte-identical"
 [ "$(row plugin-qualify 0.20.4)" = "quick|$served_cells" ] || fail "cells.tsv records $(row plugin-qualify 0.20.4) for 0.20.4, not quick|$served_cells"
@@ -164,7 +164,7 @@ ok "$kind: a catch-up left with nothing to place is refused"
 # ---- sabotage, each must turn this test red:
 #   refusal  the overwrite refusal taken out: the run no longer refuses a served file by name
 #   index    every index made again, not only the touched ones: served index files change (deb: bookworm's Release;
-#            rpm: the repodata of fc44 x86_64 and fc45)
+#            rpm: the repodata of fc45 x86_64 and fc45)
 if [ -z "${CATCH_UP_ACTIONS:-}" ]; then
     for what in refusal index; do
         sab=$work/sab-$what

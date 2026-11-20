@@ -79,6 +79,39 @@ hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the stub did not clone ope
 cache=$tmp/home/.cache/omx/openmixer-dotgithub
 [ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "the first use did not clone openmixer-v1 (it read the frozen tag v1?)"
 if hook "$tmp/o.git" "$tmp/bad" >/dev/null 2>&1; then fail "the stub passed an attributed message"; fi
+
+# the subject is followed by a blank line: git reads everything up to the first blank line as the subject, so a body
+# line directly under the subject publishes a whole paragraph as the subject. Refused by name in both doors (a range, and
+# the hook on a message file) through the one checker; a one-line message, git's own trailing newline, the comment lines
+# git adds to a message file and the diff below the scissors line of commit -v are not a second line
+rule='the subject is not followed by a blank line'
+msgcommit() { # file: one empty commit on a fresh topic branch whose message is the file, as git cleans it
+  git checkout -q main; git branch -q -D t 2>/dev/null || true; git checkout -q -b t; git commit -q --allow-empty -F "$1"
+}
+printf 'a change\nits body starts here with no blank line\n' > "$tmp/b-none"
+printf 'a change\n\nits body starts after a blank line\n' > "$tmp/b-blank"
+printf 'a change\n' > "$tmp/b-one"
+printf 'a change' > "$tmp/b-bare"
+printf 'Merge pull request #393 from Open-Mixer/hostd-385-fix\n\nthe title of the pull request\n' > "$tmp/b-merge"
+printf 'a change\n# Please enter the commit message for your changes.\n#\n# On branch t\n' > "$tmp/b-comments"
+printf 'a change\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+x\n' > "$tmp/b-scissors"
+printf 'a change\n# a comment line\nits body starts here with no blank line\n' > "$tmp/b-comment-between"
+miss=()
+msgcommit "$tmp/b-none"; sha=$(git rev-parse --short=12 HEAD)
+rc=0; out=$("$chk" main..HEAD 2>&1) || rc=$?
+[ "$rc" = 1 ] && grep -q "^$sha: .*$rule" <<<"$out" || miss+=("(a) a range: a body line directly under the subject was not refused by name (rc $rc)")
+for f in b-blank b-one b-bare b-merge; do
+  msgcommit "$tmp/$f"; "$chk" main..HEAD >/dev/null 2>&1 || miss+=("a range: $f was refused")
+done
+git checkout -q main
+rc=0; out=$(hook "$tmp/o.git" "$tmp/b-none" 2>&1) || rc=$?
+[ "$rc" = 1 ] && grep -q "^commit message: .*$rule" <<<"$out" || miss+=("(d) the hook: a body line directly under the subject was not refused by name (rc $rc)")
+rc=0; out=$(hook "$tmp/o.git" "$tmp/b-comment-between" 2>&1) || rc=$?
+[ "$rc" = 1 ] && grep -q "$rule" <<<"$out" || miss+=("the hook: a body line under the subject and a comment line was not refused by name (rc $rc)")
+for f in b-blank b-one b-bare b-merge b-comments b-scissors; do
+  hook "$tmp/o.git" "$tmp/$f" >/dev/null 2>&1 || miss+=("the hook: $f was refused")
+done
+[ "${#miss[@]}" = 0 ] || fail "the blank line after the subject: $(printf '%s; ' "${miss[@]}")"
 touch "$tmp/o/moved"; $G add -A; $G commit -qm two; $G branch -f openmixer-v1; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/heads/openmixer-v1
 touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
 hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the refreshed stub refused a clean message"
@@ -119,6 +152,9 @@ realcommit -m "another clean change" || fail "a real commit after the line moved
 [ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "inside a real hook a stale cache was not fetched at the moved openmixer-v1"
 [ "$(git -C "$tmp/wt" rev-list --count HEAD)" = 3 ] || fail "the committing worktree is not where the two commits are"
 if realcommit -m "change" -m "Co-Authored""-By: Claude <noreply@anthro""pic.com>"; then fail "a real commit with an attributed message passed"; fi
+if realcommit -F "$tmp/b-none"; then fail "a real commit whose subject has no blank line after it passed"; fi
+grep -q "$rule" "$tmp/rerr" || fail "a real commit refused for its missing blank line did not say so: $(cat "$tmp/rerr")"
+realcommit -F "$tmp/b-blank" || fail "a real commit with a blank line after its subject was refused: $(cat "$tmp/rerr")"
 
 # the commit-msg mode judges a message before the commit exists, so a repository whose lanes push from post-commit never
 # publishes one it refuses: the message is also read by private-refs-check (no private repository, issue, machine or path),

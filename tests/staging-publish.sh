@@ -85,8 +85,8 @@ rpm)
         find "$d/RPMS" -name '*.rpm'
     }
     mkdir -p "$work/real" "$work/staged"
-    cp "$(mkpkg omx-lib 3.13.0 1.fc44)" "$(mkpkg omx-lib 3.14.1 1.fc44)" "$(mkpkg omx-app 1.0 1.fc44 'omx-lib >= 3.13')" "$work/real/"
-    cp "$(mkpkg omx-lib 3.14.0 1.git$A.fc44)" "$work/staged/"
+    cp "$(mkpkg omx-lib 3.13.0 1.fc45)" "$(mkpkg omx-lib 3.14.1 1.fc45)" "$(mkpkg omx-app 1.0 1.fc45 'omx-lib >= 3.13')" "$work/real/"
+    cp "$(mkpkg omx-lib 3.14.0 1.git$A.fc45)" "$work/staged/"
     "$actions/publish-rpms/publish-tree.sh" "$ch/rpm" "$work/real" "$NEW_ID" >/dev/null
     ;;
 deb)
@@ -121,8 +121,8 @@ if [ "$kind" = rpm ]; then
     (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$work/staged SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID \
         bash -e "$work/assemble.sh") > "$work/publish.log" 2>&1 || { cat "$work/publish.log"; fail "the staged rpm publish failed"; }
     s=$ch/staging/rpm
-    f=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$A.fc44.noarch.rpm
-    [ -f "$f" ] || fail "the staged package is not at staging/rpm/fedora/44/noarch: $(cd "$ch" && find staging -name '*.rpm')"
+    f=$s/fedora/45/noarch/omx-lib-3.14.0-1.git$A.fc45.noarch.rpm
+    [ -f "$f" ] || fail "the staged package is not at staging/rpm/fedora/45/noarch: $(cd "$ch" && find staging -name '*.rpm')"
     rpm -qpi "$f" 2>/dev/null | grep -E '^Signature *:' | grep -qiv '(none)' || fail "the staged package is not signed"
     for rel in 44 45; do for a in x86_64 aarch64 noarch SRPMS; do
         [ -s "$s/fedora/$rel/$a/repodata/repomd.xml.asc" ] || fail "no signed metadata in staging/rpm/fedora/$rel/$a"
@@ -180,7 +180,7 @@ if [ "$kind" = rpm ]; then
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null
     q install omx-app >/dev/null
     got=$(rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib); repo=$(dnf -q repoquery --installed --qf '%{from_repo}' omx-lib)
-    [ "$got" = 3.14.0-1.git$A.fc44 ] || fail "with staging the client took omx-lib $got, not the staged 3.14.0-1.git$A"
+    [ "$got" = 3.14.0-1.git$A.fc45 ] || fail "with staging the client took omx-lib $got, not the staged 3.14.0-1.git$A"
     case $repo in openmixer-staging*) ;; *) fail "the staged omx-lib came from $repo" ;; esac
     q remove omx-app omx-lib >/dev/null
     mv /etc/yum.repos.d/openmixer-staging.repo "$work/"
@@ -212,13 +212,13 @@ ok "$kind: a client with staging added takes the staged build over a higher real
 mkdir -p "$work/staged-b"
 if [ "$kind" = rpm ]; then
     cmpv() { rpm --eval "%{lua:print(rpm.vercmp('$1', '$2'))}"; }
-    [ "$(cmpv "1.git$B.fc44" "1.git$A.fc44")" = 1 ] || fail "the later commit's release 1.git$B does not sort above 1.git$A"
-    [ "$(cmpv "1.git${B#*.}.fc44" "1.git${A#*.}.fc44")" = -1 ] || fail "the two shas alone sort by time: this is not the case under test"
-    cp "$(mkpkg omx-lib 3.14.0 "1.git$B.fc44")" "$work/staged-b/"
-    old=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$A.fc44.noarch.rpm
-    new=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$B.fc44.noarch.rpm
+    [ "$(cmpv "1.git$B.fc45" "1.git$A.fc45")" = 1 ] || fail "the later commit's release 1.git$B does not sort above 1.git$A"
+    [ "$(cmpv "1.git${B#*.}.fc45" "1.git${A#*.}.fc45")" = -1 ] || fail "the two shas alone sort by time: this is not the case under test"
+    cp "$(mkpkg omx-lib 3.14.0 "1.git$B.fc45")" "$work/staged-b/"
+    old=$s/fedora/45/noarch/omx-lib-3.14.0-1.git$A.fc45.noarch.rpm
+    new=$s/fedora/45/noarch/omx-lib-3.14.0-1.git$B.fc45.noarch.rpm
     taken() { q makecache --refresh >/dev/null; q install omx-lib >/dev/null; rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib; q remove omx-lib >/dev/null; }
-    want=3.14.0-1.git$B.fc44
+    want=3.14.0-1.git$B.fc45
     # both builds in the index, as a publish that drops nothing leaves them: the order alone decides
     (cd "$ws" && NEWEST_ONLY='' "$actions/publish-rpms/publish-tree.sh" "$s" "$work/staged-b" "$NEW_ID") > "$work/both.log" 2>&1 || { cat "$work/both.log"; fail "the publish of the later commit failed"; }
     [ -f "$old" ] && [ -f "$new" ] || fail "without NEWEST_ONLY a publish removed a package"

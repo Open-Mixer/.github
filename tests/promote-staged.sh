@@ -7,9 +7,9 @@
 #   - it refuses, and copies nothing, a staged tree that lacks a distribution directory the matrix has, a release
 #     with no source package, a version staging does not hold, two staged commits with none named, and a release the
 #     channel root serves the package for and the promotion does not cover;
-#   - the workflow, rendered: nothing in it builds; a dry run signs and pushes nothing, tags nothing and creates no
-#     release; a real run publishes with staging off, in the live publish group, and tags only after the channel
-#     serves the bytes staging served and the install checks passed.
+#   - the workflow, rendered: nothing in it builds; a run that is not a tag push signs and pushes nothing and creates
+#     no release; a tag push publishes with staging off, in the live publish group, and creates the release only after
+#     the channel serves the bytes staging served and the install checks passed; no job creates the tag.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 collect=$here/.github/actions/promote-staged/collect.py
@@ -100,6 +100,7 @@ wf=$here/.github/workflows/promote-staged.yml
 cat > "$t/wf.py" <<'PY'
 import re, sys, yaml
 d = yaml.safe_load(open(sys.argv[1])); jobs = d["jobs"]
+TAG = "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))"
 text = lambda j: yaml.safe_dump(jobs[j])
 def uses(j, what): return [s for s in jobs[j]["steps"] if f"/{what}@" in s.get("uses", "")]
 for j in jobs:
@@ -114,48 +115,78 @@ for j, pub in (("rpm", "publish-rpms"), ("deb", "publish-debs")):
     assert c["commit"] == "${{ needs.find.outputs.short }}", f"job {j} does not promote the commit the find job checked"
     w = uses(j, pub)[0]["with"]
     assert w["staging"] is False, f"job {j} publishes to staging"
-    assert w["sign"] == "${{ !inputs.dry-run }}", f"job {j}: a dry run signs and pushes"
+    assert w["sign"] == "true" and jobs[j]["if"] == "${{ " + TAG[1:-1] + " }}", f"job {j}: not sign true under the tag condition alone"
     assert w[f"{j}-dir"] == c["out"], f"job {j} publishes another directory than the collected one"
-    assert jobs[j]["concurrency"] == {"group": "publish-${{ inputs.target-repo }}-${{ !inputs.dry-run && 'live' || github.run_id }}",
+    assert jobs[j]["concurrency"] == {"group": "publish-${{ inputs.target-repo }}-live",
                                       "cancel-in-progress": False}, f"job {j} is not in the publish group of the channel"
+    dj = jobs[j + "-dry-run"]
+    dw = uses(j + "-dry-run", pub)[0]["with"]
+    assert dw["sign"] == "false" and "!" + TAG in dj["if"] and "concurrency" not in dj, f"job {j}-dry-run signs or pushes, or shares the live group"
     after = steps[names.index(pub) + 1]
     assert "sha256sum -c" in after.get("run", ""), f"job {j} does not compare the tree with the staged checksums right after the publish"
 need = lambda j: set(jobs[j]["needs"] if isinstance(jobs[j]["needs"], list) else [jobs[j]["needs"]])
-assert {"rpm", "deb"} <= need("served") and "!inputs.dry-run" in jobs["served"]["if"], "the served check does not follow both publishes, or runs on a dry run"
+assert {"rpm", "deb"} <= need("served") and TAG in jobs["served"]["if"], "the served check does not follow both publishes, or runs on a dry run"
 for j in ("verify-rpm", "verify-deb"):
     assert "served" in need(j) and "needs.served.result == 'success'" in jobs[j]["if"], f"{j} runs without the served bytes"
     assert all("staging" not in (s.get("with") or {}) for s in uses(j, "add-openmixer")), f"{j} adds the staging channel"
-r = jobs["release"]
-assert {"served", "verify-rpm", "verify-deb"} <= need("release"), "the tag does not wait for the served bytes and the install checks"
-want = ["!cancelled()", "!inputs.dry-run", "needs.served.result == 'success'",
+r = jobs["release-go"]
+assert jobs["release"]["if"] == "${{ " + TAG[1:-1] + " }}" and "release-go" in need("release"), "the release job is not the tag condition alone behind its gate"
+assert {"served", "verify-rpm", "verify-deb"} <= need("release-go"), "the tag does not wait for the served bytes and the install checks"
+want = ["!cancelled()", TAG, "needs.served.result == 'success'",
         "(needs.verify-rpm.result == 'success' || needs.verify-rpm.result == 'skipped')",
         "(needs.verify-deb.result == 'success' || needs.verify-deb.result == 'skipped')"]
-got = [c.strip() for c in re.sub(r"^\$\{\{|\}\}$", "", r["if"].strip()).split("&&")]
+got = [c.strip().replace("TAGCOND", TAG) for c in re.sub(r"^\$\{\{|\}\}$", "", r["if"].strip().replace(TAG, "TAGCOND")).split("&&")]
 assert sorted(got) == sorted(want), f"the release job runs on another condition than the five this test knows: {r['if']}"
 for j in jobs:
     writes = (jobs[j].get("permissions") or {}).get("contents") == "write"
     assert writes == (j == "release"), f"job {j}: contents write is for the release job alone"
+    assert not re.search(r"git/refs|git (tag|push)", text(j)), f"job {j} creates a tag: the tag push is the trigger, never an output"
     if j != "release":
-        assert not re.search(r"git/refs|gh release (create|upload)|git (tag|push)", text(j)), f"job {j} tags or releases"
+        assert not re.search(r"gh release (create|upload)", text(j)), f"job {j} releases"
 assert d["permissions"] == {"contents": "read"}
-tag = [s for s in r["steps"] if "git/refs" in s.get("run", "")]
-assert len(tag) == 1 and "needs.find.outputs.commit" in tag[0]["env"]["COMMIT"], "the tag is not on the commit the find job resolved"
 find = text("find")
 assert "merge-base --is-ancestor" in find and "secrets." not in find, "the find job does not check the commit, or reads a secret"
 PY
 python3 -I "$t/wf.py" "$wf" || fail "the workflow is not the promotion its header describes"
-ok "workflow: nothing builds or signs a package; a dry run pushes, tags and releases nothing; the tag waits for the served bytes and the install checks"
+ok "workflow: nothing builds or signs a package; a run that is not a tag push pushes and releases nothing and no job creates the tag; the release waits for the served bytes and the install checks"
+# ---- the dry-run path: the `ver` step reads the INPUTS (a step cannot read its own outputs), and the three cases run
+cat > "$t/ver.py" <<'PY'
+import os, subprocess, sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+st = [x for x in d["jobs"]["find"]["steps"] if x.get("id") == "ver"][0]
+assert st["env"]["IN_VERSION"] == "${{ inputs.version }}" and st["env"]["IN_COMMIT"] == "${{ inputs.commit }}", \
+    f"the ver step reads {st['env']['IN_VERSION']!r} / {st['env']['IN_COMMIT']!r}, not the version and commit inputs"
+def run(tagged, ref, ver, commit):
+    out = os.path.join(sys.argv[2], "out"); open(out, "w").close()
+    env = dict(PATH=os.environ["PATH"], TAGGED=tagged, REF_NAME=ref, IN_VERSION=ver, IN_COMMIT=commit, GITHUB_OUTPUT=out, GITHUB_SHA="abc1234")
+    r = subprocess.run(["bash", "-c", st["run"]], env=env, capture_output=True, text=True)
+    return r.returncode, open(out).read().split()
+assert run("false", "main", "3.14.0", "5f455d3") == (0, ["version=3.14.0", "commit=5f455d3"]), "a dry run does not take the inputs"
+assert run("false", "main", "", "")[0] != 0, "a dry run with no version is not refused"
+assert run("true", "v3.14.0", "", "") == (0, ["version=3.14.0", "commit=abc1234"]), "a tag push does not take the tag and its commit"
+assert run("true", "v3.14.0", "3.15.0", "")[0] != 0, "a version input that is not the tag is not refused"
+assert run("true", "nightly", "", "")[0] != 0, "a tag that is not v<version> is not refused"
+PY
+mkdir -p "$t/verout"
+python3 -I "$t/ver.py" "$wf" "$t/verout" || fail "the dry-run path of the find job is broken"
+ok "find job: a dry run takes version and commit from the inputs, a tag push from the tag and its commit; a mismatch or a bad tag is refused"
+sed 's/IN_VERSION: ${{ inputs.version }}/IN_VERSION: ${{ steps.ver.outputs.version }}/' "$wf" > "$t/sabv.yml"
+! cmp -s "$wf" "$t/sabv.yml" || fail "sabotage: ver step read changed nothing"
+if python3 -I "$t/ver.py" "$t/sabv.yml" "$t/verout" >/dev/null 2>&1; then fail "sabotage: a ver step reading its own outputs passes"; fi
+ok "sabotage: a ver step that reads its own outputs is red"
 sab() { # <what> <sed expression>
     sed "$2" "$wf" > "$t/sab.yml"
     ! cmp -s "$wf" "$t/sab.yml" || fail "sabotage: $1 changed nothing"
     if python3 -I "$t/wf.py" "$t/sab.yml" >/dev/null 2>&1; then fail "sabotage: $1 passes"; fi
     ok "sabotage: $1 is red"
 }
-sab "a release job that runs on a dry run" '/^  release:/,$ s/ && !inputs.dry-run//'
-sab "a publish that signs on a dry run" 's/sign: ${{ !inputs.dry-run }}/sign: true/'
+sab "a release job that runs on a dispatch" '/^  release-go:/,/^  release:/ s/ \&\& (github.event_name == .push. \&\& startsWith(github.ref, .refs\/tags\/.))//'
+sab "a release job whose condition is not the tag alone" '/^  release:/,$ s/^    if: .*/    if: ${{ always() }}/'
+sab "a dispatch-triggered promote (a publish that signs on any event)" 's/sign: .true./sign: ${{ inputs.rpm }}/'
 sab "a publish to staging" 's/staging: false/staging: true/'
 sab "a tag that does not wait for the install checks" 's/needs: \[find, served, verify-rpm, verify-deb\]/needs: [find, served]/'
 sab "a publish without the signature check" "s/^          out: promote\/rpm$/&\n          vouch: 'false'/"
-sab "a publish outside the channel's group" "s/&& 'live' || github.run_id/\&\& 'promote' || github.run_id/"
+sab "a release job that creates the tag" 's/^      - uses: Open-Mixer\/.github\/.github\/actions\/changelog@openmixer-v1$/      - run: gh api repos\/x\/git\/refs -f ref=refs\/tags\/v1\n&/'
+sab "a publish outside the channel's group" "s/target-repo }}-live/target-repo }}-other/"
 sab "a find job that skips the default branch check" '/merge-base --is-ancestor/d'
 echo "promote-staged: all passed"

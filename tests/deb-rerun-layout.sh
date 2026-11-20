@@ -28,10 +28,10 @@ def write(name, text):
         f.write(str(text) + "\n")
 def uses(job, what):
     return [s["with"] for s in wf[job]["steps"] if s.get("uses", "").startswith(what)]
-write("pattern-publish", uses("publish", "actions/download-artifact")[0]["pattern"])
+write("pattern-publish", uses("publish-release", "actions/download-artifact")[0]["pattern"])
 write("pattern-release", uses("release", "actions/download-artifact")[0]["pattern"])
 write("name-build", uses("build", "actions/upload-artifact")[0]["name"])
-write("name-signed", uses("publish", "actions/upload-artifact")[0]["name"])
+write("name-signed", uses("publish-release", "actions/upload-artifact")[0]["name"])
 write("attach.sh", next(s["run"] for s in wf["release"]["steps"] if s.get("name") == "Attach the DEBs to the release"))
 write("keep.sh", next(s["run"] for s in action if s.get("name") == "Keep the published copies"))
 # the step that names the tree (DEB_TREE, and the staging label, skeleton and requires tree) for the later steps
