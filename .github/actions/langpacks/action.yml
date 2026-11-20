@@ -30,6 +30,16 @@ description: Hold an owner's language packs to its catalogs and omx-contract's l
 #       name: ...
 #       router-key: ${{ secrets.OMX_ROUTER_KEY }}
 #       signing-key: ${{ secrets.OPENMIXER_CI_SIGNING_KEY }}
+#
+# A job that runs this step in a container and hands it the cluster's DNS (container options --dns and --dns-search,
+# so the router's name resolves) must hand it only when the job really runs on the organisation's runners: a
+# GitHub-hosted VM cannot reach the cluster's resolver, so every lookup in the container times out, the package
+# mirrors' too. vars.OMX_RUNNER may name a GitHub-hosted image (ubuntu-latest, ubuntu-24.04, any ubuntu-*) while the
+# pool is away, so test the value against that family, not only that it is set:
+#
+#   options: ${{ ... && vars.OMX_RUNNER && !startsWith(vars.OMX_RUNNER, 'ubuntu-') && '--dns ... --dns-search ...' || '' }}
+#
+# On a GitHub-hosted runner the fill does not run (above): the step names the gaps and fails.
 
 inputs:
   name:
