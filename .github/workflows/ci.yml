@@ -556,6 +556,7 @@ jobs:
       - run: .github/actions/deps-render/render.sh --check .
       - uses: ./.github/actions/private-refs-check
       - uses: ./.github/actions/spdx-check
+      - uses: ./.github/actions/json-schema-url-check
       - run: tests/trigger-gate.sh
       - name: The trigger gate reads this repository's own workflows (this file is the one lint)
         run: .github/actions/trigger-gate/check.sh --lint ci.yml .
