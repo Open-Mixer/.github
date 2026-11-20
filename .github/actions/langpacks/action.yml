@@ -118,13 +118,13 @@ inputs:
     required: false
     default: ''
   committer-name:
-    description: The committer name of the pushed commit
+    description: The committer name of the pushed commit; empty is the house default, spelt once in fill.py
     required: false
-    default: Pau Aliagas
+    default: ''
   committer-email:
-    description: The committer email of the pushed commit, the one the signing key carries
+    description: The committer email of the pushed commit, the one the signing key carries; empty is the house default (commits@openmixer.org), spelt once in fill.py
     required: false
-    default: linuxnow@gmail.com
+    default: ''
 
 runs:
   using: composite

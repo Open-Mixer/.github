@@ -207,6 +207,14 @@ if command -v gpg >/dev/null; then
     step $? "the new head's check is green"
     msg=$(git --git-dir="$work/remote.git" log -1 --format=%B "$new") && [ -n "$msg" ] && ! grep -qi 'claude\|co-authored' <<<"$msg"
     step $? "the commit message carries no attribution"
+    # the house identity by default: no committer given, the commit is authored by the owner and committed by the key's uid
+    git init -q -b feature "$work/push3" && cp -r "$fix/catalogs" "$fix/source.json" "$fix/languages.json" "$work/push3/"
+    git -C "$work/push3" add -A && git -C "$work/push3" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -m start
+    git init -q --bare "$work/remote3.git" && git -C "$work/push3" push -q "$work/remote3.git" HEAD:refs/heads/feature
+    run_fill "$work/push3" GITHUB_HEAD_REF=feature SIGNING_KEY_ID="$kid" COMMITTER_NAME= COMMITTER_EMAIL= -- --remote "$work/remote3.git" >"$work/push3.out" 2>&1
+    ids=$(git --git-dir="$work/remote3.git" log -1 --format='%ae %ce' refs/heads/feature)
+    [ "$ids" = "linuxnow@gmail.com commits@openmixer.org" ]
+    step $? "the fill's commit is authored linuxnow@gmail.com and committed commits@openmixer.org by default (got: $ids)"
     # the armored key of the secret, imported by the fill into a keyring of its own, signs the same way
     gpg --batch --armor --export-secret-keys "$kid" >"$work/ci.asc" 2>/dev/null
     git init -q -b feature "$work/push2" && cp -r "$fix/catalogs" "$fix/source.json" "$fix/languages.json" "$work/push2/"
