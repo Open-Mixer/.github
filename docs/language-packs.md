@@ -65,8 +65,8 @@ A code added to an owner's source, or a changed sentence, leaves each catalog mi
 action closes the gap itself, in CI, or names it; it never stays silent. `fill.py` runs the gate; when the gate is red
 for entries that are missing, stale or a missing catalog, and only then:
 
-- **fills** when it can: a pull request of the same repository, a runner that is not GitHub-hosted (`runs-on: ${{ vars.OMX_RUNNER }}`, where the
-  router answers at `router-url`), `router-key` (the organisation secret `OMX_ROUTER_KEY`) and `signing-key` (`OPENMIXER_CI_SIGNING_KEY`)
+- **fills** when it can: a pull request of the same repository, a runner that is not GitHub-hosted (the fill job of `langpacks-fill.yml`, `runs-on: arc-freemixer`, where the
+  router answers at `router-url`; check-only jobs stay on `vars.OMX_RUNNER`, which stays `ubuntu-latest`), `router-key` (the organisation secret `OMX_ROUTER_KEY`) and `signing-key` (`OPENMIXER_CI_SIGNING_KEY`)
   passed, the checkout at the pull request's head, `gpg` installed. It runs `omx-contract translate --model draft-prose`
   once per language with a gap (`fill-command`, `--lang` and `--model` appended), so every entry made is `"by": "machine"`
   with the model that served it and the hash of its source sentence. It then holds the result to what it may change: an entry

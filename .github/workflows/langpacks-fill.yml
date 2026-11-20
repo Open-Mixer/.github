@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: langpacks-fill
+# The language-pack FILL, on our own pool (owner ruling, 2026-11-20): the fill needs the cluster's llm-router, which only
+# the self-hosted runners reach (cluster DNS 10.43.0.10), and fill.py refuses a GitHub-hosted runner. The organisation
+# variable for the runner stays ubuntu-latest for everything else, so the fill is its own job here: it runs on arc-freemixer,
+# the ARC scale set, and its container is ALWAYS given the cluster DNS (this job never runs anywhere else). The caller's
+# check-only catalogs job (fill: false) stays on that variable and takes no DNS.
+#
+#   jobs:
+#     fill:
+#       uses: Open-Mixer/.github/.github/workflows/langpacks-fill.yml@openmixer-v1
+#       permissions: { contents: write }
+#       with: { name: plugin-qualify, owner: plugin-qualify, spec: packaging/plugin-qualify.spec,
+#               gate: tools/catalogs-gate.sh, fill-command: tools/catalogs-gate.sh }
+#       secrets: inherit
+#
+# It runs only on a pull request of the caller's own repository (never a fork: a fork never reaches our pool). The
+# langpacks action fills and pushes signed to the pull request's branch, or names the gaps and fails.
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: the pack prefix (the owner's spec Name and debian/control Source)
+        type: string
+        required: true
+      owner:
+        description: the directory under /usr/share holding catalogs/
+        type: string
+        required: true
+      spec:
+        description: the spec, relative to the checkout ('' for none)
+        type: string
+        default: ''
+      gate:
+        description: the catalogs' release gate, run in the checkout
+        type: string
+        default: omx-contract translate --check --owner .
+      fill-command:
+        description: the command that makes one language's entries (--lang and --model are appended)
+        type: string
+        default: omx-contract translate --owner .
+      packages:
+        description: extra packages the gate needs, space-separated
+        type: string
+        default: ''
+    secrets:
+      OMX_ROUTER_KEY:
+        required: false
+      OPENMIXER_CI_SIGNING_KEY:
+        required: false
+
+jobs:
+  fill:
+    name: language packs fill
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+    runs-on: arc-freemixer
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    container:
+      image: fedora:45
+      options: --dns 10.43.0.10 --dns-search llm-router.svc.cluster.local --dns-search svc.cluster.local --dns-search cluster.local
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False git python3 nodejs gnupg2 ${{ inputs.packages }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Add the OpenMixer channel
+        uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+      - run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 3.16.0' 'omx-contract-data >= 3.16.0'
+      - uses: Open-Mixer/.github/.github/actions/langpacks@openmixer-v1
+        with:
+          name: ${{ inputs.name }}
+          owner: ${{ inputs.owner }}
+          spec: ${{ inputs.spec }}
+          gate: ${{ inputs.gate }}
+          fill-command: ${{ inputs.fill-command }}
+          router-key: ${{ secrets.OMX_ROUTER_KEY }}
+          signing-key: ${{ secrets.OPENMIXER_CI_SIGNING_KEY }}

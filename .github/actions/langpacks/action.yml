@@ -17,7 +17,7 @@ description: Hold an owner's language packs to its catalogs and omx-contract's l
 # the pull request's branch; or the step fails naming each entry (catalog, key) and the command a person runs. Entries
 # `"by": "human"` are never written. The fill is made only when ALL hold, else the step names the gaps and fails:
 #   - the run is a pull request of this repository (never a fork), on a runner that is not GitHub-hosted
-#     (runs-on: ${{ vars.OMX_RUNNER }}, where router-url answers), with router-key and signing-key passed;
+#     (the fill job runs on arc-freemixer, where router-url answers: workflows/langpacks-fill.yml), with router-key and signing-key passed;
 #   - the checkout is the pull request's head (actions/checkout with ref: ${{ github.event.pull_request.head.sha }}), gpg and
 #     git are installed, and the job may push (permissions: contents: write; push-token, a token that starts workflows,
 #     makes the push start the new head's run: the job's own token starts none, so the run says to re-run the job).
@@ -31,13 +31,11 @@ description: Hold an owner's language packs to its catalogs and omx-contract's l
 #       router-key: ${{ secrets.OMX_ROUTER_KEY }}
 #       signing-key: ${{ secrets.OPENMIXER_CI_SIGNING_KEY }}
 #
-# A job that runs this step in a container and hands it the cluster's DNS (container options --dns and --dns-search,
-# so the router's name resolves) must hand it only when the job really runs on the organisation's runners: a
-# GitHub-hosted VM cannot reach the cluster's resolver, so every lookup in the container times out, the package
-# mirrors' too. vars.OMX_RUNNER may name a GitHub-hosted image (ubuntu-latest, ubuntu-24.04, any ubuntu-*) while the
-# pool is away, so test the value against that family, not only that it is set:
-#
-#   options: ${{ ... && vars.OMX_RUNNER && !startsWith(vars.OMX_RUNNER, 'ubuntu-') && '--dns ... --dns-search ...' || '' }}
+# The cluster DNS is given only to the fill job, which runs on arc-freemixer (the ARC scale set, our own pool; reusable
+# workflow langpacks-fill.yml, owner ruling 2026-11-20): its container options always carry --dns 10.43.0.10 and the
+# cluster --dns-search domains, because that job never runs anywhere else. Check-only jobs (fill: false) run on
+# vars.OMX_RUNNER (ubuntu-latest) without it: a GitHub-hosted VM cannot reach the cluster's resolver, so every lookup in
+# a container handed that DNS would time out, the package mirrors' too. The DNS never depends on vars.OMX_RUNNER.
 #
 # On a GitHub-hosted runner the fill does not run (above): the step names the gaps and fails.
 
