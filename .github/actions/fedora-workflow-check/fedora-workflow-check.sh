@@ -26,21 +26,22 @@ check() {
 	local out
 	out=$(find "$wf" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort | xargs -r awk -v allowed="$ALLOWED" '
 	function bad(n,   i) { for (i in ok) if (ok[i] == n) return 0; return 1 }
-	# every standalone number 30-59 of the line that is not allowed: a fedora release, never 144 or 4.5
-	function nums(l, why,   n) {
-		while (match(l, /(^|[^0-9.])[3-5][0-9]([^0-9.]|$)/)) {
-			n = substr(l, RSTART, RLENGTH); gsub(/[^0-9]/, "", n)
-			if (bad(n)) print FILENAME ":" FNR ": " why " " n ": " $0
-			l = substr(l, RSTART + RLENGTH - 1)
-		}
-	}
-	function rel(l, pat, why,   n, r, p) { # pat followed by digits: the release (pat not the tail of a longer word)
+	function rel(l, pat, why,   n, r, p, q) { # pat + digits: the release, a whole token (a hex run or digest is never one)
 		r = l
 		while (match(r, pat "[0-9]+")) {
 			n = substr(r, RSTART + length(pat), RLENGTH - length(pat))
 			p = (RSTART > 1) ? substr(r, RSTART - 1, 1) : ""
-			if (bad(n) && (pat != "fc" || p !~ /[a-z]/)) print FILENAME ":" FNR ": " why " " n ": " $0
+			q = substr(r, RSTART + RLENGTH, 1)
+			if (bad(n) && q !~ /[A-Za-z0-9]/ && (pat != "fc" || (p !~ /[A-Za-z0-9]/ && length(n) == 2))) print FILENAME ":" FNR ": " why " " n ": " $0
 			r = substr(r, RSTART + RLENGTH)
+		}
+	}
+	# a number 30-59 that is a whole token: no letter, digit or dot beside it (not inside a hex run, a digest or 4.5)
+	function nums(l, why,   n) {
+		while (match(l, /(^|[^0-9A-Za-z.])[3-5][0-9]([^0-9A-Za-z.]|$)/)) {
+			n = substr(l, RSTART, RLENGTH); gsub(/[^0-9]/, "", n)
+			if (bad(n)) print FILENAME ":" FNR ": " why " " n ": " $0
+			l = substr(l, RSTART + RLENGTH - 1)
 		}
 	}
 	BEGIN { k = split(allowed, tmp, /[ ,]+/); for (i = 1; i <= k; i++) if (tmp[i] != "") ok[i] = tmp[i] }
@@ -116,8 +117,14 @@ if [ "${1:-}" = "--self-test" ]; then
 	plant allow43 1 'image: fedora:43' '44 45'
 	plant only44 1 'image: fedora:45' 44
 	plant image29 1 'image: fedora:29'
+	# hex SHAs and digests are not releases (B2, reac-pw test.yml): an fc or a number inside an alnum run is not a token
+	plant sha 0 'REAC_PROTOCOL_REF: 26b16db9fc844820fed8adc26a342f6b86f3a1ba'
+	plant digest 0 'image: quay.io/fedora/fedora-coreos@sha256:0f1a45b9c3d7e2a6b8d4f0c1e5a7b9d3f2c4e6a8b0d1f3a5c7e9b2d4f6a8c0e1'
+	plant fc45inname 0 'name: omx (fc45, x86_64) rpm-0.1-1.fc45.x86_64'
+	plant fc3digit 0 'name: build-fc144-x'
+	plant fedoratag44x 0 'image: fedora:44abc'
 	if [ "$fails" != 0 ]; then echo "fedora-workflow-check: self-test $fails red" >&2; exit 1; fi
-	echo "fedora-workflow-check: self-test green (12 reference arms + 12)"
+	echo "fedora-workflow-check: self-test green (12 reference arms + 17)"
 	exit 0
 fi
 

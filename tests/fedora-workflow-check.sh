@@ -38,6 +38,9 @@ rpm44|1|rpm-releases: '["44", "45"]'
 rpm45|0|rpm-releases: '["45"]'
 recordset|0|set: fedora44-x86-64
 recordsetimage|1|run: measure fedora44 on image: fedora:44
+sha|0|REAC_PROTOCOL_REF: 26b16db9fc844820fed8adc26a342f6b86f3a1ba
+digest|0|image: quay.io/fedora/fedora-coreos@sha256:0f1a45b9c3d7e2a6b8d4f0c1e5a7b9d3f2c4e6a8b0d1f3a5c7e9b2d4f6a8c0e1
+fc45inname|0|name: omx (fc45, x86_64) rpm-0.1-1.fc45.x86_64
 ARMS
 mkdir -p "$tmp/nodir"; rc=0; "$chk" "$tmp/nodir" >/dev/null 2>&1 || rc=$?; want "no workflows dir" 2 "$rc"
 
@@ -88,6 +91,10 @@ sab block blocklist 'fedora:
 sab fc fc44name 'name: omx (fc44, x86_64)'
 sab image image29 'image: fedora:29'
 sab fedoraline matrix44last 'fedora: [45, 44]'
+# a loose fc rule (a letter-only left boundary, any digit count) reads a hex SHA as a cell: the sha arm goes red
+sed 's/q !~ \/\[A-Za-z0-9\]\/ \&\& //; s/p !~ \/\[A-Za-z0-9\]\/ \&\& length(n) == 2/p !~ \/[a-z]\//' "$chk" > "$tmp/sab-loose.sh"; chmod +x "$tmp/sab-loose.sh"
+cmp -s "$chk" "$tmp/sab-loose.sh" && fail "sabotage loose fc: nothing removed"
+want "loose fc rule reads a SHA as a cell" 1 "$(plant "$tmp/sab-loose.sh" sabloose 'REAC_PROTOCOL_REF: 26b16db9fc844820fed8adc26a342f6b86f3a1ba')"
 # comments: a guard that reads them refuses a note that mentions fedora:44
 sed 's/sub(\/\^\[\[:space:\]\]\*#\.\*\/, "", l); sub(\/\[\[:space:\]\]#\.\*\/, "", l)//' "$chk" > "$tmp/sab-comment.sh"; chmod +x "$tmp/sab-comment.sh"
 cmp -s "$chk" "$tmp/sab-comment.sh" && fail "sabotage comment: nothing removed"
@@ -95,4 +102,4 @@ want "sabotaged comment: a commented fedora:44 reads red" 1 "$(plant "$tmp/sab-c
 want "comment read by the real script" 0 "$(plant "$chk" realcomment '# was fedora:44')"
 # the shared repository's own workflows are clean at the default
 rc=0; "$chk" "$here" >/dev/null 2>&1 || rc=$?; want "this repository's workflows" 0 "$rc"
-echo "fedora-workflow-check: GREEN (12 arms, allowed list, env wiring, 6 sabotages)"
+echo "fedora-workflow-check: GREEN (12 arms, allowed list, env wiring, 7 sabotages)"
