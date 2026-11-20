@@ -3,18 +3,22 @@
 name: pr-fixes-issue
 description: Fail when the pull request body has no closing reference to an issue of Open-Mixer or FreeREAC
 
-# Every pull request fixes an issue. The body is read from the event payload through the environment, never spliced into a
-# run line. A closing keyword (close/closes/closed/fix/fixes/fixed/resolve/resolves/resolved, any case) followed by #N,
-# Open-Mixer/<repo>#N or FreeREAC/<repo>#N is a reference; any other owner is refused; code blocks and inline code do not
-# count. The failure names what is missing. A body that cannot be read is exit 2, never a pass.
+# Every pull request fixes an issue. The CURRENT body is read from the API with the job token (read-only), not from the event
+# payload: an edited body starts no run and a re-run replays the old payload. The number and the repository reach the script
+# through the environment, never a run line. A closing keyword (close/closes/closed/fix/fixes/fixed/resolve/resolves/resolved,
+# any case) followed by #N, Open-Mixer/<repo>#N or FreeREAC/<repo>#N (owners case-insensitive) is a reference; any other owner
+# is refused; code blocks and inline code do not count. The failure names what is missing. A body that cannot be read is exit 2.
 
 inputs:
-  body:
-    description: the pull request body
-    default: ${{ github.event.pull_request.body }}
   number:
     description: the pull request number
     default: ${{ github.event.pull_request.number }}
+  repository:
+    description: the repository of the pull request
+    default: ${{ github.repository }}
+  token:
+    description: token that reads repos/{owner}/{repo}/pulls/{number}
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -22,6 +26,7 @@ runs:
     - name: The pull request body closes an issue
       shell: bash
       env:
-        PR_BODY: ${{ inputs.body }}
         PR_NUMBER: ${{ inputs.number }}
+        PR_REPO: ${{ inputs.repository }}
+        GH_TOKEN: ${{ inputs.token }}
       run: python3 -I "${{ github.action_path }}/pr-fixes-issue.py"

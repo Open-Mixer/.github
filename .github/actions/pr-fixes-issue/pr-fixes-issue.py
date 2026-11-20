@@ -3,9 +3,12 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 """pr-fixes-issue: a pull request body carries a closing reference.
 
-The body arrives in the environment (PR_BODY) and is read as data, never spliced into a shell line. A closing reference is a
+The CURRENT body is read from the API (GET repos/{PR_REPO}/pulls/{PR_NUMBER} through `gh api`, the job token, read-only), not
+from the event payload: editing a body starts no run with the default event types, and a re-run replays the OLD payload, so a
+payload body would keep a fixed pull request red. PR_NUMBER and PR_REPO come from the environment; the body is data, never
+spliced into a shell line. A closing reference is a
 GitHub closing keyword (close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved, any case, an optional colon)
-followed by `#N` (this repository), `Open-Mixer/<repo>#N` or `FreeREAC/<repo>#N`. Fenced code blocks and inline code are
+followed by `#N` (this repository), `Open-Mixer/<repo>#N` or `FreeREAC/<repo>#N`; owners compare case-insensitively, as GitHub links them. Fenced code blocks and inline code are
 removed first: GitHub links no keyword written in code, so a reference quoted there fixes nothing. A closing keyword followed by
 a reference to any other owner is refused by name, even beside a good one.
 
@@ -13,10 +16,11 @@ Exit 0 good, 1 refused (the missing piece is named), 2 the body could not be rea
 """
 import os
 import re
+import subprocess
 import sys
 
 KEYWORD = r'(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)'
-OWNERS = ('Open-Mixer', 'FreeREAC')
+OWNERS = ('open-mixer', 'freereac')
 REPO = r'[A-Za-z0-9._-]+'
 # a closing keyword, then ANY owner/repo#N or #N; the owner is judged afterwards so a foreign one is named
 CLOSING = re.compile(r'(?<![A-Za-z0-9_])' + KEYWORD + r':?[ \t]+(?:([A-Za-z0-9_.-]+)/(' + REPO + r'))?#([0-9]+)(?![A-Za-z0-9_])', re.I)
@@ -39,21 +43,32 @@ def judge(body):
         owner, repo, num = m.group(1), m.group(2), m.group(3)
         if owner is None:
             good.append('#' + num)
-        elif owner in OWNERS:
+        elif owner.lower() in OWNERS:
             good.append('%s/%s#%s' % (owner, repo, num))
         else:
             foreign.append('%s/%s#%s' % (owner, repo, num))
     return good, foreign
 
 
+def read_body(repo, number):
+    """The pull request's current body from the API, or None when it cannot be read."""
+    p = subprocess.run(['gh', 'api', 'repos/%s/pulls/%s' % (repo, number), '-q', '.body // ""'], capture_output=True, text=True)
+    if p.returncode != 0:
+        print('pr-fixes-issue: the API did not give the body of %s#%s (a private repository needs the caller to grant '
+              'pull-requests: read): %s' % (repo, number, p.stderr.strip()), file=sys.stderr)
+        return None
+    return p.stdout
+
+
 def main():
-    if not os.environ.get('PR_NUMBER'):
-        print('pr-fixes-issue: no pull request in the event (PR_NUMBER is empty): the body cannot be read', file=sys.stderr)
+    number, repo = os.environ.get('PR_NUMBER'), os.environ.get('PR_REPO')
+    if not number or not repo:
+        print('pr-fixes-issue: no pull request in the event (PR_NUMBER or PR_REPO is empty): the body cannot be read', file=sys.stderr)
         return 2
-    if 'PR_BODY' not in os.environ:
-        print('pr-fixes-issue: PR_BODY is not set: the body cannot be read', file=sys.stderr)
+    body = read_body(repo, number)
+    if body is None:
         return 2
-    good, foreign = judge(os.environ['PR_BODY'])
+    good, foreign = judge(body)
     for f in foreign:
         print('pr-fixes-issue: %s is not an Open-Mixer or FreeREAC reference; only those two owners are accepted' % f)
     if good and not foreign:

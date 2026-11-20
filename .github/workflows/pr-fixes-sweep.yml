@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: pr-fixes-sweep
-# A daily READ-ONLY sweep of Open-Mixer and FreeREAC (every repository the token reads, archived ones skipped): the open issues
+# A READ-ONLY sweep (daily once the schedule is enabled) of Open-Mixer and FreeREAC (every repository the token reads, archived ones skipped): the open issues
 # with no linked pull request for 7 days, and the branches with no open pull request and no issue reference. The method is in
 # .github/actions/pr-fixes-sweep/sweep.py. Output is this run's job summary only: no comment, label, close or deletion is
 # ever made, and the token is granted read permissions alone. It reads with the repository secret SWEEP_READ_TOKEN (a read-only
 # token over both organisations; with no secret the run fails (a house workflow never falls back from one secret to another).
 on:
-  schedule:
-    - cron: '17 5 * * *'
+  # enable the schedule once the owner creates SWEEP_READ_TOKEN (read-only: contents, issues, pull-requests on Open-Mixer + FreeREAC)
+  # schedule:
+  #   - cron: '17 5 * * *'
   workflow_dispatch:
 
 permissions:

@@ -98,9 +98,9 @@ jobs:
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
+      # reads the CURRENT body from the API: an edited body starts no run, and a re-run replays the old payload
       - uses: Open-Mixer/.github/.github/actions/pr-fixes-issue@openmixer-v1
         with:
-          body: ${{ github.event.pull_request.body }}
           number: ${{ github.event.pull_request.number }}
 
   fedora-workflows:

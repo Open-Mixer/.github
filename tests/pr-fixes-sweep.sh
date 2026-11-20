@@ -71,7 +71,10 @@ import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 perm = w["permissions"]
 assert perm == {"contents": "read", "issues": "read", "pull-requests": "read"}, perm
-assert "schedule" in w[True] and "workflow_dispatch" in w[True], list(w[True])
+assert "workflow_dispatch" in w[True], list(w[True])
+assert "schedule" not in w[True], "the schedule is enabled before SWEEP_READ_TOKEN exists"
+raw = open(sys.argv[1]).read()
+assert "# enable the schedule once the owner creates SWEEP_READ_TOKEN (read-only: contents, issues, pull-requests on Open-Mixer + FreeREAC)" in raw and "#   - cron:" in raw, "the commented schedule or its note is missing"
 for name, j in w["jobs"].items():
     assert "permissions" not in j, "a job widens the permissions: " + name
     for s in j["steps"]:
