@@ -54,6 +54,7 @@ jobs:
       - run: tests/reusable-workflows.sh
       - run: tests/runner-selection.sh
       - run: tests/hosted-default-runner.sh
+      - run: tests/langpacks-fill-runner.sh
       - run: tests/release-checks.sh
       - run: tests/publish-only-by-tag.sh
       - run: tests/wave-deps.sh
