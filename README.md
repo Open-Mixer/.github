@@ -54,6 +54,8 @@ they are written. Each offending commit is named by sha, field and value (a comm
 base tip reaches is not in the range); GitHub's own "Update branch" commit is in the range and fails, so merge the base into the branch locally (a plain signed `git merge`, house author and committer) and push plainly, never a rebase or force; the merge button's commit is made after the checks and is never read. A missing API answer is exit 2, never
 a pass. `tests/commit-identity-check.sh` proves it on planted ranges, including the head-only sabotage.
 
+`.github/actions/fedora-workflow-check` (a job of `public-sources-check.yml`, run when the caller passes `fedora-workflows: true`; off by default so moving `openmixer-v1` turns no caller red) is the one Fedora workflow guard, replacing the per-repository `tools/test/workflow-fedora-check.sh` copies. It reads the calling repository's `.github/workflows/*.yml`, outside comments, and refuses a Fedora release that is not in the `allowed-fedora` input (default `45`, the development matrix; `OMX_RELEASE_MATRIX=full` returns the full set by widening the list, never by editing the script): `fedora:NN` images, `fcNN` names, a number on a `fedora` line or list and `releases` / `rpm-releases` lists. `fedoraNN`, the name of a measured record set, is data and not a release. The list reaches the script through the environment, never a run line. `tests/fedora-workflow-check.sh` proves it on the 12 planted arms of omx-panel#148, the allowed-list change and one sabotage per rule.
+
 Call the shared workflows and actions by the `v1` tag, never by `main`:
 
     uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
