@@ -27,6 +27,15 @@ SIGN_REAL = "inputs.sign == 'true' && inputs.staging != 'true'"
 SIGN_STAGING = "inputs.sign == 'true' && inputs.staging == 'true'"
 SIGN_GATES = {"inputs.sign == 'true'", SIGN_REAL, SIGN_STAGING}
 PUSH_HELPER = "channel-push"
+# A push to the TRIGGERING pull request's own head branch is not a publish (no tag, release, package or channel; ruling of the
+# coordinator, Open-Mixer/.github#177, the language-pack fill): every publishing thing in the job is such a push AND the
+# job-level `if` is exactly PR_JOB, so the job never runs on a push, a tag, a dispatch or a fork's pull request.
+PR_JOB = "github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork"
+PR_HEAD_RUN = re.compile(r"HEAD:(?:refs/heads/)?(?:\$\{\{\s*github\.head_ref\s*\}\}|\$GITHUB_HEAD_REF|\$\{GITHUB_HEAD_REF\})(?=[\s\"']|$)")
+PR_HEAD_PY = re.compile(r"\"HEAD:refs/heads/%s\"\s*%\s*ref\b")
+PR_HEAD_PY_REF = re.compile(r"^\s*ref\s*=\s*(?:env|os\.environ)\[\"GITHUB_HEAD_REF\"\]\s*$", re.M)
+PUSH_LINE = re.compile(r"\bgit\b[^\n]*\bpush\b")
+PUSH_WIDENED = re.compile(r"--tags|--force|--mirror|--delete|--follow-tags|--all\b|\s-[fd]\b|refs/tags/|:refs/(?!heads/)")
 
 RUN_PUBLISHES = [
     (re.compile(r"\bgh\s+release\s+(create|upload|edit|delete)\b"), "gh release"),
@@ -79,6 +88,25 @@ def run_publishes(t):
     return None
 
 
+def pr_head_only(text, py=False):
+    """True when `text` pushes only to the triggering pull request's own head branch and does nothing else publishing"""
+    lines = [l for l in text.splitlines() if PUSH_LINE.search(l)]
+    if not lines or any(PUSH_WIDENED.search(l) for l in lines): return False
+    if py:
+        if not PR_HEAD_PY_REF.search(text): return False
+        ok = PR_HEAD_PY
+    else:
+        ok = PR_HEAD_RUN
+    return all(ok.search(l) for l in lines)
+
+
+def only_git_push(text):
+    """every kind of publishing the text does is a git push (the whole text is read, not the first match)"""
+    for rx, what in RUN_PUBLISHES:
+        if what != "git push" and rx.search(text): return False
+    return not any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in text.splitlines())
+
+
 class Repo:
     def __init__(self, root):
         self.root = root
@@ -120,8 +148,9 @@ class Repo:
                 if re.search(r"^\s*(?:\w+=\S+\s+)*(?:" + rx.pattern.replace("^\\s*", "").replace("\\b", "", 1) + ")", txt, re.M): what = w; break
             if what is None and any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in txt.splitlines()): what = "a curl upload"
             if not what: continue
+            prhead = what == "git push" and only_git_push(txt) and pr_head_only(txt, py=fn.endswith(".py"))
             for st in [x for x in steps if fn in str(x.get("run", ""))] or [{}]:
-                out.append({"what": what + " in " + fn, "dest": None, "gated": norm_if(st["if"]) if "if" in st and norm_if(st["if"]) in SIGN_GATES else None})
+                out.append({"what": what + " in " + fn, "dest": None, "prhead": prhead, "gated": norm_if(st["if"]) if "if" in st and norm_if(st["if"]) in SIGN_GATES else None})
         self.memo[name] = out
         return out
 
@@ -138,14 +167,17 @@ class Repo:
                 inner = self.findings(name, stack)
                 for f in inner:
                     dest = w.get("what") if name == PUSH_HELPER else f["dest"]
-                    found.append({"what": f"{f['what']} (through {name})", "dest": dest, "gated": f["gated"], "sign": sign, "staging": staging})
+                    found.append({"what": f"{f['what']} (through {name})", "dest": dest, "gated": f["gated"], "sign": sign, "staging": staging, "prhead": f.get("prhead")})
                 if name == PUSH_HELPER and not inner:
                     found.append({"what": "the push helper", "dest": w.get("what"), "gated": None, "sign": sign, "staging": None})
             elif USES_PUBLISHES.search(uses):
                 found.append({"what": f"the action {uses}", "dest": None, "gated": None, "sign": None, "staging": None})
         if "run" in st:
             what = run_publishes(run_text(st))
-            if what: found.append({"what": what, "dest": None, "gated": None, "sign": None, "staging": None})
+            if what:
+                rt = run_text(st)
+                found.append({"what": what, "dest": None, "gated": None, "sign": None, "staging": None,
+                              "prhead": what == "git push" and only_git_push(rt) and pr_head_only(rt)})
         return found
 
 
@@ -169,8 +201,10 @@ def check_workflow(repo, path, doc, bad):
     for job, body in (doc.get("jobs") or {}).items():
         if "steps" not in body: continue
         pub = []
+        pr_job = "if" in body and norm_if(body["if"]) == PR_JOB
         for n, st in enumerate(body["steps"]):
             for f in repo.step_findings(st):
+                if f.get("prhead") and pr_job and "if" not in st: continue
                 if publishing(f): pub.append((st.get("name") or st.get("uses") or f"step {n + 1}", f["what"]))
         if pub and ("if" not in body or norm_if(body["if"]) != TAG):
             label, what = pub[0]
@@ -277,12 +311,49 @@ def selftest(real):
         "a push of a literal staging path": dict(helper, **{"workflows/a.yml": call(CP, "          what: staging/rpm\n")}),
         "a dry-run npm publish": {"workflows/a.yml": wf(run="npm publish --dry-run")},
     }
+    PRON = "pull_request: {}"
+    PRJ = "${{ " + PR_JOB + " }}"
+    head = "git push origin HEAD:${{ github.head_ref }}"
+    pyact = ('name: pyfill\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: python3 ${{ github.action_path }}/f.py\n')
+    pyok = 'import os\nenv = os.environ\nref = env["GITHUB_HEAD_REF"]\ngit("push", "-q", "origin", "HEAD:refs/heads/%s" % ref)\n'
+    pybad = pyok + 'git("push", "-q", "origin", "HEAD:refs/heads/main")\n'
+    pyrel = pyok + 'os.system("gh release create v1")\n'
+    reds.update({
+        "pr-head push, job with no if": {"workflows/a.yml": wf(run=head, on=PRON)},
+        "pr-head push, job if only pull_request (a fork is not excluded)": {"workflows/a.yml": wf(run=head, on=PRON, job_if="github.event_name == 'pull_request'")},
+        "pr-head push, job if also true on push": {"workflows/a.yml": wf(run=head, on=PRON, job_if="${{ " + PR_JOB + " || github.event_name == 'push' }}")},
+        "pr-head push, a job that runs on push": {"workflows/a.yml": wf(run=head, on="push: {}", job_if="github.event_name == 'push'")},
+        "pr-head push, a step if instead of the job if": {"workflows/a.yml": wf(run=head, on=PRON, step_if=PRJ)},
+        "push to main in the pr job": {"workflows/a.yml": wf(run="git push origin HEAD:main", on=PRON, job_if=PRJ)},
+        "push to a fixed branch name in the pr job": {"workflows/a.yml": wf(run="git push origin HEAD:refs/heads/fill", on=PRON, job_if=PRJ)},
+        "push of HEAD to its own name in the pr job": {"workflows/a.yml": wf(run="git push origin HEAD", on=PRON, job_if=PRJ)},
+        "push of a tag in the pr job": {"workflows/a.yml": wf(run="git push origin v1.2.3", on=PRON, job_if=PRJ)},
+        "push of a tag ref in the pr job": {"workflows/a.yml": wf(run="git push origin HEAD:refs/tags/v1", on=PRON, job_if=PRJ)},
+        "pr-head push with --tags": {"workflows/a.yml": wf(run=head + " --tags", on=PRON, job_if=PRJ)},
+        "pr-head push with --force": {"workflows/a.yml": wf(run=head + " --force", on=PRON, job_if=PRJ)},
+        "pr-head push followed by a push to main": {"workflows/a.yml": wf(run=head + "\n          git push origin HEAD:main", on=PRON, job_if=PRJ)},
+        "pr-head push beside a release creation, same step": {"workflows/a.yml": wf(run=head + "\n          gh release create v1", on=PRON, job_if=PRJ)},
+        "pr-head push beside a package publish, same job": {"workflows/a.yml": wf(run=head + "\n          npm publish", on=PRON, job_if=PRJ)},
+        "an action script pushing to the pr head and to main": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pybad, "workflows/a.yml": call("./.github/actions/pyfill", job_if=PRJ)},
+        "an action script pushing to the pr head and releasing": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyrel, "workflows/a.yml": call("./.github/actions/pyfill", job_if=PRJ)},
+        "the pr-head action script in a job with no if": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok, "workflows/a.yml": call("./.github/actions/pyfill")},
+        "the pr-head action script whose ref is not read from GITHUB_HEAD_REF": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok.replace('env["GITHUB_HEAD_REF"]', '"main"'), "workflows/a.yml": call("./.github/actions/pyfill", job_if=PRJ)},
+        "a pr-head push job that also calls the channel push on the real tree": dict(helper, **{"workflows/a.yml": ("name: w\non:\n  pull_request: {}\njobs:\n  j:\n    runs-on: x\n    if: " + PR_JOB + "\n    steps:\n      - run: " + head + "\n      - uses: " + CP + "\n        with:\n          what: rpm\n")}),
+    })
+    greens.update({
+        "a push to the pull request's own head branch, same-repo pr job": {"workflows/a.yml": wf(run=head, on=PRON, job_if=PRJ)},
+        "the same, refs/heads/ and the env var": {"workflows/a.yml": wf(run='git push origin "HEAD:refs/heads/$GITHUB_HEAD_REF"', on=PRON, job_if=PRJ)},
+        "an action script pushing only to the pr head, same-repo pr job": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok, "workflows/a.yml": call("./.github/actions/pyfill", job_if=PRJ)},
+    })
     realplants = {"reds": {
         "the real publish-rpms from a dispatch job, sign true": call("./.github/actions/publish-rpms", "          sign: 'true'\n          rpm-dir: x\n"),
         "the real publish-rpms from a dispatch job, sign an expression": call("./.github/actions/publish-rpms", "          sign: ${{ inputs.go }}\n          rpm-dir: x\n"),
         "the real publish-debs from a dispatch job, sign true": call("./.github/actions/publish-debs", "          sign: 'true'\n          deb-dir: x\n"),
         "the real purge-staging is fine but the real channel-push on the real tree is not": call(CP, "          what: deb\n"),
+        "the real langpacks fill in a job with no if": call("./.github/actions/langpacks", "          name: x\n          owner: x\n"),
+        "the real langpacks fill in a job that is true on push": call("./.github/actions/langpacks", "          name: x\n          owner: x\n", job_if="${{ " + PR_JOB + " || github.event_name == 'push' }}"),
     }, "greens": {
+        "the real langpacks fill in a same-repo pull request job": call("./.github/actions/langpacks", "          name: x\n          owner: x\n", job_if="${{ " + PR_JOB + " }}"),
         "the real publish-rpms with a literal sign false": call("./.github/actions/publish-rpms", "          sign: 'false'\n          rpm-dir: x\n"),
         "the real publish-debs with no sign": call("./.github/actions/publish-debs", "          deb-dir: x\n"),
         "the real publish-rpms with sign true in a tag job": call("./.github/actions/publish-rpms", "          sign: 'true'\n          rpm-dir: x\n", job_if="${{ " + T + " }}"),
