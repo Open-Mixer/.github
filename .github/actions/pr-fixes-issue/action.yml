@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: pr-fixes-issue
+description: Fail when the pull request body has no closing reference to an issue of Open-Mixer or FreeREAC
+
+# Every pull request fixes an issue. The body is read from the event payload through the environment, never spliced into a
+# run line. A closing keyword (close/closes/closed/fix/fixes/fixed/resolve/resolves/resolved, any case) followed by #N,
+# Open-Mixer/<repo>#N or FreeREAC/<repo>#N is a reference; any other owner is refused; code blocks and inline code do not
+# count. The failure names what is missing. A body that cannot be read is exit 2, never a pass.
+
+inputs:
+  body:
+    description: the pull request body
+    default: ${{ github.event.pull_request.body }}
+  number:
+    description: the pull request number
+    default: ${{ github.event.pull_request.number }}
+
+runs:
+  using: composite
+  steps:
+    - name: The pull request body closes an issue
+      shell: bash
+      env:
+        PR_BODY: ${{ inputs.body }}
+        PR_NUMBER: ${{ inputs.number }}
+      run: python3 -I "${{ github.action_path }}/pr-fixes-issue.py"

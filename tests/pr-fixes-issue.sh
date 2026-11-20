@@ -1,0 +1,80 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The pr-fixes-issue check over planted pull request bodies: red plants (no keyword, a keyword with no reference, a
+# reference of another owner, a reference inside code), green plants (Fixes #12, closes Open-Mixer/omx-dsp#5, Resolves
+# FreeREAC/libreac#81, several), exit 2 on an unreadable body, the workflow wiring (off by default, body by env) and one
+# sabotage: a checker that accepts any owner is green on the foreign-owner plant, which the test catches.
+set -euo pipefail
+here=$(cd "$(dirname "$0")/.." && pwd)
+act=$here/.github/actions/pr-fixes-issue
+chk=$act/pr-fixes-issue.py
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# run <script> <body>: the body goes in the environment, as in the action
+runc() { local s=$1; shift; PR_NUMBER=7 PR_BODY="$1" python3 -I "$s" >"$tmp/out" 2>&1; }
+red() { local rc=0; runc "$chk" "$2" || rc=$?; [ "$rc" = 1 ] || fail "red plant '$1' gave $rc: $(cat "$tmp/out")"; }
+green() { runc "$chk" "$2" || fail "green plant '$1' refused: $(cat "$tmp/out")"; }
+
+# red plants
+red "empty body" ""
+red "no keyword" "Adds the thing. See #12 for background."
+red "keyword with no reference" "Fixes the build and closes the loop."
+red "keyword, a number, no hash" "Fixes 12"
+red "keyword then a bare owner/repo" "Fixes Open-Mixer/omx-dsp"
+red "reference of another owner" "Fixes someone-else/repo#5"
+red "another owner beside a good one" $'Fixes #12\nFixes evil/repo#9'
+red "a fenced code block holds the reference" $'Notes\n```\nFixes #12\n```\n'
+red "inline code holds the reference" 'Write `Fixes #12` in the body.'
+red "an unclosed fence runs to the end" $'Intro\n```\nFixes #12'
+red "keyword glued to a word" "Prefixes #12"
+red "the number glued to a word" "Fixes #12abc"
+grep -q 'no closing reference' <(PR_NUMBER=7 PR_BODY="nothing" python3 -I "$chk" 2>&1 || true) || fail "the missing piece is not named"
+grep -q 'evil/repo#9 is not an Open-Mixer or FreeREAC reference' "$tmp/out" 2>/dev/null || { runc "$chk" $'Fixes evil/repo#9' || true; grep -q 'evil/repo#9 is not an Open-Mixer or FreeREAC reference' "$tmp/out" || fail "the foreign owner is not named: $(cat "$tmp/out")"; }
+
+# green plants
+green "Fixes #12" "Fixes #12"
+green "closes a sibling" "closes Open-Mixer/omx-dsp#5"
+green "Resolves FreeREAC" "Resolves FreeREAC/libreac#81"
+green "any case" "FIXED #3"
+green "a colon" "Resolves: #4"
+green "in a paragraph" $'Adds a thing.\n\nCloses #12 and fixes Open-Mixer/openmixer#741.'
+green "several, one other-owner-free list" $'Fixes #1\nFixes #2\nResolves FreeREAC/reac-pw#3'
+green "a good reference after a code block" $'```\nFixes #99999\n```\nFixes #12'
+green "CRLF line endings" $'Intro\r\nFixes #12\r\n'
+
+# a body that cannot be read is exit 2, never a pass
+rc=0; env -u PR_BODY PR_NUMBER=7 python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no PR_BODY gave $rc, not 2"
+rc=0; env PR_BODY="Fixes #1" PR_NUMBER= python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no pull request gave $rc, not 2"
+rc=0; env -u PR_NUMBER PR_BODY="Fixes #1" python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no PR_NUMBER gave $rc, not 2"
+
+# a hostile body is data: a shell metacharacter body is judged, never run
+runc "$chk" '$(touch '"$tmp"'/pwned) `touch '"$tmp"'/pwned2` Fixes #1' || fail "a body with shell syntax was refused"
+[ ! -e "$tmp/pwned" ] && [ ! -e "$tmp/pwned2" ] || fail "the body was executed"
+
+# the workflow: off by default, the job skipped when off, body and number passed as inputs, the action reads them by env
+python3 -I - "$here" <<'PY' || fail "workflow wiring"
+import sys, yaml
+h = sys.argv[1]
+w = yaml.safe_load(open(h + "/.github/workflows/public-sources-check.yml"))
+i = w[True]["workflow_call"]["inputs"]
+assert i["pr-fixes-issue"]["default"] is False, "the switch must default off"
+j = w["jobs"]["pr-fixes-issue"]
+assert "inputs.pr-fixes-issue" in j["if"] and "pull_request" in j["if"], j["if"]
+st = [s for s in j["steps"] if "pr-fixes-issue" in s.get("uses", "")][0]["with"]
+assert st["body"] == "${{ github.event.pull_request.body }}" and st["number"] == "${{ github.event.pull_request.number }}", st
+a = open(h + "/.github/actions/pr-fixes-issue/action.yml").read()
+run = [l for l in a.splitlines() if l.strip().startswith("run:")]
+assert len(run) == 1 and "inputs." not in run[0] and "event." not in run[0], run
+assert "PR_BODY: ${{ inputs.body }}" in a and "PR_NUMBER: ${{ inputs.number }}" in a
+PY
+
+# sabotage: a checker that accepts any owner is green on the foreign-owner plant; the red plant above catches it
+sed 's/elif owner in OWNERS:/elif True:/' "$chk" > "$tmp/any-owner.py"
+grep -q 'elif True:' "$tmp/any-owner.py" || fail "sabotage setup: the any-owner copy was not made"
+runc "$tmp/any-owner.py" "Fixes someone-else/repo#5" || fail "sabotage setup: the any-owner copy should accept the foreign owner"
+rc=0; runc "$chk" "Fixes someone-else/repo#5" || rc=$?
+[ "$rc" = 1 ] || fail "the real checker accepted a foreign owner"
+echo "sabotage: accepting any owner passes the foreign-owner plant (the red-plant assertion goes red on it); the real checker refuses it"
+echo PASS
