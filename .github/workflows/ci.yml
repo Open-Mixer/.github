@@ -39,6 +39,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: tests/commit-message-check.sh
       - run: tests/commit-identity-check.sh
+      - run: tests/pr-fixes-issue.sh
+      - run: tests/pr-fixes-sweep.sh
       - run: tests/scan-open-pr-subjects.sh
       - run: tests/fedora-cells.sh
       - run: tests/fedora-workflow-check.sh
