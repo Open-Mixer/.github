@@ -113,7 +113,7 @@ jobs:
 
   # The Fedora releases this run builds: one RPM per release of the set (the dist tag .fcNN ties a build to its release,
   # and publish-tree places it in fedora/<release>/noarch), so every release the set serves gets the package and its
-  # updates; fc45 served the fc44 build at the stable name alone and never an update (2026-11-15). The package is
+  # updates; one release's build served at the stable name alone never gave the others an update (2026-11-15). The package is
   # noarch: one architecture stands for the release.
   rpm-plan:
     name: Plan the Fedora releases
