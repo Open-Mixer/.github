@@ -7,7 +7,7 @@
 # nobody publishes. The architectures come from release-matrix/matrix.sh, the script the releases read, never a second list,
 # and no kept package is relabelled.
 #
-# The fixture is omx-clap on fc45 (as tests/noarch-pin.sh): x86_64 and aarch64 0.32.3 with contract 0.32.3 in noarch, then
+# The fixture is omx-clap-libs on fc45 (as tests/noarch-pin.sh): x86_64 and aarch64 0.32.3 with contract 0.32.3 in noarch, then
 # a run of 0.32.4 with its noarch contract 0.32.4.
 # Proves:
 #   - the matrix is quick (OMX_RELEASE_MATRIX=quick, no MATRIX_SET) and the run builds x86_64: the aarch64 skew is not judged,
@@ -15,7 +15,7 @@
 #   - the matrix is full (OMX_RELEASE_MATRIX=full, unset, or MATRIX_SET=full): the same run is refused at main, naming aarch64,
 #     and the tree is byte-identical after;
 #   - a skew inside a published architecture stays red while the matrix is quick: a run that builds aarch64 alone leaves
-#     x86_64's omx-clap 0.32.3 behind and is refused naming x86_64, and aarch64 is not named;
+#     x86_64's omx-clap-libs 0.32.3 behind and is refused naming x86_64, and aarch64 is not named;
 #   - an EMPTY published-architecture set (a matrix.sh that publishes no cell for the release) is refused by name, nothing
 #     placed, never judged as nothing to check.
 # Sabotage: NOARCH_PIN_ACTIONS names a copy of the actions with the architecture filter taken out; the first arm then goes red.
@@ -38,11 +38,11 @@ export SERVED_KEYS_DIR=$work/no-committed
 tree=$work/tree
 
 snapshot() { (cd "$tree" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$1"; }
-build() { # <out dir> <version> <arch>: omx-clap and its noarch contract, which the binary package pins exactly
+build() { # <out dir> <version> <arch>: omx-clap-libs and its noarch contract, which the binary package pins exactly
     local id=$2-$3 spec
     spec=$work/$id.spec
-    printf '%s\n' 'Name: omx-clap' "Version: $2" 'Release: 1.fc45' 'Summary: t' 'License: MIT' "Requires: omx-clap-contract = $2-1.fc45" \
-        '%description' 'core' '%package contract' 'Summary: t' 'BuildArch: noarch' '%description contract' 'contract' '%files' '%files contract' > "$spec"
+    printf '%s\n' 'Name: omx-clap-libs' "Version: $2" 'Release: 1.fc45' 'Summary: t' 'License: MIT' "Requires: omx-clap-contract = $2-1.fc45" \
+        '%description' 'core' '%package -n omx-clap-contract' 'Summary: t' 'BuildArch: noarch' '%description -n omx-clap-contract' 'contract' '%files' '%files -n omx-clap-contract' > "$spec"
     rpmbuild -bb --quiet --define "_topdir $work/rb-$id" --define 'dist %{nil}' --define 'debug_package %{nil}' \
         --target "$3" "$spec" >/dev/null 2>&1 || fail "rpmbuild $id"
     mkdir -p "$1"
@@ -70,7 +70,7 @@ regen quick "$work/r1" > "$work/log" 2>&1 || { cat "$work/log"; fail "a regenera
 while IFS= read -r l; do
     grep -qxF -- "$l" "$tree/cells.tsv" || { diff <(echo "$cells0") "$tree/cells.tsv" || true; fail "a regeneration with no MATRIX_SET relabelled a kept line of cells.tsv: $l"; }
 done <<< "$cells0"
-grep -q $'^omx-clap\t0.32.4\t-\t' "$tree/cells.tsv" || { cat "$tree/cells.tsv"; fail "the regeneration recorded a set for 0.32.4 although it names none"; }
+grep -q $'^omx-clap-libs\t0.32.4\t-\t' "$tree/cells.tsv" || { cat "$tree/cells.tsv"; fail "the regeneration recorded a set for 0.32.4 although it names none"; }
 ok "under the quick matrix the aarch64 skew is not judged, and no line of cells.tsv is relabelled"
 
 # ---- 2. the matrix is full, unset, or MATRIX_SET=full: the same run is refused at main
@@ -90,7 +90,7 @@ ok "under the full matrix (set by the variable, by its absence, or by MATRIX_SET
 
 # ---- 3. a skew inside a published architecture stays red under the quick matrix
 restore
-build "$work/r3" 0.32.4 aarch64     # aarch64 alone: x86_64 keeps omx-clap 0.32.3 under a contract 0.32.4
+build "$work/r3" 0.32.4 aarch64     # aarch64 alone: x86_64 keeps omx-clap-libs 0.32.3 under a contract 0.32.4
 snapshot "$work/before"
 if regen quick "$work/r3" > "$work/log" 2>&1; then cat "$work/log"; fail "a skew on x86_64, which the quick matrix publishes, was published"; fi
 grep -q 'not built for x86_64' "$work/log" || { cat "$work/log"; fail "the refusal does not name x86_64"; }

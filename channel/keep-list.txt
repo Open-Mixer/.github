@@ -16,6 +16,8 @@ libmackie-devel	>=0.1.1	fedora/45/*	worker-image@main:baked-versions.yml
 libsurface-devel	>=0.2.2	fedora/45/*	worker-image@main:baked-versions.yml
 libsurface-diginet-devel	>=0.2.2	fedora/45/*	worker-image@main:baked-versions.yml
 libsurface-mackie-devel	>=0.2.2	fedora/45/*	worker-image@main:baked-versions.yml
+omx-clap-core	>=0.32.3	fedora/45/*	worker-image@main:baked-versions.yml
+omx-clap-core-devel	pending:>=0.32.3	fedora/45/*	worker-image@main:baked-versions.yml
 omx-clap-host	>=0.32.3	fedora/45/*	worker-image@main:baked-versions.yml
 omx-clap-host	newest	debian/bookworm/arm64	Open-Mixer/zynthian-sys@omx-track/2026103101:scripts/recipes/install_openmixer.sh
 omx-clap-host	newest	debian/bookworm/arm64	Open-Mixer/zynthian-sys@omx-track/2026110101:scripts/recipes/install_openmixer.sh
@@ -85,4 +87,4 @@ plugin-qualify	newest	debian/trixie/arm64	Open-Mixer/zynthian-sys@omx-track/2026
 plugin-qualify	newest	debian/trixie/arm64	Open-Mixer/zynthian-sys@omx-track/2026110102:scripts/recipes/install_openmixer.sh
 plugin-qualify	newest	debian/trixie/arm64	Open-Mixer/zynthian-sys@omx-track/2026110601:scripts/recipes/install_openmixer.sh
 plugin-qualify	newest	debian/trixie/arm64	Open-Mixer/zynthian-sys@omx-track/2026110701:scripts/recipes/install_openmixer.sh
-# sum abfcddb9c7cf0c326c12472cde65288bdad21b497df4b781e83792c4a656411f
+# sum 3f9b755c62ff9a7080608a453b0f064d290396e7252f50c9bf382fa1ff470da7
