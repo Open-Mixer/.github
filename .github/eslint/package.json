@@ -1,0 +1,13 @@
+{
+  "name": "openmixer-eslint-standard",
+  "private": true,
+  "description": "The exact versions every Open-Mixer repository pins in its devDependencies to use openmixer.config.mjs, and the ones tests/eslint-standard.sh installs",
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.14.0",
+    "eslint-plugin-jsdoc": "65.4.2",
+    "globals": "17.14.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
+  }
+}
