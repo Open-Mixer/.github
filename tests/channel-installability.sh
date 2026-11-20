@@ -189,13 +189,13 @@ arm_ceiling() {
   python3 -I -B - "$gate" <<'PY' && ok 'source: deb Source field, absent -> the Package name; rpm SOURCERPM' || bad 'source: the source of a binary'
 import importlib.util, sys
 s = importlib.util.spec_from_file_location("gate", sys.argv[1]); g = importlib.util.module_from_spec(s); s.loader.exec_module(g)
-assert g.deb_source({"Package": "omx-clap-host", "Source": "omx-clap-core"}) == "omx-clap-core"
-assert g.deb_source({"Package": "omx-clap-host", "Source": "omx-clap-core (0.32.5-1)"}) == "omx-clap-core"
+assert g.deb_source({"Package": "libomx-clap1", "Source": "omx-clap-host"}) == "omx-clap-host"
+assert g.deb_source({"Package": "libomx-clap1", "Source": "omx-clap-host (0.32.5-1)"}) == "omx-clap-host"
 assert g.deb_source({"Package": "omx-panel"}) == "omx-panel"
-assert g.rpm_source_name("omx-clap-core-0.32.5-1.fc45.src.rpm") == "omx-clap-core"
+assert g.rpm_source_name("omx-clap-host-0.32.5-1.fc45.src.rpm") == "omx-clap-host"
 assert g.rpm_source_name("(none)") is None
-q = g.parse_rpm_query("@@omx-clap-host 0.32.5-1.fc45 x86_64 omx-clap-core-0.32.5-1.fc45.src.rpm\nrtld(GNU_HASH)\n@@old 1.0-1 noarch\n")
-assert [p.source for p in q] == ["omx-clap-core", "old"], [p.source for p in q]
+q = g.parse_rpm_query("@@omx-clap-libs 0.32.5-1.fc45 x86_64 omx-clap-host-0.32.5-1.fc45.src.rpm\nrtld(GNU_HASH)\n@@old 1.0-1 noarch\n")
+assert [p.source for p in q] == ["omx-clap-host", "old"], [p.source for p in q]
 PY
 
   # the version orders the gate compares with, against the cases that bite

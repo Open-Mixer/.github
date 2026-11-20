@@ -271,7 +271,7 @@ def deb_deps(fields):
 
 def deb_source(fields):
     """The source package a stanza's binary is built from: its Source field without the version a binNMU adds
-    ("omx-clap-core (0.32.5-1)"), the Package name when the field is absent."""
+    ("omx-clap-host (0.32.5-1)"), the Package name when the field is absent."""
     return (fields.get("Source", "").split() or [fields["Package"]])[0]
 
 
@@ -302,7 +302,7 @@ def rpm_req_atoms(req):
 
 
 def rpm_source_name(sourcerpm):
-    """The name of the source package from a SOURCERPM (omx-clap-core-0.32.5-1.fc45.src.rpm); (none) is no source."""
+    """The name of the source package from a SOURCERPM (omx-clap-host-0.32.5-1.fc45.src.rpm); (none) is no source."""
     m = re.match(r"^(.+)-[^-]+-[^-]+\.src\.rpm$", sourcerpm)
     return m.group(1) if m else None
 

@@ -109,7 +109,7 @@ fi
 # dnf offers the newest noarch build. When a package of the same source pins it exactly (Requires: name =
 # %{version}-%{release}), every architecture of the release that already serves that package must have it at the pinned
 # version: built by this run, or already in the tree. Otherwise the binary left behind there pins an older noarch build
-# than the one the channel now offers (omx-clap-core 0.32.3 on aarch64 against omx-clap-core-contract 0.32.4, published
+# than the one the channel now offers (omx-clap-libs 0.32.3 on aarch64 against omx-clap-contract 0.32.4, published
 # by a quick release built for x86_64 alone). Judged only for a noarch package this run places that becomes the newest of
 # its name in the release, so a catch-up (which drops a served noarch package) and an older noarch package are never
 # refused. Nothing is placed or signed when it refuses.
