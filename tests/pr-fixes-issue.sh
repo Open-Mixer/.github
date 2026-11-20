@@ -39,7 +39,7 @@ green "closes a sibling" "closes Open-Mixer/omx-dsp#5"
 green "Resolves FreeREAC" "Resolves FreeREAC/libreac#81"
 green "any case" "FIXED #3"
 green "a colon" "Resolves: #4"
-green "in a paragraph" $'Adds a thing.\n\nCloses #12 and fixes Open-Mixer/openmixer#741.'
+green "in a paragraph" $'Adds a thing.\n\nCloses #12 and fixes Open-Mixer/omx-dsp#741.'
 green "several, one other-owner-free list" $'Fixes #1\nFixes #2\nResolves FreeREAC/reac-pw#3'
 green "a good reference after a code block" $'```\nFixes #99999\n```\nFixes #12'
 green "CRLF line endings" $'Intro\r\nFixes #12\r\n'

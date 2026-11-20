@@ -4,8 +4,8 @@ name: pr-fixes-sweep
 # A daily READ-ONLY sweep of Open-Mixer and FreeREAC (every repository the token reads, archived ones skipped): the open issues
 # with no linked pull request for 7 days, and the branches with no open pull request and no issue reference. The method is in
 # .github/actions/pr-fixes-sweep/sweep.py. Output is this run's job summary only: no comment, label, close or deletion is
-# ever made, and the token is granted read permissions alone. The default token reads this repository and the public
-# repositories; for the private ones the repository secret SWEEP_READ_TOKEN (a read-only token) is used when it is set.
+# ever made, and the token is granted read permissions alone. It reads with the repository secret SWEEP_READ_TOKEN (a read-only
+# token over both organisations; with no secret the run fails (a house workflow never falls back from one secret to another).
 on:
   schedule:
     - cron: '17 5 * * *'
@@ -25,5 +25,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Read both organisations and write the job summary
         env:
-          GH_TOKEN: ${{ secrets.SWEEP_READ_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.SWEEP_READ_TOKEN }}
         run: python3 -I .github/actions/pr-fixes-sweep/sweep.py run --owner Open-Mixer --owner FreeREAC
