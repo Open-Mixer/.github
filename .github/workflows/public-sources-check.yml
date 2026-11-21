@@ -38,6 +38,10 @@ on:
         description: the committer email commit-identity-check expects; empty takes the action's default
         type: string
         default: ''
+      upstream-url:
+        description: a fork's upstream URL (an exact line of the upstream-exempt list); the upstream's own commits are exempt from commit-identity-check. Empty, no exemption
+        type: string
+        default: ''
       fedora-workflows:
         description: run fedora-workflow-check (no workflow of the repository names a Fedora release outside allowed-fedora). Off by default so moving openmixer-v1 turns no caller red; a repository that drops its own copy of the check passes true
         type: boolean
@@ -84,6 +88,7 @@ jobs:
           base-ref: ${{ github.event.pull_request.base.ref }}
           author-email: ${{ inputs.author-email }}
           committer-email: ${{ inputs.committer-email }}
+          upstream-url: ${{ inputs.upstream-url }}
 
   fedora-workflows:
     name: no workflow names a Fedora release outside the allowed list

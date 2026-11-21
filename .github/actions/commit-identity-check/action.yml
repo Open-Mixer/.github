@@ -30,6 +30,9 @@ inputs:
   token:
     description: token that reads repos/{owner}/{repo}/commits/{sha}
     default: ${{ github.token }}
+  upstream-url:
+    description: the fork's upstream URL (exact line of ../upstream-exempt/upstream-allowed.txt); its own commits are exempt from this check. Empty, no exemption
+    default: ''
 
 runs:
   using: composite
@@ -45,8 +48,9 @@ runs:
         GH_REPO: ${{ github.repository }}
         AUTHOR_EMAIL: ${{ inputs.author-email }}
         COMMITTER_EMAIL: ${{ inputs.committer-email }}
+        UPSTREAM_URL: ${{ inputs.upstream-url }}
       run: |
         set -euo pipefail
         [ -n "$BASE_REF" ] || { echo 'commit-identity-check: no base-ref (run on a pull_request)' >&2; exit 2; }
         "${{ github.action_path }}/commit-identity-check.sh" \
-          --author-email "$AUTHOR_EMAIL" --committer-email "$COMMITTER_EMAIL" "origin/$BASE_REF..HEAD"
+          --author-email "$AUTHOR_EMAIL" --committer-email "$COMMITTER_EMAIL" --upstream-url "$UPSTREAM_URL" "origin/$BASE_REF..HEAD"
