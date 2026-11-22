@@ -15,6 +15,19 @@
 #                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
 #
+#   check.sh --applies [ROOT]     the opt-out alone, for a public repository's other checks: the skip line and
+#                                 "applies: no", or "applies: yes"; refused (2) like every other mode
+#
+# The check runs on every repository; a repository opts out only by being private AND carrying the topic stays-private.
+# Every mode but --self-test first reads the TARGET repository's visibility and topics from GitHub, live, in one lookup:
+# GET repos/OWNER/REPO at GITHUB_API_URL (default https://api.github.com), through python3's urllib with GH_TOKEN, else
+# GITHUB_TOKEN, so a runner needs no gh and no jq. private with stays-private: skipped, with a line naming the
+# repository. Any other answer, public, internal or private, with the topic or without it: checked, since a topic never
+# exempts a public repository. No token, an unknown visibility, topics that are not a list, an answer that is not that
+# JSON, or a lookup that fails: REFUSED, exit 2, never a silent skip. The target is --repo OWNER/REPO (any position),
+# else GITHUB_REPOSITORY, else, for the tree, range and --applies modes, the GitHub origin of the repository read.
+# --msg-file has no repository of its own to read, so without --repo or GITHUB_REPOSITORY it is refused.
+#
 # Nothing is exempt, this script included: it builds every shape it looks for and plants from parts, so that no line
 # of it spells one.
 set -euo pipefail
@@ -125,8 +138,89 @@ msg_file() { # <file>: one commit message as the commit-msg hook hands it over
   echo "private-refs-check: the commit message points into no private repository"
 }
 
+refuse() { echo "private-refs-check: REFUSED: $*" >&2; exit 2; }
+
+REPO=
+REPO_SET=0
+rest=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) [ $# -ge 2 ] && [ -n "$2" ] || refuse "--repo needs OWNER/REPO"; REPO=$2; REPO_SET=1; shift 2 ;;
+    --repo=*) REPO=${1#--repo=}; [ -n "$REPO" ] || refuse "--repo needs OWNER/REPO"; REPO_SET=1; shift ;;
+    *) rest+=("$1"); shift ;;
+  esac
+done
+set -- "${rest[@]+"${rest[@]}"}"
+
+origin_repo() { # <dir>: OWNER/REPO of the GitHub origin of the repository at <dir>, or nothing
+  local url re='github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/?$' r
+  url=$(git -c safe.directory="$1" -C "$1" remote get-url origin 2>/dev/null) || return 0
+  [[ $url =~ $re ]] || return 0
+  r=${BASH_REMATCH[2]}; r=${r%.git}
+  printf '%s/%s\n' "${BASH_REMATCH[1]}" "$r"
+}
+
+APPLIES_MODE=0
+# the one lookup, standard library only: prints check or skip, or names what it could not read on stderr and exits 2
+LOOKUP_PY='
+import json, os, sys, urllib.request
+repo = sys.argv[1]
+tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")  # from the environment, never the command line
+api = (os.environ.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
+url = "%s/repos/%s" % (api, repo)
+req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer " + tok,
+                                           "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "private-refs-check"})
+def no(why):
+    print("%s, so the visibility and topics of %s are not known" % (why, repo), file=sys.stderr)
+    sys.exit(2)
+try:
+    with urllib.request.urlopen(req, timeout=30) as r:
+        raw = r.read()
+except Exception as e:
+    no("GET %s failed (%s)" % (url, str(e)[:160]))
+try:
+    d = json.loads(raw)
+except ValueError:
+    no("GitHub answered no JSON (%r)" % raw[:80])
+if not isinstance(d, dict):
+    no("GitHub answered no object")
+v, t = d.get("visibility"), d.get("topics")
+if v not in ("public", "internal", "private"):
+    no("GitHub gave no known visibility (%r)" % (v,))
+if not isinstance(t, list) or not all(isinstance(x, str) for x in t):
+    no("GitHub gave no list of topics (%r)" % (t,))
+print("skip" if v == "private" and "stays-private" in t else "check")
+'
+
+applies() { # <dir to read the origin of, or ''>: returns when the check runs; prints the skip and exits 0 when the
+  # target is private and carries the topic stays-private; refuses (exit 2) when the target, its visibility or its
+  # topics are not known
+  local dir=$1 repo=$REPO tok verdict rc=0
+  if [ "$REPO_SET" = 0 ]; then
+    repo=${GITHUB_REPOSITORY:-}
+    [ -n "$repo" ] || [ -z "$dir" ] || repo=$(origin_repo "$dir")
+  fi
+  [ -n "$repo" ] || refuse "no target repository: pass --repo OWNER/REPO (in CI, GITHUB_REPOSITORY)${dir:+, or read a repository whose origin is on GitHub}; only a private repository with the topic stays-private is skipped, and which this is cannot be read"
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse "the target '$repo' is not owner/repo"
+  tok=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  [ -n "$tok" ] || refuse "no token: set GH_TOKEN (or GITHUB_TOKEN; in CI the run's github.token) so the visibility and topics of $repo can be read"
+  command -v python3 >/dev/null || refuse "python3 is not on PATH, so the visibility and topics of $repo cannot be read"
+  verdict=$(python3 -I -c "$LOOKUP_PY" "$repo" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || refuse "${verdict:0:300}"
+  case "$verdict" in
+    check) [ "$APPLIES_MODE" = 0 ] || { echo "applies: yes"; exit 0; }; return 0 ;;
+    skip) echo "private-refs-check: $repo is private and carries the topic stays-private: the public-repo check does not apply, skipped"
+      [ "$APPLIES_MODE" = 0 ] || echo "applies: no"; exit 0 ;;
+    *) refuse "the lookup gave no answer for $repo" ;;
+  esac
+}
+
 if [ "${1:-}" = --self-test ]; then
   scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
+  # the message mode reads its target's visibility and topics first; here a file:// API answers public, so the patterns
+  # alone are judged, whatever repository (an opted-out one too) the self-test runs in, and with no token of its own
+  mkdir -p "$scratch/api/repos/Open-Mixer"; printf '{"visibility":"public","topics":[]}\n' > "$scratch/api/repos/Open-Mixer/self-test"
+  msgf() { env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY GH_TOKEN=self-test GITHUB_API_URL="file://$scratch/api" bash "$0" --repo Open-Mixer/self-test --msg-file "$@"; }
   fail=0
   # a clean tree with one file of each kind a repository tracks; every sabotage writes one private pointer into one
   mk() { rm -rf "$scratch/t"; mkdir -p "$scratch/t/src" "$scratch/t/tools" "$scratch/t/docs"
@@ -218,13 +312,13 @@ if [ "${1:-}" = --self-test ]; then
   g reset -q --hard HEAD~1
   # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
   printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n# On branch integration''/x\n#\tmodified:   harness''/a.sh\n#\n' > "$scratch/msg-clean"
-  if ( bash "$0" --msg-file "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
+  if ( msgf "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
   # a line that starts with an issue number is the message's own, not a git comment: it is judged
   for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight' '#345 regenerated packages''/pipewire-native/src/x.h'; do
     printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
-    if ( bash "$0" --msg-file "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
+    if ( msgf "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
   done
-  rc=0; bash "$0" --msg-file "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
+  rc=0; msgf "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
   if [ "$rc" = 2 ]; then echo "SABOTAGE msg-file unreadable: red (2)"; else echo "SABOTAGE msg-file unreadable: exit $rc, not 2"; fail=1; fi
   mk; git -C "$scratch/t" add -A
   if ( EXTRA_PATHSPEC=(":(bogus)x"); check "$scratch/t" >/dev/null 2>&1 ); then echo "SABOTAGE git-grep-error: STAYED GREEN"; fail=1; else echo "SABOTAGE git-grep-error: red"; fi
@@ -246,14 +340,19 @@ if [ "${1:-}" = --self-test ]; then
   exit 0
 fi
 if [ "${1:-}" = --msg-file ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh --msg-file FILE" >&2; exit 2; }
+  [ -n "${2:-}" ] || { echo "usage: check.sh --repo OWNER/REPO --msg-file FILE" >&2; exit 2; }
+  applies ''
   rc=0; msg_file "$2" || rc=$?
   exit "$rc"
 fi
 if [ "${1:-}" = --messages ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh --messages RANGE" >&2; exit 2; }
+  [ -n "${2:-}" ] || { echo "usage: check.sh [--repo OWNER/REPO] --messages RANGE" >&2; exit 2; }
+  applies "$PWD"
   messages "$2"
   exit
 fi
-root="${1:-.}"
-check "$(cd "$root" && pwd)"
+if [ "${1:-}" = --applies ]; then APPLIES_MODE=1; shift; fi
+case "${1:-}" in -*) echo "usage: check.sh [--repo OWNER/REPO] [ROOT | --applies [ROOT] | --messages RANGE | --msg-file FILE] | --self-test" >&2; exit 2 ;; esac
+root=$(cd "${1:-.}" && pwd) || { echo "private-refs-check: cannot enter ${1:-.}, so nothing was read" >&2; exit 2; }
+applies "$root"
+check "$root"

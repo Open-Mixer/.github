@@ -560,6 +560,8 @@ jobs:
       # this repository's own tree, the one that defines the rule: no ceiling in its workflows or any other file it ships
       - run: .github/actions/deps-render/render.sh --check .
       - uses: ./.github/actions/private-refs-check
+      - name: The private-refs check skips a private target by its live visibility, and refuses an unknown one
+        run: .github/actions/private-refs-check/visibility-test.sh
       - uses: ./.github/actions/spdx-check
       - run: tests/trigger-gate.sh
       - name: The trigger gate reads this repository's own workflows (this file is the one lint)
