@@ -20,7 +20,7 @@ for d in /usr/local/bin /usr/bin /bin; do
   [ -d "$d" ] || continue
   for f in "$d"/*; do
     n=${f##*/}; case "$n" in gh|jq) continue ;; esac
-    [ -e "$tmp/sys/$n" ] || ln -s "$f" "$tmp/sys/$n"
+    [ -e "$tmp/sys/$n" ] || [ -L "$tmp/sys/$n" ] || ln -s "$f" "$tmp/sys/$n" 2>/dev/null || true
   done
 done
 NOGH=$tmp/sys
