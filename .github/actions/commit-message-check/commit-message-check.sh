@@ -26,7 +26,7 @@
 set -euo pipefail
 export COMMIT_MESSAGE_CHECK_SELF="${BASH_SOURCE[0]}"
 exec python3 -I - "$@" <<'PY'
-import json, os, re, subprocess, sys
+import json, os, re, shutil, subprocess, sys
 
 here = os.path.dirname(os.path.realpath(os.environ["COMMIT_MESSAGE_CHECK_SELF"]))
 pfile = os.environ.get("COMMIT_MESSAGE_PATTERNS") or os.path.join(here, "commit-message-patterns.json")
@@ -155,8 +155,15 @@ def private_refs(msg_file):
     # CI the run's own, else the GitHub origin of the repository committing); with neither it refuses (2), by name.
     # Its skip line for a private target is passed on; its clean line is not
     repo = os.environ.get("GITHUB_REPOSITORY") or origin_repo()
+    # its lookup needs a token: a runner has the run's own; on a desk, with none set, gh (when it is there) lends its
+    # login's. Without either the check refuses (2), by name
+    env = dict(os.environ)
+    if not (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")) and shutil.which("gh"):
+        t = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+        if t.returncode == 0 and t.stdout.strip():
+            env["GH_TOKEN"] = t.stdout.strip()
     p = subprocess.run(["bash", chk, *(["--repo", repo] if repo else []), "--msg-file", msg_file],
-                       stdout=subprocess.PIPE, text=True)
+                       stdout=subprocess.PIPE, text=True, env=env)
     for line in p.stdout.splitlines():
         if "does not apply" in line:
             print(line, file=sys.stderr)

@@ -9,12 +9,15 @@ act=$here/.github/actions/commit-message-check
 chk=$act/commit-message-check.sh
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
-# the message mode hands its target repository to private-refs-check, which reads that repository's visibility from
-# GitHub with its topics: a stub gh stands in, answering STUB_OUT (public, no topic, unless an arm says otherwise) and
-# logging what it was asked
-mkdir -p "$tmp/bin"; printf '#!/bin/sh\necho "$*" >> "%s"\nif [ -n "${STUB_OUT:-}" ]; then echo "$STUB_OUT"; else echo %s; fi\n' "$tmp/gh.log" "'{\"t\":[],\"v\":\"public\"}'" > "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
-export PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=Open-Mixer/commit-message-fixture; unset GITHUB_ACTIONS
-STAYS='{"t":["stays-private"],"v":"private"}'
+# the message mode hands its target repository to private-refs-check, which reads that repository's visibility and
+# topics from GitHub through python3's urllib: a file:// API stands in (repos/OWNER/REPO holds the answer), with a token
+API=$tmp/api; mkdir -p "$API/repos/Open-Mixer"
+ans() { printf '%s\n' "$2" > "$API/repos/Open-Mixer/$1"; }
+PUB='{"visibility":"public","topics":[]}'; STAYS='{"visibility":"private","topics":["stays-private"]}'
+ans commit-message-fixture "$PUB"; ans house-fixture "$PUB"
+export GITHUB_API_URL="file://$API" GH_TOKEN=fixture-token GITHUB_REPOSITORY=Open-Mixer/commit-message-fixture; unset GITHUB_ACTIONS GITHUB_TOKEN
+# a PATH with no gh, for the arms that must see no token anywhere
+mkdir -p "$tmp/nogh"; for f in /usr/local/bin/* /usr/bin/* /bin/*; do n=${f##*/}; [ "$n" = gh ] || [ -e "$tmp/nogh/$n" ] || ln -s "$f" "$tmp/nogh/$n" 2>/dev/null || true; done
 
 "$chk" --selftest | grep -q '^selftest: GREEN' || fail "selftest not green"
 
@@ -198,19 +201,29 @@ if env "${HOUSE[@]}" GIT_COMMITTER_EMAIL=linuxnow@gmail.com "$chk" --msg-file "$
 rc=0; env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
 [ "$rc" = 1 ] && grep -q 'private' "$tmp/m-err" || fail "a refused message did not say why on stderr (rc $rc): $(cat "$tmp/m-err")"
 
-# the target is the run's repository in CI, else this repository's GitHub origin; private with the topic stays-private
-# skips the private-refs part by name, private without it does not (the attribution and house rules still apply), and with no target the message is not judged (2), never passed
-: > "$tmp/gh.log"
+# the target is the run's repository in CI, else this repository's GitHub origin (a target the API does not know is
+# refused, so a pass proves which one was read); private with the topic stays-private skips the private-refs part by
+# name, private without it does not (the attribution and house rules still apply); with no target, or no token, the
+# message is not judged (2), never passed
+rm -f "$API/repos/Open-Mixer/commit-message-fixture"
 env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || fail "a clean message read through the origin was refused: $(cat "$tmp/m-err")"
-grep -qx 'api repos/Open-Mixer/house-fixture --jq {v:.visibility,t:.topics}' "$tmp/gh.log" || fail "the origin was not the target whose visibility was read: $(cat "$tmp/gh.log")"
-rc=0; env -u GITHUB_REPOSITORY STUB_OUT="$STAYS" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
+ans house-fixture "$STAYS"
+rc=0; env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
 [ "$rc" = 0 ] && grep -q 'Open-Mixer/house-fixture is private and carries the topic stays-private: the public-repo check does not apply' "$tmp/m-err" ||
   fail "an opted-out target did not skip the private-refs part by name (rc $rc): $(cat "$tmp/m-err")"
-if env -u GITHUB_REPOSITORY STUB_OUT='{"t":[],"v":"private"}' "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>&1; then
-  fail "a private target without the topic skipped the private-refs part"; fi
 printf 'a change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/m-attr"
-if env -u GITHUB_REPOSITORY STUB_OUT="$STAYS" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-attr" >/dev/null 2>&1; then
+if env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-attr" >/dev/null 2>&1; then
   fail "an opted-out target let an attributed message pass"; fi
+ans house-fixture '{"visibility":"private","topics":[]}'
+if env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>&1; then
+  fail "a private target without the topic skipped the private-refs part"; fi
+ans house-fixture "$PUB"
+rc=0; env -u GITHUB_REPOSITORY -u GH_TOKEN PATH="$tmp/nogh" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 2 ] && grep -q 'REFUSED.*GH_TOKEN' "$tmp/m-err" || fail "no token was not refused by name (rc $rc): $(cat "$tmp/m-err")"
+# on a desk gh, when present, is where a token comes from (never on a runner, where the run's token is set)
+mkdir -p "$tmp/ghtok"; printf '#!/bin/sh\n[ "$*" = "auth token" ] && echo desk-token\n' > "$tmp/ghtok/gh"; chmod +x "$tmp/ghtok/gh"
+env -u GITHUB_REPOSITORY -u GH_TOKEN PATH="$tmp/ghtok:$tmp/nogh" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" ||
+  fail "a desk token from gh auth token was not used: $(cat "$tmp/m-err")"
 git remote remove origin
 rc=0; env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || rc=$?
 [ "$rc" = 2 ] && grep -q 'REFUSED' "$tmp/m-err" || fail "no target repository was not refused by name (rc $rc): $(cat "$tmp/m-err")"

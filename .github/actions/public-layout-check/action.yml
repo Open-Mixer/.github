@@ -5,12 +5,19 @@ description: Fail when a public repository keeps a dated document, a dated folde
 
 # A public repository holds code, data and the documents a user or developer reads; the record of how work went belongs
 # in the project's records. The check is proven first on planted trees, with a sabotage arm, then reads the caller's
-# checkout. The caller has checked the repository out.
+# checkout. The caller has checked the repository out. A private repository with the topic stays-private opts out.
 
 runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
+        # a public repository's rule: a private repository with the topic stays-private is skipped, by name, as the
+        # private-refs check skips it (one live lookup; an answer it cannot read is red)
+        out=$("$GITHUB_ACTION_PATH/../private-refs-check/check.sh" --applies "$GITHUB_WORKSPACE")
+        printf '%s\n' "$out"
+        [ "${out##*$'\n'}" != 'applies: no' ] || exit 0
         "$GITHUB_ACTION_PATH/check.sh" --self-test
         "$GITHUB_ACTION_PATH/check.sh" "$GITHUB_WORKSPACE"
