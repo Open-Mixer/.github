@@ -113,6 +113,16 @@ def house_origin():
     return p.returncode == 0 and bool(HOUSE_ORIGIN.search(p.stdout.strip()))
 
 
+ORIGIN_REPO = re.compile(r"github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+
+
+def origin_repo():
+    """OWNER/REPO of this repository's GitHub origin, or None."""
+    p = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    m = ORIGIN_REPO.search(p.stdout.strip()) if p.returncode == 0 else None
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
 def house_hits():
     """The commit about to be made: its author and committer, as git var reads them, against the list's house identity.
     Judged only in a repository whose origin names a house org; a fixture or foreign repository is not judged, and says so."""
@@ -141,7 +151,16 @@ def private_refs(msg_file):
     if not os.path.isfile(chk):
         print(f"commit-message-check: no private-refs-check beside this action ({chk}), so the message is not judged", file=sys.stderr)
         return 2
-    return subprocess.run(["bash", chk, "--msg-file", msg_file], stdout=subprocess.DEVNULL).returncode
+    # the check is a public repository's: it reads the target's visibility, so it is told which repository this is (in
+    # CI the run's own, else the GitHub origin of the repository committing); with neither it refuses (2), by name.
+    # Its skip line for a private target is passed on; its clean line is not
+    repo = os.environ.get("GITHUB_REPOSITORY") or origin_repo()
+    p = subprocess.run(["bash", chk, *(["--repo", repo] if repo else []), "--msg-file", msg_file],
+                       stdout=subprocess.PIPE, text=True)
+    for line in p.stdout.splitlines():
+        if "does not apply" in line:
+            print(line, file=sys.stderr)
+    return p.returncode
 
 
 def git(*a):

@@ -32,6 +32,8 @@ runs:
       shell: bash
       env:
         BASE_REF: ${{ inputs.base-ref }}
+        PRIVATE_REFS_VISIBILITY: ${{ github.event.repository.visibility }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         "${{ github.action_path }}/../private-refs-check/check.sh" --messages "origin/$BASE_REF..HEAD"

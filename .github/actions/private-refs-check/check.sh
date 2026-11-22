@@ -15,6 +15,14 @@
 #                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
 #
+# The rule is for a public repository, so every mode but --self-test first reads the TARGET repository's visibility
+# from GitHub, live (gh api repos/OWNER/REPO --jq .visibility; in CI the action hands over the Actions context's own
+# github.event.repository.visibility as PRIVATE_REFS_VISIBILITY, which counts only when GITHUB_ACTIONS is true and the
+# target is GITHUB_REPOSITORY). private: skipped, with a line naming the repository; public or internal: checked;
+# anything else, nothing, or a lookup that fails: REFUSED, exit 2, never a silent skip. The target is --repo OWNER/REPO
+# (any position), else GITHUB_REPOSITORY, else, for the tree and range modes only, the GitHub origin of the repository
+# read. --msg-file has no repository of its own to read, so without --repo or GITHUB_REPOSITORY it is refused.
+#
 # Nothing is exempt, this script included: it builds every shape it looks for and plants from parts, so that no line
 # of it spells one.
 set -euo pipefail
@@ -125,8 +133,58 @@ msg_file() { # <file>: one commit message as the commit-msg hook hands it over
   echo "private-refs-check: the commit message points into no private repository"
 }
 
+refuse() { echo "private-refs-check: REFUSED: $*" >&2; exit 2; }
+
+REPO=
+REPO_SET=0
+rest=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) [ $# -ge 2 ] && [ -n "$2" ] || refuse "--repo needs OWNER/REPO"; REPO=$2; REPO_SET=1; shift 2 ;;
+    --repo=*) REPO=${1#--repo=}; [ -n "$REPO" ] || refuse "--repo needs OWNER/REPO"; REPO_SET=1; shift ;;
+    *) rest+=("$1"); shift ;;
+  esac
+done
+set -- "${rest[@]+"${rest[@]}"}"
+
+origin_repo() { # <dir>: OWNER/REPO of the GitHub origin of the repository at <dir>, or nothing
+  local url re='github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/?$' r
+  url=$(git -c safe.directory="$1" -C "$1" remote get-url origin 2>/dev/null) || return 0
+  [[ $url =~ $re ]] || return 0
+  r=${BASH_REMATCH[2]}; r=${r%.git}
+  printf '%s/%s\n' "${BASH_REMATCH[1]}" "$r"
+}
+
+applies() { # <dir to read the origin of, or ''>: returns when the check runs; prints the skip and exits 0 when the
+  # target is private; refuses (exit 2) when the target or its visibility is not known
+  local dir=$1 repo=$REPO vis rc=0
+  if [ "$REPO_SET" = 0 ]; then
+    repo=${GITHUB_REPOSITORY:-}
+    [ -n "$repo" ] || [ -z "$dir" ] || repo=$(origin_repo "$dir")
+  fi
+  [ -n "$repo" ] || refuse "no target repository: pass --repo OWNER/REPO (in CI, GITHUB_REPOSITORY)${dir:+, or read a repository whose origin is on GitHub}; the check applies to public repositories only and cannot tell which this is"
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse "the target '$repo' is not owner/repo"
+  if [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${PRIVATE_REFS_VISIBILITY:-}" ] && [ "${GITHUB_REPOSITORY:-}" = "$repo" ]; then
+    vis=$PRIVATE_REFS_VISIBILITY
+  else
+    command -v gh >/dev/null || refuse "gh is not on PATH, so the visibility of $repo cannot be read"
+    vis=$(gh api "repos/$repo" --jq .visibility 2>/dev/null) || rc=$?
+    [ "$rc" = 0 ] || refuse "gh api repos/$repo failed (exit $rc), so the visibility of $repo is not known"
+  fi
+  case "$vis" in
+    public|internal) return 0 ;;
+    private) echo "private-refs-check: $repo is private: the public-repo check does not apply, skipped"; exit 0 ;;
+    '') refuse "GitHub gave no visibility for $repo" ;;
+    *) refuse "GitHub gave the visibility '$vis' for $repo, which is neither public, internal nor private" ;;
+  esac
+}
+
 if [ "${1:-}" = --self-test ]; then
   scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
+  # the message mode reads its target's visibility first; here a stub gh answers public, so the patterns alone are judged,
+  # whatever repository (a private one too) the self-test runs in
+  mkdir -p "$scratch/bin"; printf '#!/bin/sh\necho public\n' > "$scratch/bin/gh"; chmod +x "$scratch/bin/gh"
+  msgf() { env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY -u PRIVATE_REFS_VISIBILITY PATH="$scratch/bin:$PATH" bash "$0" --repo Open-Mixer/self-test --msg-file "$@"; }
   fail=0
   # a clean tree with one file of each kind a repository tracks; every sabotage writes one private pointer into one
   mk() { rm -rf "$scratch/t"; mkdir -p "$scratch/t/src" "$scratch/t/tools" "$scratch/t/docs"
@@ -218,13 +276,13 @@ if [ "${1:-}" = --self-test ]; then
   g reset -q --hard HEAD~1
   # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
   printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n# On branch integration''/x\n#\tmodified:   harness''/a.sh\n#\n' > "$scratch/msg-clean"
-  if ( bash "$0" --msg-file "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
+  if ( msgf "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
   # a line that starts with an issue number is the message's own, not a git comment: it is judged
   for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight' '#345 regenerated packages''/pipewire-native/src/x.h'; do
     printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
-    if ( bash "$0" --msg-file "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
+    if ( msgf "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
   done
-  rc=0; bash "$0" --msg-file "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
+  rc=0; msgf "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
   if [ "$rc" = 2 ]; then echo "SABOTAGE msg-file unreadable: red (2)"; else echo "SABOTAGE msg-file unreadable: exit $rc, not 2"; fail=1; fi
   mk; git -C "$scratch/t" add -A
   if ( EXTRA_PATHSPEC=(":(bogus)x"); check "$scratch/t" >/dev/null 2>&1 ); then echo "SABOTAGE git-grep-error: STAYED GREEN"; fail=1; else echo "SABOTAGE git-grep-error: red"; fi
@@ -246,14 +304,18 @@ if [ "${1:-}" = --self-test ]; then
   exit 0
 fi
 if [ "${1:-}" = --msg-file ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh --msg-file FILE" >&2; exit 2; }
+  [ -n "${2:-}" ] || { echo "usage: check.sh --repo OWNER/REPO --msg-file FILE" >&2; exit 2; }
+  applies ''
   rc=0; msg_file "$2" || rc=$?
   exit "$rc"
 fi
 if [ "${1:-}" = --messages ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh --messages RANGE" >&2; exit 2; }
+  [ -n "${2:-}" ] || { echo "usage: check.sh [--repo OWNER/REPO] --messages RANGE" >&2; exit 2; }
+  applies "$PWD"
   messages "$2"
   exit
 fi
-root="${1:-.}"
-check "$(cd "$root" && pwd)"
+case "${1:-}" in -*) echo "usage: check.sh [--repo OWNER/REPO] [ROOT | --messages RANGE | --msg-file FILE] | --self-test" >&2; exit 2 ;; esac
+root=$(cd "${1:-.}" && pwd) || { echo "private-refs-check: cannot enter ${1:-.}, so nothing was read" >&2; exit 2; }
+applies "$root"
+check "$root"
