@@ -10,9 +10,11 @@ chk=$act/commit-message-check.sh
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 # the message mode hands its target repository to private-refs-check, which reads that repository's visibility from
-# GitHub: a stub gh stands in, answering STUB_VIS (public unless an arm says otherwise) and logging what it was asked
-mkdir -p "$tmp/bin"; printf '#!/bin/sh\necho "$*" >> "%s"\necho "${STUB_VIS:-public}"\n' "$tmp/gh.log" > "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
-export PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=Open-Mixer/commit-message-fixture; unset GITHUB_ACTIONS PRIVATE_REFS_VISIBILITY
+# GitHub with its topics: a stub gh stands in, answering STUB_OUT (public, no topic, unless an arm says otherwise) and
+# logging what it was asked
+mkdir -p "$tmp/bin"; printf '#!/bin/sh\necho "$*" >> "%s"\nif [ -n "${STUB_OUT:-}" ]; then echo "$STUB_OUT"; else echo %s; fi\n' "$tmp/gh.log" "'{\"t\":[],\"v\":\"public\"}'" > "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
+export PATH="$tmp/bin:$PATH" GITHUB_REPOSITORY=Open-Mixer/commit-message-fixture; unset GITHUB_ACTIONS
+STAYS='{"t":["stays-private"],"v":"private"}'
 
 "$chk" --selftest | grep -q '^selftest: GREEN' || fail "selftest not green"
 
@@ -196,17 +198,19 @@ if env "${HOUSE[@]}" GIT_COMMITTER_EMAIL=linuxnow@gmail.com "$chk" --msg-file "$
 rc=0; env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
 [ "$rc" = 1 ] && grep -q 'private' "$tmp/m-err" || fail "a refused message did not say why on stderr (rc $rc): $(cat "$tmp/m-err")"
 
-# the target is the run's repository in CI, else this repository's GitHub origin; private skips the private-refs part by
-# name (the attribution and house rules still apply), and with no target the message is not judged (2), never passed
+# the target is the run's repository in CI, else this repository's GitHub origin; private with the topic stays-private
+# skips the private-refs part by name, private without it does not (the attribution and house rules still apply), and with no target the message is not judged (2), never passed
 : > "$tmp/gh.log"
 env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || fail "a clean message read through the origin was refused: $(cat "$tmp/m-err")"
-grep -qx 'api repos/Open-Mixer/house-fixture --jq .visibility' "$tmp/gh.log" || fail "the origin was not the target whose visibility was read: $(cat "$tmp/gh.log")"
-rc=0; env -u GITHUB_REPOSITORY STUB_VIS=private "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
-[ "$rc" = 0 ] && grep -q 'Open-Mixer/house-fixture is private: the public-repo check does not apply' "$tmp/m-err" ||
-  fail "a private target did not skip the private-refs part by name (rc $rc): $(cat "$tmp/m-err")"
+grep -qx 'api repos/Open-Mixer/house-fixture --jq {v:.visibility,t:.topics}' "$tmp/gh.log" || fail "the origin was not the target whose visibility was read: $(cat "$tmp/gh.log")"
+rc=0; env -u GITHUB_REPOSITORY STUB_OUT="$STAYS" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 0 ] && grep -q 'Open-Mixer/house-fixture is private and carries the topic stays-private: the public-repo check does not apply' "$tmp/m-err" ||
+  fail "an opted-out target did not skip the private-refs part by name (rc $rc): $(cat "$tmp/m-err")"
+if env -u GITHUB_REPOSITORY STUB_OUT='{"t":[],"v":"private"}' "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>&1; then
+  fail "a private target without the topic skipped the private-refs part"; fi
 printf 'a change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/m-attr"
-if env -u GITHUB_REPOSITORY STUB_VIS=private "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-attr" >/dev/null 2>&1; then
-  fail "a private target let an attributed message pass"; fi
+if env -u GITHUB_REPOSITORY STUB_OUT="$STAYS" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-attr" >/dev/null 2>&1; then
+  fail "an opted-out target let an attributed message pass"; fi
 git remote remove origin
 rc=0; env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || rc=$?
 [ "$rc" = 2 ] && grep -q 'REFUSED' "$tmp/m-err" || fail "no target repository was not refused by name (rc $rc): $(cat "$tmp/m-err")"

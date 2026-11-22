@@ -15,13 +15,14 @@
 #                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
 #
-# The rule is for a public repository, so every mode but --self-test first reads the TARGET repository's visibility
-# from GitHub, live (gh api repos/OWNER/REPO --jq .visibility; in CI the action hands over the Actions context's own
-# github.event.repository.visibility as PRIVATE_REFS_VISIBILITY, which counts only when GITHUB_ACTIONS is true and the
-# target is GITHUB_REPOSITORY). private: skipped, with a line naming the repository; public or internal: checked;
-# anything else, nothing, or a lookup that fails: REFUSED, exit 2, never a silent skip. The target is --repo OWNER/REPO
-# (any position), else GITHUB_REPOSITORY, else, for the tree and range modes only, the GitHub origin of the repository
-# read. --msg-file has no repository of its own to read, so without --repo or GITHUB_REPOSITORY it is refused.
+# The check runs on every repository; a repository opts out only by being private AND carrying the topic stays-private.
+# Every mode but --self-test first reads the TARGET repository's visibility and topics from GitHub, live, in one lookup
+# (gh api repos/OWNER/REPO --jq '{v:.visibility,t:.topics}'). private with stays-private: skipped, with a line naming
+# the repository. Any other answer, public, internal or private, with the topic or without it: checked, since a topic
+# never exempts a public repository. An unknown visibility, topics that are not a list, no answer, or a lookup that
+# fails: REFUSED, exit 2, never a silent skip. The target is --repo OWNER/REPO (any position), else GITHUB_REPOSITORY,
+# else, for the tree and range modes only, the GitHub origin of the repository read. --msg-file has no repository of
+# its own to read, so without --repo or GITHUB_REPOSITORY it is refused.
 #
 # Nothing is exempt, this script included: it builds every shape it looks for and plants from parts, so that no line
 # of it spells one.
@@ -156,35 +157,39 @@ origin_repo() { # <dir>: OWNER/REPO of the GitHub origin of the repository at <d
 }
 
 applies() { # <dir to read the origin of, or ''>: returns when the check runs; prints the skip and exits 0 when the
-  # target is private; refuses (exit 2) when the target or its visibility is not known
-  local dir=$1 repo=$REPO vis rc=0
+  # target is private and carries the topic stays-private; refuses (exit 2) when the target, its visibility or its
+  # topics are not known
+  local dir=$1 repo=$REPO ans verdict rc=0
   if [ "$REPO_SET" = 0 ]; then
     repo=${GITHUB_REPOSITORY:-}
     [ -n "$repo" ] || [ -z "$dir" ] || repo=$(origin_repo "$dir")
   fi
-  [ -n "$repo" ] || refuse "no target repository: pass --repo OWNER/REPO (in CI, GITHUB_REPOSITORY)${dir:+, or read a repository whose origin is on GitHub}; the check applies to public repositories only and cannot tell which this is"
+  [ -n "$repo" ] || refuse "no target repository: pass --repo OWNER/REPO (in CI, GITHUB_REPOSITORY)${dir:+, or read a repository whose origin is on GitHub}; only a private repository with the topic stays-private is skipped, and which this is cannot be read"
   [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse "the target '$repo' is not owner/repo"
-  if [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${PRIVATE_REFS_VISIBILITY:-}" ] && [ "${GITHUB_REPOSITORY:-}" = "$repo" ]; then
-    vis=$PRIVATE_REFS_VISIBILITY
-  else
-    command -v gh >/dev/null || refuse "gh is not on PATH, so the visibility of $repo cannot be read"
-    vis=$(gh api "repos/$repo" --jq .visibility 2>/dev/null) || rc=$?
-    [ "$rc" = 0 ] || refuse "gh api repos/$repo failed (exit $rc), so the visibility of $repo is not known"
-  fi
-  case "$vis" in
-    public|internal) return 0 ;;
-    private) echo "private-refs-check: $repo is private: the public-repo check does not apply, skipped"; exit 0 ;;
-    '') refuse "GitHub gave no visibility for $repo" ;;
-    *) refuse "GitHub gave the visibility '$vis' for $repo, which is neither public, internal nor private" ;;
+  command -v gh >/dev/null || refuse "gh is not on PATH, so the visibility and topics of $repo cannot be read"
+  command -v jq >/dev/null || refuse "jq is not on PATH, so GitHub's answer for $repo cannot be read"
+  # one lookup, both facts: the skip never rests on a visibility and a topic read at different moments
+  ans=$(gh api "repos/$repo" --jq '{v:.visibility,t:.topics}' 2>/dev/null) || rc=$?
+  [ "$rc" = 0 ] || refuse "gh api repos/$repo failed (exit $rc), so the visibility and topics of $repo are not known"
+  verdict=$(jq -r 'if (.v|type) != "string" or (.v|IN("public","internal","private")|not) then "visibility"
+    elif (.t|type) != "array" or any(.t[]; type != "string") then "topics"
+    elif .v == "private" and any(.t[]; . == "stays-private") then "skip" else "check" end' <<<"$ans" 2>/dev/null) || rc=$?
+  [ "$rc" = 0 ] || refuse "GitHub's answer for $repo is not the JSON asked for: ${ans:0:120}"
+  case "$verdict" in
+    check) return 0 ;;
+    skip) echo "private-refs-check: $repo is private and carries the topic stays-private: the public-repo check does not apply, skipped"; exit 0 ;;
+    visibility) refuse "GitHub gave no known visibility for $repo (public, internal or private): ${ans:0:120}" ;;
+    topics) refuse "GitHub gave no list of topics for $repo: ${ans:0:120}" ;;
+    *) refuse "GitHub gave no answer for $repo" ;;
   esac
 }
 
 if [ "${1:-}" = --self-test ]; then
   scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
-  # the message mode reads its target's visibility first; here a stub gh answers public, so the patterns alone are judged,
-  # whatever repository (a private one too) the self-test runs in
-  mkdir -p "$scratch/bin"; printf '#!/bin/sh\necho public\n' > "$scratch/bin/gh"; chmod +x "$scratch/bin/gh"
-  msgf() { env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY -u PRIVATE_REFS_VISIBILITY PATH="$scratch/bin:$PATH" bash "$0" --repo Open-Mixer/self-test --msg-file "$@"; }
+  # the message mode reads its target's visibility and topics first; here a stub gh answers public, so the patterns alone
+  # are judged, whatever repository (an opted-out one too) the self-test runs in
+  mkdir -p "$scratch/bin"; printf '#!/bin/sh\necho %s\n' "'{\"t\":[],\"v\":\"public\"}'" > "$scratch/bin/gh"; chmod +x "$scratch/bin/gh"
+  msgf() { env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY PATH="$scratch/bin:$PATH" bash "$0" --repo Open-Mixer/self-test --msg-file "$@"; }
   fail=0
   # a clean tree with one file of each kind a repository tracks; every sabotage writes one private pointer into one
   mk() { rm -rf "$scratch/t"; mkdir -p "$scratch/t/src" "$scratch/t/tools" "$scratch/t/docs"
