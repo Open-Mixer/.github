@@ -11,12 +11,14 @@ Every OpenMixer repository publishes the reference its own generators produce, a
 
 One mechanism, three parts, nothing of the content written by hand:
 
-- **the repository's `make docs-site DOCS_OUT=<dir>`** runs the doc check the repository already holds (its doxygen
-  gate, its `render --check`, its `check-protocol-doc`, its `check-params-doc`), then writes what its generators
-  produce into `<dir>`: doxygen's html, the Markdown its tools render from source, its man pages, and an `index.md`
-  (or `README.md`) as the entry page. A target that copies a hand-written file is a review finding.
+- **the repository's `make docs-site DOCS_OUT=<dir>`** runs the doc check the repository already holds where that
+  check needs no base (`check-protocol-doc`, `check-params-doc`, a Doxyfile with `WARN_AS_ERROR`; a baseline gate that
+  compares with a base stays in the repository's CI and release workflows), then writes what its generators produce into `<dir>`: doxygen's html, the Markdown its tools render from source, its man pages, and the overview
+  pages it keeps in the tree (its README.md, its docs/). Nothing is written for the site by hand: a target that
+  copies a page kept only for the site is a review finding.
 - **`actions/docs-site`** (`docs-site.sh`) renders every `*.md` and man page in that tree with pandoc, rewrites links
-  between `.md` pages, refuses a tree with no index page or with a symbolic link, and places a release under
+  between `.md` pages, writes the entry page when the tree has none (every page of the top two levels by its own
+  title), refuses a tree with no page or with a symbolic link, and places a release under
   `reference/<repo>/<version>/`. `latest/` moves only when the release is the highest the channel holds, in version
   order (0.10.0 above 0.9.0), so a backport release never moves it. The version list and the repository list are
   written from the tree, so a place repeated on a newer channel tip writes the same bytes.
@@ -47,8 +49,10 @@ workflow alone; the site links to it and never lists it as its own.
 
 ## The test
 
-`tests/docs-site.sh` (CI job `docs-site`): assemble renders Markdown and man pages and rewrites `.md` links; an empty
-tree, a tree with no index page and a symbolic link are refused by name; place writes three releases in an order where
+`tests/docs-site.sh` (CI job `docs-site`): assemble renders Markdown and man pages and rewrites `.md` links; a tree
+with no index page gets one listing every page once; an empty tree, a tree with no page and a symbolic link are
+refused by name; place writes three releases in an order where
 plain and version sort disagree and `latest/` is the highest; a backport leaves it; a second place of one release is no
-change in git; a version or repository that is no name is refused. Sabotage: plain `sort` for the highest version, the
-index guard and the symbolic-link guard removed, each turns an arm red.
+change in git; a version or repository that is no name is refused. Sabotage: plain `sort` for the highest version, a
+directory's own index left out of the written index, the no-page and the symbolic-link guards removed: each turns an
+arm red.

@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# docs-site docs-site.sh assemble <site> | place <site> <channel> <repo> <version> | --self-test
+# docs-site docs-site.sh assemble <site> [title] | place <site> <channel> <repo> <version> | --self-test
 #
 # The one renderer and the one placer of every OpenMixer repository's generated reference (docs/docs-publish.md).
 # A repository's `make docs-site DOCS_OUT=<site>` writes what its own generators produce (doxygen's html, Markdown its
 # tools render from source, its man pages); nothing here generates content, and nothing is ever written by hand.
 #
 #   assemble <site>   every *.md becomes *.html beside it and every man page *.[1-8] becomes *.[1-8].html (pandoc),
-#                     a link to a .md page is rewritten to its .html page; README.html stands in for a missing
-#                     index.html. Refused by name: no such directory, an empty tree, a symbolic link (it would publish
-#                     whatever it points at), no index page.
+#                     a link to a .md page is rewritten to its .html page. With no index.html, one is written (its
+#                     heading [title], default the directory's name): every page of the top two levels by its own
+#                     <title>, a directory that has an index.html once.
+#                     Refused by name: no such directory, an empty tree, a symbolic link (it would publish whatever it
+#                     points at), a tree with no page at all.
 #   place <site> <channel> <repo> <version>
 #                     copies the site to <channel>/reference/<repo>/<version>/ (replacing that version only), and to
 #                     reference/<repo>/latest/ only when <version> is the highest the channel holds (version order, so
@@ -59,9 +61,25 @@ LUA
     pandoc -f man -t html5 -s --metadata pagetitle="$(basename "$f")" -o "$f.html" "$f"
   done < <(find "$site" -type f -regex '.*\.[1-8]$' -print0 | sort -z)
   rm -f "$filter"
-  if [ ! -f "$site/index.html" ] && [ -f "$site/README.html" ]; then cp "$site/README.html" "$site/index.html"; fi
-  [ -f "$site/index.html" ] || die "assemble: $site has no index page (index.html, index.md or README.md)"
+  [ -f "$site/index.html" ] || index "$site" "${2:-$(basename "$site")}"
   echo "docs-site: assembled $(find "$site" -type f -name '*.html' | wc -l) html page(s) in $site"
+}
+
+index() { # $1 site, $2 title: the entry page, every page of the tree's top two levels by its own <title>
+  local site=$1 title=$2 pages p t
+  pages=$( (cd "$site" && find . -mindepth 1 -maxdepth 2 -type f -name '*.html' -printf '%P\n') \
+    | while IFS= read -r p; do
+        case $p in
+          */index.html) echo "$p" ;;
+          */*) [ -f "$site/${p%/*}/index.html" ] || echo "$p" ;;
+          *) echo "$p" ;;
+        esac
+      done | LC_ALL=C sort)
+  [ -n "$pages" ] || die "assemble: $site has no page to index: the docs-site target wrote no html, Markdown or man page"
+  printf '%s\n' "$pages" | while IFS= read -r p; do
+      t=$(sed -n 's:.*<title>\(.*\)</title>.*:\1:p' "$site/$p" | head -n 1)
+      printf '<li><a href="%s">%s</a></li>\n' "${p%index.html}" "${t:-$p}"
+    done | { echo '<ul>'; cat; echo '</ul>'; } | page "$title" > "$site/index.html"
 }
 
 place() {
@@ -108,5 +126,5 @@ case ${1:-} in
   assemble) shift; assemble "$@" ;;
   place) shift; place "$@" ;;
   --self-test) self_test ;;
-  *) die "usage: docs-site.sh assemble <site> | place <site> <channel> <repo> <version> | --self-test" ;;
+  *) die "usage: docs-site.sh assemble <site> [title] | place <site> <channel> <repo> <version> | --self-test" ;;
 esac

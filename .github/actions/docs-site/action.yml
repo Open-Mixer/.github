@@ -13,6 +13,9 @@ inputs:
   site:
     description: the tree the repository's docs-site target wrote
     required: true
+  title:
+    description: assemble only, the heading of the index page written when the tree has none (default the directory's name)
+    default: ''
   channel:
     description: place only, the checkout of the Pages channel (build/channel after channel-pull)
     default: ''
@@ -39,11 +42,12 @@ runs:
         CHANNEL: ${{ inputs.channel }}
         REPO: ${{ inputs.repo }}
         VERSION: ${{ inputs.version }}
+        TITLE: ${{ inputs.title }}
       run: |
         set -euo pipefail
         bash "$GITHUB_ACTION_PATH/docs-site.sh" --self-test
         case $COMMAND in
-          assemble) bash "$GITHUB_ACTION_PATH/docs-site.sh" assemble "$SITE" ;;
+          assemble) bash "$GITHUB_ACTION_PATH/docs-site.sh" assemble "$SITE" ${TITLE:+"$TITLE"} ;;
           place)
             bash "$GITHUB_ACTION_PATH/docs-site.sh" place "$SITE" "$CHANNEL" "$REPO" "$VERSION"
             printf 'rebuild=bash %q place %q %q %q %q\n' "$GITHUB_ACTION_PATH/docs-site.sh" "$SITE" "$CHANNEL" "$REPO" "$VERSION" >> "$GITHUB_OUTPUT" ;;

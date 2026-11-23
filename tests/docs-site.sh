@@ -3,11 +3,12 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # docs-site.sh of the docs-site action (docs/docs-publish.md) on planted trees, then each guard taken out again.
 # Arms: assemble renders Markdown and man pages beside their sources and rewrites links to .md pages; a tree with no
-# index page, an empty tree and a symbolic link are refused by name. place writes reference/<repo>/<version>/, moves
+# index page gets one listing every page once; a tree with no page, an empty tree and a symbolic link are refused by
+# name. place writes reference/<repo>/<version>/, moves
 # latest/ only for the highest version (0.10.0 above 0.9.0, a backport below it leaves latest alone), writes the
 # version list and the repository list, refuses a version or repository name that is no name, and a second place of
-# the same version is a no-op in git. Sabotage: plain sort instead of version sort, and the index guard removed, each
-# must turn an arm red.
+# the same version is a no-op in git. Sabotage: plain sort instead of version sort, a directory's own index left out of
+# the written index, the no-page guard and the symbolic-link guard removed: each must turn an arm red.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 script=$here/../.github/actions/docs-site/docs-site.sh
@@ -35,9 +36,18 @@ run_arms() { # $1: the script under test; exit status 0 when every arm holds
   grep -q 'href="api/index.html"' "$w/site/index.html" || { echo "an .html link was changed"; return 1; }
   grep -q 'does a thing' "$w/site/man/tool.1.html" || { echo "the man page was not rendered"; return 1; }
   # assemble refusals
-  mkdir -p "$w/noindex"; printf '# A\n' > "$w/noindex/a.md"
-  if bash "$s" assemble "$w/noindex" 2>"$w/err"; then echo "a tree with no index page was accepted"; return 1; fi
-  grep -q 'no index' "$w/err" || { echo "the no-index refusal names nothing"; return 1; }
+  # no index page: one is written, every page of the top two levels once, a directory with an index.html as itself
+  mkdir -p "$w/noindex/api" "$w/noindex/docs"; printf '# Alpha\n' > "$w/noindex/a.md"; printf '# Beta\n' > "$w/noindex/docs/b.md"
+  printf '<html><head><title>API</title></head></html>\n' > "$w/noindex/api/index.html"; cp "$w/noindex/api/index.html" "$w/noindex/api/x.html"
+  bash "$s" assemble "$w/noindex" omx-test >/dev/null || { echo "assemble refused a tree with no index page"; return 1; }
+  grep -q '<h1>omx-test</h1>' "$w/noindex/index.html" || { echo "the written index lacks its title"; return 1; }
+  for l in 'href="a.html">Alpha' 'href="docs/b.html">Beta' 'href="api/">API'; do
+    grep -q "$l" "$w/noindex/index.html" || { echo "the written index lacks $l"; return 1; }
+  done
+  if grep -q 'api/x.html' "$w/noindex/index.html"; then echo "the written index lists a page of a directory that has its own index"; return 1; fi
+  mkdir -p "$w/nopage"; printf 'x\n' > "$w/nopage/notes.txt"
+  if bash "$s" assemble "$w/nopage" 2>"$w/err"; then echo "a tree with no page was accepted"; return 1; fi
+  grep -q 'no page to index' "$w/err" || { echo "the no-page refusal names nothing"; return 1; }
   mkdir -p "$w/empty"
   if bash "$s" assemble "$w/empty" 2>"$w/err"; then echo "an empty tree was accepted"; return 1; fi
   mkdir -p "$w/link"; printf '# I\n' > "$w/link/index.md"; ln -s /etc/hostname "$w/link/host"
@@ -80,7 +90,9 @@ sab() { # $1: name, $2: sed expression
   ok "sabotage '$1' is red: $out"
 }
 sab "plain sort for the highest version" 's/sort -V/sort/g'
-# shellcheck disable=SC2016 # a sed expression: $site is matched, never expanded
-sab "the index guard removed" 's/^\( *\)\[ -f "\$site\/index.html" \] ||.*$/\1true/'
+# shellcheck disable=SC2016 # sed expressions: $p and $pages are matched, never expanded
+sab "a directory's own index left out of the written index" 's/^\( *\)\*\/index.html) echo "\$p" ;;/\1*\/index.html) ;;/'
+# shellcheck disable=SC2016
+sab "the no-page guard removed" 's/^\( *\)\[ -n "\$pages" \] || die.*$/\1true/'
 sab "the symbolic-link guard removed" 's/^\( *\)links=.*$/\1links=/'
 echo "docs-site: $pass passed"
