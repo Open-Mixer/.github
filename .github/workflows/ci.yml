@@ -271,6 +271,20 @@ jobs:
         shell: bash
         run: tests/staging-bootstrap.sh ${{ matrix.kind }}
 
+  testing-source-round-trip:
+    name: The Debian testing source hides a staged package while disabled and installs it once enabled
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install the packaging tools
+        run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev build-essential debhelper lintian python3 python3-yaml curl ca-certificates
+      - uses: actions/checkout@v4
+      - name: openmixer-release built here, a staged package on a signed staging tree, the source off, on, off
+        shell: bash
+        run: tests/testing-source-round-trip.sh
+
   staging-installability:
     name: channel-installability judges the real channel alone
     runs-on: ubuntu-latest
