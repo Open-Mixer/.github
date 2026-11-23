@@ -242,7 +242,7 @@ rm -rf "$tmp/up-w"; git init -q -b main "$tmp/up-w"
 for i in 1 2; do git -C "$tmp/up-w" -c user.name=third -c user.email=third@example.org -c commit.gpgsign=false commit -q --allow-empty -m "upstream $i" -m "$TRAILER"; done
 git clone -q --bare "$tmp/up-w" "$tmp/up.git"; git clone -q --bare "$tmp/up-w" "$tmp/up3.git"; rm -rf "$tmp/up-w"   # up3: same commits, URL not listed
 fork() { # <dir>: a house base, one own clean commit, and our merge of the upstream history
-  rm -rf "$tmp/$1"; git init -q -b main "$tmp/$1"; cd "$tmp/$1" || exit 1
+  rm -rf "${tmp:?}/${1:?}"; git init -q -b main "$tmp/$1"; cd "$tmp/$1" || exit 1
   git config user.name t; git config user.email t@example.invalid; git config commit.gpgsign false
   git commit -q --allow-empty -m "fork base"; git checkout -q -b topic; git commit -q --allow-empty -m "own one"
   git fetch -q "$tmp/up.git" main:upmain; git merge -q --allow-unrelated-histories --no-ff upmain -m "own merge of upstream"
@@ -279,5 +279,21 @@ rm -rf "$tmp/sab"; cp -r "$tmp/act" "$tmp/sab"; sed -i 's/^\(.*\)# UPANC$/    ex
 fork f4; git commit -q --allow-empty -m "own attributed" -m "$TRAILER"
 CMC=$tmp/sab/commit-message-check/commit-message-check.sh PRC=$tmp/sab/private-refs-check/check.sh both 0 "sabotage: no ancestor test" --upstream-url "$UPU"
 echo "upstream exemption: the listed upstream's messages pass both checkers; ours (commit, merge), unlisted, look-alike and rewritten URLs are refused; the ancestor test removed lets ours through"
+
+# the workflow's upstream-url reaches both message checkers through the action, as env, never spliced into the script
+python3 -I - "$here" <<'WIRE' || fail "upstream-url wiring"
+import sys, yaml
+h = sys.argv[1]
+w = yaml.safe_load(open(h + "/.github/workflows/public-sources-check.yml"))
+st = [s for s in w["jobs"]["commit-messages"]["steps"] if "commit-message-check" in s.get("uses", "")][0]["with"]
+assert st.get("upstream-url") == "${{ inputs.upstream-url }}", st
+a = yaml.safe_load(open(h + "/.github/actions/commit-message-check/action.yml"))
+assert a["inputs"]["upstream-url"]["default"] == "", "no exemption by default"
+runs = [s for s in a["runs"]["steps"] if "run" in s and "--selftest" not in s["run"]]
+assert len(runs) == 2, runs
+for s in runs:
+    assert s["env"].get("UPSTREAM_URL") == "${{ inputs.upstream-url }}", s
+    assert "inputs.upstream-url" not in s["run"] and '--upstream-url "$UPSTREAM_URL"' in s["run"], s["run"]
+WIRE
 
 echo "commit-message-check: ok"
