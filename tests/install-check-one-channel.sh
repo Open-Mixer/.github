@@ -18,7 +18,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # a PATH holding the stubs and the few real tools the script uses, and no dnf unless the arm puts one there
 real_path() {
     mkdir -p "$1"
-    for t in bash mktemp chmod rm readlink basename cat grep tee head awk ls sed cut tr; do
+    for t in bash mktemp chmod rm readlink basename cat grep tee head awk ls sed cut tr cp; do
         ln -sf "$(command -v "$t")" "$1/$t"
     done
 }
@@ -62,7 +62,10 @@ echo "ok   rpm: openmixer-release is installed alone, FREEREAC_RELEASE_URL is no
 d=$w/deb; prepare deb; real_path "$d/bin"
 stub "$d/bin" apt-get "
 case \"\$*\" in
-  *openmixer-release.pkg*) echo 'Types: deb' > '$d/etc/apt/sources.list.d/openmixer.sources' ;;
+  *openmixer-release.pkg*) echo 'Types: deb' > '$d/etc/apt/sources.list.d/openmixer.sources'
+    printf 'Enabled: no\nTypes: deb\n' > '$d/etc/apt/sources.list.d/openmixer-testing.sources' ;;
+  *update) ! grep -qx 'Enabled: yes' '$d/etc/apt/sources.list.d/openmixer-testing.sources' ||
+    echo 'Get:1 https://www.openmixer.org/staging/deb/debian/trixie ./ InRelease' ;;
 esac"
 stub "$d/bin" apt-cache "
 case \"\$*\" in

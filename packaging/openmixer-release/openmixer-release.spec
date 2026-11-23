@@ -6,7 +6,7 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        10%{?dist}
+Release:        11%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
 License:        MIT
 URL:            https://www.openmixer.org
@@ -31,6 +31,9 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
+* Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-11
+- The RPM is unchanged; released at 1-11 with the DEB, which gains the testing source (openmixer-testing.sources, the staging channel for trixie, Enabled: no).
+
 * Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-10
 - No dependency on freereac-release: OpenMixer's repository and FreeREAC's are independent, and openmixer-release installs on its own again from its one file (1-7 to 1-9 required freereac-release and refused `dnf install openmixer-release.noarch.rpm` on a clean machine). A rig that drives a stagebox adds FreeREAC's repository itself (openmixer-full requires reac-pw).
 

@@ -1,3 +1,12 @@
+openmixer-release (1-11) unstable; urgency=medium
+
+  * The testing source, /etc/apt/sources.list.d/openmixer-testing.sources:
+    the staging channel of the release wave for trixie, installed with
+    Enabled: no, as the RPM's openmixer-testing. Enabled: yes is the whole
+    opt-in, and an upgrade of the package keeps it.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 22:00:00 +0100
+
 openmixer-release (1-10) unstable; urgency=medium
 
   * No dependency on freereac-release: the OpenMixer and FreeREAC
