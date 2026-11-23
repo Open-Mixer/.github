@@ -335,7 +335,8 @@ st = [s for s in w["jobs"]["commit-messages"]["steps"] if "commit-message-check"
 assert st.get("upstream-url") == "${{ inputs.upstream-url }}", st
 a = yaml.safe_load(open(h + "/.github/actions/commit-message-check/action.yml"))
 assert a["inputs"]["upstream-url"]["default"] == "", "no exemption by default"
-runs = [s for s in a["runs"]["steps"] if "run" in s and "--selftest" not in s["run"]]
+# the steps that read commits (the title and body step reads text, which no upstream wrote)
+runs = [s for s in a["runs"]["steps"] if "run" in s and 'origin/$BASE_REF..HEAD' in s["run"]]
 assert len(runs) == 2, runs
 for s in runs:
     assert s["env"].get("UPSTREAM_URL") == "${{ inputs.upstream-url }}", s
