@@ -94,6 +94,8 @@ jobs:
         uses: ./.github/actions/commit-identity-check
       - name: The action reads this repository's own workflows
         uses: ./.github/actions/fedora-workflow-check
+      - name: The nproc check proves itself, then reads this repository's own workflows
+        uses: ./.github/actions/no-host-nproc
 
   # The same-pass action run as a local action: the dispatch list is the input, and with none the file at this commit
   # is read (this repository has none, so the list is empty). Its reader is proven by tests/same-pass.sh.
