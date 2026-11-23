@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Cancelling is for a pull request only: a tag push or a dispatch is a release run and is never cancelled.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   preflight:
     name: Check the release can publish

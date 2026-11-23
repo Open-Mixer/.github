@@ -25,6 +25,24 @@ if [ "$1" = configure ]; then
         exit 1
     fi
     ln -sfn "$src" /etc/apt/sources.list.d/openmixer.sources
+
+    # The testing source, the staging channel (as Fedora's updates-testing), is written from the package's copy
+    # for this release at every configure, so a new URI or key reaches the machine with the upgrade; the one line
+    # a tester changes, Enabled, keeps its value ("Enabled: yes" exactly; anything else is no). A release the
+    # testing channel does not serve gets no testing source.
+    testing=/etc/apt/sources.list.d/openmixer-testing.sources
+    tsrc=/usr/share/openmixer-release/testing/openmixer-testing-$codename.sources
+    if [ -f "$tsrc" ]; then
+        enabled=no
+        if [ -f "$testing" ] && grep -qx 'Enabled: yes' "$testing"; then
+            enabled=yes
+        fi
+        sed "s/^Enabled: no\$/Enabled: $enabled/" "$tsrc" > "$testing.dpkg-new"
+        chmod 644 "$testing.dpkg-new"
+        mv -f "$testing.dpkg-new" "$testing"
+    else
+        rm -f "$testing"
+    fi
 fi
 
 #DEBHELPER#

@@ -363,6 +363,7 @@ step "$here/.github/actions/purge-staging/action.yml" - '^Purge the staging tree
 mkdir -p "$t/g/bin" "$t/g/act"
 printf '#!/bin/bash\n[ -z "${TOUCH:-}" ] || echo changed >> "build/channel/$TOUCH"\n' > "$t/g/act/purge-staging.sh"
 chmod +x "$t/g/act/purge-staging.sh"
+mkdir -p "$t/g/release-matrix" && ln -s "$here/.github/actions/release-matrix/staged-cells.sh" "$here/.github/actions/release-matrix/quick.txt" "$t/g/release-matrix/"
 guard() { # <file the fake purge changes, or empty>
     rm -rf "$t/g/w"; mkdir -p "$t/g/w/build/channel/rpm" "$t/g/w/build/channel/staging/deb"
     (cd "$t/g/w/build/channel" && git init -q && echo a > rpm/a && echo b > staging/deb/b && git add -A &&

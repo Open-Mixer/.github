@@ -4,13 +4,24 @@
 
 # One apt source per Debian release the channel serves; postinst links the one of the running system.
 SUITES = bookworm trixie
+# The testing source (the staging channel, as Fedora's updates-testing): the Debian releases the testing channel
+# serves, trixie alone (owner ruling 2026-11-23: the testing channel carries only the tested platforms). It is the
+# real source with the staging tree for URI and Enabled: no; postinst writes it, keeping a tester's Enabled: yes.
+TESTING_SUITES = trixie
 
 %:
 	dh $@
 
 override_dh_auto_build:
-	mkdir -p debian/sources
+	mkdir -p debian/sources debian/testing
 	for s in $(SUITES); do sed "s/@SUITE@/$$s/" debian/openmixer.sources.in > debian/sources/openmixer-$$s.sources; done
+	for s in $(TESTING_SUITES); do \
+	    sed -e "s/@SUITE@/$$s/" -e 's|openmixer.org/deb/|openmixer.org/staging/deb/|' \
+	        -e '/^Types:/i # The testing source: the staging channel of the release wave, as Fedora updates-testing.\n# Set Enabled: yes (then apt update) to take its builds, Enabled: no to stop; an upgrade of\n# openmixer-release keeps the choice. Enabled, the newer build wins, as with updates-testing.\nEnabled: no' \
+	        debian/openmixer.sources.in > debian/testing/openmixer-testing-$$s.sources; \
+	    grep -qx 'Enabled: no' debian/testing/openmixer-testing-$$s.sources; \
+	    grep -q '^URIs: https://www.openmixer.org/staging/deb/debian/'"$$s"'/$$' debian/testing/openmixer-testing-$$s.sources; \
+	done
 
 override_dh_auto_clean:
-	rm -rf debian/sources
+	rm -rf debian/sources debian/testing

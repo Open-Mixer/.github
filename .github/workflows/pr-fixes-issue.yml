@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: pr-fixes-issue
+# Every pull request fixes an issue: its CURRENT body (read from the API) holds a closing keyword followed by #N,
+# Open-Mixer/<repo>#N or FreeREAC/<repo>#N. A workflow of its own, not a job of public-sources-check.yml, because the check
+# must read the pull request through the API and a private repository answers that only to a token with pull-requests: read;
+# a called workflow cannot widen past its own permissions block, and a pull-requests permission inside public-sources-check.yml
+# would fail every caller that grants less at workflow load, whatever the input. A caller adds one job, and grants the same two
+# permissions in it:
+#
+#   jobs:
+#     pr-fixes-issue:
+#       if: github.event_name == 'pull_request'
+#       permissions: { contents: read, pull-requests: read }
+#       uses: Open-Mixer/.github/.github/workflows/pr-fixes-issue.yml@openmixer-v1
+#
+# Require the check named `the pull request body closes an issue` in branch protection once the repository's open pull requests
+# carry a reference (the owner's step).
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: runner label (a private repository passes its own runners, e.g. arc-freemixer; a pull request from a fork always runs on GitHub-hosted runners)
+        type: string
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-fixes-issue:
+    name: the pull request body closes an issue
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      # reads the CURRENT body from the API: an edited body starts no run, and a re-run replays the old payload
+      - uses: Open-Mixer/.github/.github/actions/pr-fixes-issue@openmixer-v1
+        with:
+          number: ${{ github.event.pull_request.number }}
