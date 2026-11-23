@@ -4,7 +4,8 @@ name: release-preflight
 description: Say whether a run is a release or a dry run, and refuse a release that cannot publish
 
 # Used by the build-rpm and build-deb workflows before any build minutes are spent. A release is a publish
-# requested on a tag; anything else is a dry run and needs nothing.
+# requested on a tag; anything else is a dry run and needs nothing but the floors check, which every run makes: a
+# checked-out tree with packaging/deps.txt must state those floors everywhere (deps-render/floors.sh).
 
 inputs:
   publish:
@@ -55,6 +56,13 @@ inputs:
 runs:
   using: composite
   steps:
+    # the floors of packaging/deps.txt are the ones the spec, debian/control and the workflows state, on a dry run as on
+    # a release, so no tag publishes with deps.txt behind its packaging (.github#237); a tree with no deps.txt passes.
+    # The caller has checked the released tree out into the workspace (build-rpm.yml, build-deb.yml)
+    - name: The dependency floors are packaging/deps.txt's
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/../deps-render/floors.sh" "$GITHUB_WORKSPACE"'
+
     - shell: bash
       env:
         PUBLISH: ${{ inputs.publish }}

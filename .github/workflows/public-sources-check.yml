@@ -6,6 +6,7 @@ name: public-sources-check
 #   - (commit-identity: true) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
 #     by GitHub (commit-identity-check);
 #   - (fedora-workflows: true) no workflow names a Fedora release outside allowed-fedora (fedora-workflow-check);
+#   - (packaging/deps.txt present) its floors are the ones the spec, debian/control and the workflows state (deps-render);
 #   - no tracked file points into a private repository (private-refs-check); like the commit message check and the
 #     layout check, it skips only a repository that is private and carries the topic stays-private, read live from
 #     GitHub with the run's token (no input switches it off);
@@ -107,6 +108,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Open-Mixer/.github/.github/actions/private-refs-check@openmixer-v1
+
+  # the floors of packaging/deps.txt on every pull request of a repository that has the file, wired here once rather
+  # than in each repository's own CI (.github#237: plugin-hostd's pull requests never ran it); release-preflight runs
+  # the same check on the release path
+  deps-floors:
+    name: the floors are packaging/deps.txt's
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - if: hashFiles('packaging/deps.txt') != ''
+        uses: Open-Mixer/.github/.github/actions/deps-render@openmixer-v1
 
   public-layout:
     name: no dated document, no dated folder, no evidence or notes folder
