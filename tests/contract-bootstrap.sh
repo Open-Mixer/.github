@@ -18,6 +18,8 @@
 # rpm and deb prove, over a fixture library (a git repository served by file://):
 #   - the package: its files are install-contract's less those another package claims (a language pack's catalog),
 #     its dependencies are the packaging's, its version is the library's below its release;
+#   - deb: the package is the library's own snapshot build of it (build-deb.sh), every path and every file's bytes, the
+#     changelog as build-deb.sh renders it and the .dirs directories included (sabotage: either left out is red);
 #   - the versions: the bootstrap meets a consumer's floor (rpm: a consumer built with Requires >= <version> installs
 #     with it; deb: >= <version>~) and sorts below the library's own release of the version (sabotage: a bootstrap.sh
 #     whose rpm Release is 2, or whose deb version has no ~git, is red on that arm);
@@ -81,16 +83,18 @@ fi
 case $mode in rpm | deb) ;; *) echo "contract-bootstrap.sh: static, rpm or deb, not '$mode'" >&2; exit 2 ;; esac
 [ "$(id -u)" = 0 ] || { echo "contract-bootstrap.sh $mode installs packages: run it as root in a throwaway container" >&2; exit 2; }
 if [ "$mode" = rpm ]; then dnf install -y -q git make rpm-build >/dev/null 2>&1
-else apt-get update -qq && apt-get install -y -qq --no-install-recommends git make dpkg-dev ca-certificates >/dev/null; fi
+else apt-get update -qq && apt-get install -y -qq --no-install-recommends git make dpkg-dev ca-certificates python3 >/dev/null; fi
 git config --global user.name fixture; git config --global user.email fixture@invalid; git config --global init.defaultBranch main
 
 # the fixture library: owner/fx with a noarch / all -contract package, a language pack that claims the catalogs, and a
-# make install-contract that installs both
+# make install-contract that installs both; on Debian it builds as omx-clap-core does (debian/rules runs install-contract,
+# the -contract package's .dirs makes the language packs' directory), from a history with a release tag before it
 lib=$t/base/owner/fx; mkdir -p "$lib/packaging" "$lib/debian/source" "$lib/data" "$lib/catalogs"
 cd "$lib"; git init -q
+git commit -q --allow-empty -m 'the previous release'; git tag v1.1.0
 echo 1.2.0 > VERSION; echo GPL > COPYING; echo '# fx' > README.md
 echo '{"a": 1}' > data/fx.json; echo '{"ca": 1}' > catalogs/ca.json
-printf 'install-contract:\n\tinstall -D -m 644 data/fx.json $(DESTDIR)$(PREFIX)/share/omx-contract/contract.d/3/fx/fx.json\n\tinstall -D -m 644 catalogs/ca.json $(DESTDIR)$(PREFIX)/share/fx/catalogs/ca.json\n' > Makefile
+printf 'all:\n\ninstall-contract:\n\tinstall -D -m 644 data/fx.json $(DESTDIR)$(PREFIX)/share/omx-contract/contract.d/3/fx/fx.json\n\tinstall -D -m 644 catalogs/ca.json $(DESTDIR)$(PREFIX)/share/fx/catalogs/ca.json\n' > Makefile
 cat > packaging/fx.spec <<'EOF'
 Name: fx
 Version: 1.2.0
@@ -121,7 +125,10 @@ Source: fx
 Section: sound
 Priority: optional
 Maintainer: Fixture <fixture@invalid>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.0
 Homepage: https://example.invalid/fx
+Rules-Requires-Root: no
 
 Package: fx-contract
 Architecture: all
@@ -129,8 +136,18 @@ Multi-Arch: foreign
 Depends: omx-contract-data (>= 3.21.0~), ${misc:Depends}
 Description: fx's definitions
  fx's definitions, as files.
+
+Package: fx-l10n-ca
+Architecture: all
+Depends: ${misc:Depends}
+Description: fx in Catalan
+ fx's Catalan catalog.
 EOF
+printf '#!/usr/bin/make -f\n%%:\n\tdh $@\n\noverride_dh_auto_install:\n\t$(MAKE) install-contract DESTDIR=$(CURDIR)/debian/tmp PREFIX=/usr\n' > debian/rules
+chmod +x debian/rules
 echo 'usr/share/omx-contract/contract.d/3/fx' > debian/fx-contract.install
+echo 'usr/share/fx/catalogs/ca.json' > debian/fx-l10n-ca.install
+printf '# the language packs own the files, the data package the directory\nusr/share/fx/catalogs\n' > debian/fx-contract.dirs
 printf '# docs\nREADME.md\n' > debian/fx-contract.docs
 echo 'GPL' > debian/copyright; echo '3.0 (native)' > debian/source/format
 printf 'fx (1.2.0) unstable; urgency=medium\n\n  * fx.\n\n -- Fixture <fixture@invalid>  Mon, 23 Nov 2026 00:00:00 +0000\n' > debian/changelog
@@ -161,6 +178,33 @@ grep -qx '/usr/share/omx-contract/contract.d/3/fx/fx.json' <<< "$files" && pass 
 grep -q 'catalogs/ca.json' <<< "$files" && fail "carries the language pack's catalog" || pass "leaves the language pack's catalog out"
 grep -q 'README.md' <<< "$files" && pass "carries its documentation" || fail "lacks its documentation"
 grep -q 'omx-contract-data (\?>= 3.21.0' <<< "$deps" && ! grep -q 'misc:Depends' <<< "$deps" && pass "depends as its packaging says: $deps" || fail "dependencies: $deps"
+
+# Debian: the library's own snapshot build of the package (build-deb.sh, debhelper) at the same commit, and the bootstrap
+# are the same package: every path (directories included) and every file's bytes, the changelog as build-deb.sh renders
+# it among them (#240: the bootstrap release of omx-clap-contract 0.34.0 differed from omx-clap-core 8d263d3a's own
+# build in its changelog.gz and the language packs' directory). Sabotage: the rendering, or the .dirs, left out of
+# bootstrap.sh is red here.
+if [ "$mode" = deb ]; then
+  mkdir -p sab
+  git clone -q "$lib" own && git -C own -c advice.detachedHead=false checkout -q "$head"
+  "$root/.github/actions/build-deb/build-deb.sh" -C own -s '~git' -L ownout > own.log 2>&1 || { tail -20 own.log; fail "the library's own build"; }
+  ownbin=$(find ownout -name 'fx-contract_*_all.deb' | head -1)
+  layout() { # <deb>: every path it holds, then every file's sha256
+    local x; x=$(mktemp -d); dpkg-deb -c "$1" | awk '{print $6}' | sort; dpkg-deb -x "$1" "$x"
+    (cd "$x" && find . -type f | sort | xargs sha256sum); rm -rf "$x"; }
+  if [ -n "$ownbin" ]; then
+    d=$(diff <(layout "$ownbin") <(layout "$bin")) && pass "the same package as the library's own build: every path and file (${ownbin##*/})" \
+      || fail "differs from the library's own build ${ownbin##*/}: $(tr '\n' ' ' <<< "$d")"
+    for cut in RENDER DIRS; do
+      grep -v "# $cut\$" "$boot" > "sab/no-$cut.sh"
+      cmp -s "$boot" "sab/no-$cut.sh" && { fail "sabotage: no line marked $cut in bootstrap.sh"; continue; }
+      rm -rf "sab$cut"; mkdir -p "sab$cut"
+      bash "sab/no-$cut.sh" deb "owner/fx@$head:fx-contract" "sab$cut" >/dev/null 2>&1 || { fail "sabotage $cut: the broken bootstrap.sh did not build"; continue; }
+      diff -q <(layout "$ownbin") <(layout "$(find "sab$cut" -name '*.deb' | head -1)") >/dev/null \
+        && fail "sabotage: without its $cut line the bootstrap still equals the library's own build" || pass "sabotage: without its $cut line the bootstrap differs from the library's own build"
+    done
+  else fail "the library's own build made no fx-contract package: $(ls ownout 2>&1)"; fi
+fi
 
 # the versions: meets a consumer's floor, below the library's own release; each with its sabotage
 below_release() { # <version-release or deb version>
