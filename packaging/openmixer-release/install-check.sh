@@ -7,8 +7,8 @@
 #
 #   install-check.sh <openmixer-release .rpm or .deb, a file or a URL> <package of the channel>
 #
-# openmixer-release requires freereac-release: FREEREAC_RELEASE_URL (the FreeREAC channel's stable file, rpm or deb) is installed
-# in the same transaction, since neither repository exists on the clean machine yet. Unset, the package is installed alone.
+# The package is installed alone: it requires nothing another channel serves (the OpenMixer and FreeREAC channels are
+# independent, owner ruling 2026-11-23), and tests/install-check-one-channel.sh holds the check to that.
 #
 # SIGNED=0 skips the signature check of the RPM itself, for a dry run's unsigned build; the repository's
 # metadata and the probe package are verified either way.
@@ -31,7 +31,7 @@ esac
 
 if command -v dnf >/dev/null; then
     [ ! -e /etc/yum.repos.d/openmixer.repo ] || fail "this machine already has an openmixer.repo"
-    dnf install -y --setopt=install_weak_deps=False "$file" ${FREEREAC_RELEASE_URL:+"$FREEREAC_RELEASE_URL"}
+    dnf install -y --setopt=install_weak_deps=False "$file"
     cat /etc/yum.repos.d/openmixer.repo
     rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     rpm -qi gpg-pubkey | grep -E '^(Version|Summary|Packager)'
@@ -59,12 +59,7 @@ if command -v dnf >/dev/null; then
     dnf repoquery --repo openmixer --repo openmixer-noarch --qf '%{name}-%{evr}.%{arch} %{repoid}\n' openmixer-release || true
 else
     [ ! -e /etc/apt/sources.list.d/openmixer.sources ] || fail "this machine already has an openmixer.sources"
-    freereac=
-    if [ -n "${FREEREAC_RELEASE_URL:-}" ]; then
-        freereac=$work/freereac-release.deb
-        curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o "$freereac" "$FREEREAC_RELEASE_URL"
-    fi
-    apt-get install -y --no-install-recommends "$file" ${freereac:+"$freereac"}
+    apt-get install -y --no-install-recommends "$file"
     ls -l /etc/apt/sources.list.d/openmixer.sources
     cat /etc/apt/sources.list.d/openmixer.sources
     gpg --show-keys /usr/share/keyrings/openmixer-archive-keyring.asc
