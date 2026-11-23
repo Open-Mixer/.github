@@ -223,6 +223,10 @@ applies() { # <dir to read the origin of, or ''>: returns when the check runs; p
 
 if [ "${1:-}" = --self-test ]; then
   scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
+  # the fixture repositories read none of the host's git config and never run an editor: on omx and omx2 (2026-11-23)
+  # tag.gpgsign made the plain `tag base` below an annotated tag that asked EDITOR=/usr/bin/nano for a message, with no
+  # terminal, and the self-test failed there (rc 1) whatever the checker's version
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_EDITOR=true
   # the message mode reads its target's visibility and topics first; here a file:// API answers public, so the patterns
   # alone are judged, whatever repository (an opted-out one too) the self-test runs in, and with no token of its own
   mkdir -p "$scratch/api/repos/Open-Mixer"; printf '{"visibility":"public","topics":[]}\n' > "$scratch/api/repos/Open-Mixer/self-test"

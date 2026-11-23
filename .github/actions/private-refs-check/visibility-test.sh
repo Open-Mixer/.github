@@ -37,10 +37,11 @@ PRIV='{"visibility":"private","topics":["audio"]}'
 STAYS='{"visibility":"private","topics":["audio","stays-private"]}'
 # every run starts with no CI repository and no token: the arms set what they need; ANSWER is GitHub's reply
 run() { # <expected exit> <name> <output must match, or ''> -- <env...> -- <args...>
+  # (GIT_EDITOR is unset too: a caller's, a session's GIT_EDITOR=true, would hide the editor a host has)
   local want=$1 name=$2 pat=$3 envs=() out rc=0 a=$PUB; shift 4
   while [ "$1" != -- ]; do case "$1" in ANSWER=*) a=${1#ANSWER=} ;; *) envs+=("$1") ;; esac; shift; done; shift
   answer "$a"
-  out=$(env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY -u GH_TOKEN -u GITHUB_TOKEN PATH="$NOGH" GITHUB_API_URL="file://$API" \
+  out=$(env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY -u GH_TOKEN -u GITHUB_TOKEN -u GIT_EDITOR PATH="$NOGH" GITHUB_API_URL="file://$API" \
     "${envs[@]}" bash "$chk" "$@" 2>&1) || rc=$?
   if [ "$rc" != "$want" ]; then echo "FAIL $name: exit $rc, wanted $want"; printf '%s\n' "$out" | sed 's/^/  /'; fails=1; return; fi
   if [ -n "$pat" ] && ! grep -qE "$pat" <<<"$out"; then echo "FAIL $name: exit $rc but no line matching [$pat]"; printf '%s\n' "$out" | sed 's/^/  /'; fails=1; return; fi
@@ -154,6 +155,14 @@ run 0 "applies: the no is its last line"                     '^applies: no$' -- 
 run 2 "applies: lookup fails: refused by name"               'REFUSED' -- $T ANSWER=ABSENT -- --applies "$tmp/t"
 # the self-test proves the patterns, never the target: it is green in an opted-out repository's CI too, and with no token
 run 0 "self-test in an opted-out repository's CI"            'every sabotage red' -- ANSWER="$STAYS" GITHUB_ACTIONS=true GITHUB_REPOSITORY=Open-Mixer/fixture -- --self-test
+# the self-test on a host whose git signs every commit and tag and opens an editor (omx and omx2, 2026-11-23: tag.gpgsign
+# made the fixture's lightweight tag an annotated one that asked EDITOR=/usr/bin/nano for its message, with no terminal):
+# its scratch git reads none of the host's config and never runs an editor. The editor here records a call and fails.
+printf '[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[user]\n\tsigningkey = 0000000000000000\n[core]\n\teditor = %s\n' "$tmp/editor" > "$tmp/hostcfg"
+printf '#!/bin/sh\necho called >> "%s"\nexit 1\n' "$tmp/editor-called" > "$tmp/editor"; chmod +x "$tmp/editor"
+run 0 "self-test on a host that signs tags and has an editor, no terminal" 'every sabotage red' -- \
+  GIT_CONFIG_GLOBAL="$tmp/hostcfg" EDITOR="$tmp/editor" VISUAL="$tmp/editor" -- --self-test </dev/null
+if [ -e "$tmp/editor-called" ]; then echo "FAIL the self-test ran an editor"; fails=1; else echo "ok the self-test never ran an editor"; fi
 
 # the hand exemption is gone: the reusable workflow declares no private-refs input and no job reads one, and the
 # public-layout check asks the same opt-out before it reads the tree
