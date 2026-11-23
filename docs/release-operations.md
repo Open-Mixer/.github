@@ -623,22 +623,34 @@ A channel serves exactly one key and the two channels share none. `tests/channel
 
 The two channels are independent (owner ruling 2026-11-23, .github#224): neither serves a package of the other,
 openmixer-release requires nothing FreeREAC's channel serves (1-10), `add-openmixer` installs one channel's release
-package per call, and the installability gate reads no channel but the one it judges. A job that needs both adds each.
+package per call, and the installability gate reads no channel but the one it judges. A job that needs both adds each;
+a REAC rig adds FreeREAC's repository (`freereac-release`) for reac-pw.
 
-### Taking the mirrored freereac-release out of the channel
+The tree scripts refuse the crossing (`publish-rpms/channel-owner.sh`, `tests/channel-owner.sh`): a run of one house
+organisation publishing into the other's channel, or a package whose URL (rpm) or Homepage (deb) names one
+(`github.com/FreeREAC/`, `freereac.github.io`; `github.com/Open-Mixer/`, `openmixer.org`) going into the other's, is
+refused before anything is placed. FreeREAC's packages had reached this channel two ways: FreeREAC release.yml files that
+named no `target-repo` (libreac and reac-pw until 2026-11-18) took the default, `Open-Mixer/open-mixer.github.io`, and a
+republish workflow of this repository (publish-freereac.yml, removed) built libreac 1.11.0 and reac-stageboxes 0.1.0 for
+it; the freereac-release mirror (removed) was the third.
 
-openmixer-release 1-7 to 1-9 required freereac-release, and a mirror (removed) served FreeREAC's freereac-release 1-2
-from this channel: `rpm/fedora/45/noarch`, `deb/debian/trixie/all` and its changelog. The channel's prune cannot drop
-it, because openmixer-release 1-9 (still served) requires it. `remove-freereac-release.yml` does, and removes nothing
-else: `tools/remove-freereac-release.sh` takes out the files that are freereac-release by their own header, makes the
-metadata again with the publish's tree scripts and signs it, and refuses any other change (`tests/remove-freereac-release.sh`).
-Once openmixer-release 1-10 is published, the tag runs it, from a checkout of main (a dispatch is a dry run):
+### Taking FreeREAC's packages out of the channel
+
+The channel's prune cannot drop them: openmixer-release 1-9, still served, requires freereac-release.
+`remove-freereac-packages.yml` does, and removes nothing else: `tools/remove-freereac-packages.sh` takes out the files whose
+own header names a FreeREAC source (freereac-release, libreac, reac-pw, reac-stageboxes, a constant) and FreeREAC as home,
+and only where FreeREAC's channel serves the same package at the same version or newer for the cell; every other one is
+kept and printed as a gap. It makes the metadata again with the publish's tree scripts, signs it, and refuses any other
+change (`tests/remove-freereac-packages.sh`). Once openmixer-release 1-10 is published, the tag runs it, from main (a
+dispatch is a dry run):
 
 ```
-git tag -s -m 'remove-freereac-release-1' remove-freereac-release-1 origin/main
-git push origin remove-freereac-release-1
+git tag -s -m 'remove-freereac-packages-1' remove-freereac-packages-1 origin/main
+git push origin remove-freereac-packages-1
 ```
 
-Afterwards `dnf repoquery --repo openmixer-noarch freereac-release` and `apt-cache policy freereac-release` on a machine
-with the channel alone find nothing, and openmixer-release 1-9 is left uninstallable from this channel alone, which
-dnf and apt never offer while 1-10 is the newest. The workflow, the script and the test are deleted once the tag has run.
+A dry run on 2026-11-23 removed 33 rpm and 11 deb files and kept 22 for gaps: the fc44/fc45 source rpms (FreeREAC's
+channel serves no SRPMS) and every bookworm deb (it serves no bookworm). Those stay until FreeREAC serves them or the owner
+rules them dropped; a second tag then removes them. openmixer-release 1-9 is left uninstallable from this channel alone,
+which dnf and apt never offer while 1-10 is the newest. The workflow, the script and the test are deleted once nothing is
+left to remove.
