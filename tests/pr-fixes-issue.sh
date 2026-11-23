@@ -12,17 +12,15 @@ chk=$act/pr-fixes-issue.py
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# a fake gh answers `gh api repos/R/pulls/N -q .body` from $BODYFILE; the body is read from the API, as in the action
-mkdir "$tmp/bin"
-cat > "$tmp/bin/gh" <<'GH'
-#!/bin/sh
-[ "$1" = api ] && [ "$2" = repos/o/r/pulls/7 ] || { echo "gh: unexpected $*" >&2; exit 1; }
-[ -f "$BODYFILE" ] || { echo "gh: HTTP 404" >&2; exit 1; }
-cat "$BODYFILE"
-GH
-chmod +x "$tmp/bin/gh"
-export PATH="$tmp/bin:$PATH" BODYFILE="$tmp/body" PR_REPO=o/r
-runc() { local s=$1; shift; printf '%s' "$1" > "$BODYFILE"; PR_NUMBER=7 python3 -I "$s" >"$tmp/out" 2>&1; }
+# the body is read from the API through urllib, with NO gh on PATH (the self-hosted runner has none): GITHUB_API_URL points at a
+# file:// stand-in tree holding repos/o/r/pulls/7 as the JSON the API serves; one arm below uses a real local HTTP server
+py=$(command -v python3)
+mkdir -p "$tmp/api/repos/o/r/pulls" "$tmp/bin"
+for t in grep rm cat sed touch mkdir env; do ln -s "$(command -v $t)" "$tmp/bin/$t"; done
+export PATH="$tmp/bin" GITHUB_API_URL="file://$tmp/api" BODYFILE="$tmp/body" PR_REPO=o/r
+! command -v gh >/dev/null || fail "gh is on the test PATH"
+setbody() { "$py" -I -c 'import json,sys; json.dump({"body": sys.argv[1]}, open(sys.argv[2], "w"))' "$1" "$tmp/api/repos/o/r/pulls/7"; }
+runc() { local s=$1; shift; setbody "$1"; PR_NUMBER=7 "$py" -I "$s" >"$tmp/out" 2>&1; }
 red() { local rc=0; runc "$chk" "$2" || rc=$?; [ "$rc" = 1 ] || fail "red plant '$1' gave $rc: $(cat "$tmp/out")"; }
 green() { runc "$chk" "$2" || fail "green plant '$1' refused: $(cat "$tmp/out")"; }
 
@@ -57,17 +55,39 @@ green "a good reference after a code block" $'```\nFixes #99999\n```\nFixes #12'
 green "CRLF line endings" $'Intro\r\nFixes #12\r\n'
 
 # a body that cannot be read is exit 2, never a pass: no API answer, no pull request, no repository
-rc=0; rm -f "$BODYFILE"; PR_NUMBER=7 python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no API answer gave $rc, not 2"
-printf 'Fixes #1' > "$BODYFILE"
-rc=0; PR_NUMBER= python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no pull request gave $rc, not 2"
-rc=0; env -u PR_REPO PR_NUMBER=7 python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no repository gave $rc, not 2"
+rc=0; rm -f "$tmp/api/repos/o/r/pulls/7"; PR_NUMBER=7 "$py" -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no API answer gave $rc, not 2"
+setbody 'Fixes #1'
+rc=0; PR_NUMBER= "$py" -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no pull request gave $rc, not 2"
+rc=0; env -u PR_REPO PR_NUMBER=7 "$py" -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no repository gave $rc, not 2"
 
 # the CURRENT body decides, not the event payload: the payload (PR_BODY, as an old run replays it) lacks the reference and the
 # API has it -> green; the reverse -> red
-printf 'Fixes #12' > "$BODYFILE"
-rc=0; PR_NUMBER=7 PR_BODY="no reference" python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 0 ] || fail "a fixed body stayed red ($rc)"
-printf 'no reference now' > "$BODYFILE"
-rc=0; PR_NUMBER=7 PR_BODY="Fixes #12" python3 -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 1 ] || fail "a payload body hid an edit that removed the reference ($rc)"
+setbody 'Fixes #12'
+rc=0; PR_NUMBER=7 PR_BODY="no reference" "$py" -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 0 ] || fail "a fixed body stayed red ($rc)"
+setbody 'no reference now'
+rc=0; PR_NUMBER=7 PR_BODY="Fixes #12" "$py" -I "$chk" >/dev/null 2>&1 || rc=$?; [ "$rc" = 1 ] || fail "a payload body hid an edit that removed the reference ($rc)"
+
+# the same read over a real HTTP server (one foreground driver: serves the JSON, runs the checker, checks the bearer token)
+setbody 'Fixes #12'
+rc=0; "$py" -I - "$chk" "$tmp/api/repos/o/r/pulls/7" >"$tmp/out" 2>&1 <<'PY' || rc=$?
+import http.server, os, subprocess, sys, threading
+chk, f = sys.argv[1:3]
+seen = []
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        seen.append((self.path, self.headers.get('Authorization')))
+        b = open(f, 'rb').read()
+        self.send_response(200); self.send_header('Content-Length', str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(('127.0.0.1', 0), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+env = dict(os.environ, GITHUB_API_URL='http://127.0.0.1:%d' % srv.server_port, GH_TOKEN='tok', PR_NUMBER='7')
+r = subprocess.run([sys.executable, '-I', chk], env=env, capture_output=True, text=True)
+srv.shutdown()
+assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+assert seen == [('/repos/o/r/pulls/7', 'Bearer tok')], seen
+PY
+[ "$rc" = 0 ] || fail "the HTTP read: $(cat "$tmp/out")"
 
 # a hostile body is data: a shell metacharacter body is judged, never run
 runc "$chk" '$(touch '"$tmp"'/pwned) `touch '"$tmp"'/pwned2` Fixes #1' || fail "a body with shell syntax was refused"
@@ -75,7 +95,7 @@ runc "$chk" '$(touch '"$tmp"'/pwned) `touch '"$tmp"'/pwned2` Fixes #1' || fail "
 
 # the workflow: its own reusable file, its job reads the API with pull-requests: read, the shared public-sources-check.yml
 # declares no pull-requests permission (so every existing caller stays valid) and carries no trace of this check
-python3 -I - "$here" <<'PY' || fail "workflow wiring"
+"$py" -I - "$here" <<'PY' || fail "workflow wiring"
 import sys, yaml
 h = sys.argv[1]
 w = yaml.safe_load(open(h + "/.github/workflows/pr-fixes-issue.yml"))

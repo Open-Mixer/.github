@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 """pr-fixes-issue: a pull request body carries a closing reference.
 
-The CURRENT body is read from the API (GET repos/{PR_REPO}/pulls/{PR_NUMBER} through `gh api`, the job token, read-only), not
+The CURRENT body is read from the API (GET repos/{PR_REPO}/pulls/{PR_NUMBER} through urllib at GITHUB_API_URL, default https://api.github.com, with the job token, read-only; no gh CLI is needed, the self-hosted runner has none), not
 from the event payload: editing a body starts no run with the default event types, and a re-run replays the OLD payload, so a
 payload body would keep a fixed pull request red. PR_NUMBER and PR_REPO come from the environment; the body is data, never
 spliced into a shell line. A closing reference is a
@@ -14,10 +14,11 @@ a reference to any other owner is refused by name, even beside a good one.
 
 Exit 0 good, 1 refused (the missing piece is named), 2 the body could not be read (never a pass).
 """
+import json
 import os
 import re
-import subprocess
 import sys
+import urllib.request
 
 KEYWORD = r'(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)'
 OWNERS = ('open-mixer', 'freereac')
@@ -52,12 +53,19 @@ def judge(body):
 
 def read_body(repo, number):
     """The pull request's current body from the API, or None when it cannot be read."""
-    p = subprocess.run(['gh', 'api', 'repos/%s/pulls/%s' % (repo, number), '-q', '.body // ""'], capture_output=True, text=True)
-    if p.returncode != 0:
+    api = os.environ.get('GITHUB_API_URL') or 'https://api.github.com'
+    req = urllib.request.Request('%s/repos/%s/pulls/%s' % (api.rstrip('/'), repo, number), headers={
+        'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'pr-fixes-issue'})
+    token = os.environ.get('GH_TOKEN')
+    if token:
+        req.add_header('Authorization', 'Bearer ' + token)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode('utf-8')).get('body') or ''
+    except (OSError, ValueError, AttributeError) as e:
         print('pr-fixes-issue: the API did not give the body of %s#%s (a private repository needs the caller to grant '
-              'pull-requests: read): %s' % (repo, number, p.stderr.strip()), file=sys.stderr)
+              'pull-requests: read): %s' % (repo, number, e), file=sys.stderr)
         return None
-    return p.stdout
 
 
 def main():

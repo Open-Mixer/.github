@@ -66,8 +66,8 @@ grep -q 'omx-needs-new 1.0-1.fc45.noarch is new and does not install' "$t/real-r
 ok "on the real channel alone: omx-tool is GREEN, omx-needs-new (omx-lib >= 3.14) is RED"
 
 BASE_URL=file://$ch "$here/.github/actions/add-openmixer/add-staging.sh" >/dev/null
-dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --setopt='*.repo_gpgcheck=0' makecache >/dev/null || fail "the staging channel does not load"
-dnf repoquery --disablerepo='*' --enablerepo='openmixer*' --setopt='*.repo_gpgcheck=0' omx-lib > "$t/rq" 2>&1 || true; grep -q 'omx-lib-0:3.14.0-1.git5f455d3' "$t/rq" || { cat "$t/rq"; fail "the staged minor is not visible to dnf"; }
+dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' --setopt='*.repo_gpgcheck=0' makecache >/dev/null || fail "the staging channel does not load"
+dnf repoquery --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' --setopt='*.repo_gpgcheck=0' omx-lib > "$t/rq" 2>&1 || true; grep -q 'omx-lib-0:3.14.0-1.git5f455d3' "$t/rq" || { cat "$t/rq"; fail "the staged minor is not visible to dnf"; }
 v=$(verdict staged-ok "$t/new-ok"); [ "$v" = "$green" ] || { cat "$t/staged-ok.out"; fail "a staged minor changed omx-tool's verdict to $v"; }
 v=$(verdict staged-red "$t/new-red"); [ "$v" = "$red" ] || { cat "$t/staged-red.out"; fail "a staged minor changed omx-needs-new's verdict to $v"; }
 grep -q '3\.14\.0' "$t/staged-ok.out" "$t/staged-red.out" && fail "the gate's report names the staged omx-lib 3.14.0"

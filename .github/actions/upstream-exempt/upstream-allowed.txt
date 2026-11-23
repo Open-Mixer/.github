@@ -1,0 +1,6 @@
+# upstream-allowed.txt: the upstream repositories whose history a fork carries UNSIGNED, authored by others and with messages that
+# cannot be reworded. One URL per line, matched EXACTLY against the URL given to upstream-exempt.sh (no normalising, no prefix, no case
+# folding); blank lines and # lines are ignored. Entries are zynthian/* only. Adding a line is a reviewed PR.
+https://github.com/zynthian/zynthian-ui.git
+https://github.com/zynthian/zynthian-sys.git
+https://github.com/zynthian/zynthian-webconf.git

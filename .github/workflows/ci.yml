@@ -59,18 +59,22 @@ jobs:
       - run: tests/langpacks-fill-runner.sh
       - run: tests/release-checks.sh
       - run: tests/publish-only-by-tag.sh
+      - run: tests/cancel-scope.sh
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
       - run: tests/add-openmixer-release-package.sh
+      - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
       - run: tests/release-matrix.sh
+      - run: tests/staged-cells.sh
       - run: tests/check-matrix.sh
       - run: tests/build-deb-install-cells.sh
       - run: tests/no-hardcoded-cells.sh
       - run: tests/release-package-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/contract-bootstrap.sh static
       - run: tests/catch-up-plan.sh
       - run: tests/ci-steps.sh
       - run: tests/no-retired-debian-release.sh
@@ -124,6 +128,34 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: .github/scripts/v1-not-behind.sh origin "$BASE_REF" openmixer-v1
 
+  contract-bootstrap:
+    name: Contract bootstrap (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: rpm
+            image: fedora:45
+            tools: dnf install -y --setopt=install_weak_deps=False git
+          - kind: deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
+    steps:
+      - name: Install git for the checkout
+        run: ${{ matrix.tools }}
+
+      - uses: actions/checkout@v4
+
+      # a -contract data package built alone from a fixture library at a named commit: its files and dependencies, its
+      # version against a consumer's floor and the library's release, and the commit refusals, each with its sabotage
+      - name: The bootstrap builds the package, at a version between the floor and the release, from the named commit only
+        shell: bash
+        run: tests/contract-bootstrap.sh ${{ matrix.kind }}
+
   key-transition:
     name: Key transition (${{ matrix.kind }})
     runs-on: ubuntu-latest
@@ -136,10 +168,10 @@ jobs:
         include:
           - kind: rpm
             image: fedora:45
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils git
           - kind: deb
             image: debian:trixie
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev git ca-certificates
     steps:
       - name: Install the packaging tools
         run: ${{ matrix.tools }}
@@ -175,9 +207,13 @@ jobs:
         shell: bash
         run: tests/channel-profile.sh ${{ matrix.kind }}
 
-      - name: The mirror of freereac-release verifies its source and refuses every lie
+      - name: FreeREAC's packages leave the channel where FreeREAC serves them, and nothing else does
         shell: bash
-        run: tests/mirror-release.sh ${{ matrix.kind }}
+        run: tests/remove-freereac-packages.sh ${{ matrix.kind }}
+
+      - name: A package of one organisation never goes into the other organisation's channel
+        shell: bash
+        run: tests/channel-owner.sh ${{ matrix.kind }}
 
       - name: A package planted in the channel is refused, never signed
         shell: bash
@@ -265,6 +301,20 @@ jobs:
         shell: bash
         run: tests/staging-bootstrap.sh ${{ matrix.kind }}
 
+  testing-source-round-trip:
+    name: The Debian testing source hides a staged package while disabled and installs it once enabled
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install the packaging tools
+        run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev build-essential debhelper lintian python3 python3-yaml curl ca-certificates
+      - uses: actions/checkout@v4
+      - name: openmixer-release built here, a staged package on a signed staging tree, the source off, on, off
+        shell: bash
+        run: tests/testing-source-round-trip.sh
+
   staging-installability:
     name: channel-installability judges the real channel alone
     runs-on: ubuntu-latest
@@ -348,6 +398,12 @@ jobs:
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
           - arm: rpm
+            image: fedora:45
+            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
+          - arm: one_channel_deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
+          - arm: one_channel_rpm
             image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
     steps:
@@ -466,6 +522,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: tests/surge-xt-package.sh
 
+  jackd2-package:
+    name: the jackd2 package, its pins, its patch header and its release workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/jackd2-package.sh
+
   rncbc-v1-package:
     name: the synthv1 and samplv1 packages, their pins, their patch and where they sort
     runs-on: ubuntu-latest
@@ -559,7 +623,16 @@ jobs:
       # this repository's own tree, the one that defines the rule: no ceiling in its workflows or any other file it ships
       - run: .github/actions/deps-render/render.sh --check .
       - uses: ./.github/actions/private-refs-check
+      - name: The private-refs check skips a private target by its live visibility, and refuses an unknown one
+        run: .github/actions/private-refs-check/visibility-test.sh
       - uses: ./.github/actions/spdx-check
       - run: tests/trigger-gate.sh
       - name: The trigger gate reads this repository's own workflows (this file is the one lint)
         run: .github/actions/trigger-gate/check.sh --lint ci.yml .
+
+  pr-fixes-issue:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: Open-Mixer/.github/.github/workflows/pr-fixes-issue.yml@openmixer-v1

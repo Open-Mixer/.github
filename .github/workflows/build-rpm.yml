@@ -79,6 +79,14 @@ on:
         type: boolean
         default: false
         description: 'Add the staging channel at a higher priority than the real one to the build containers (staged: true implies it). A dry run only: never on a tag, with source-ref or with publish.'
+      bootstrap:
+        type: string
+        default: ''
+        description: 'A real build-dependency cycle (Open-Mixer/.github#230): -contract data packages of a sibling, each built alone from its source at a named commit before the build (actions/contract-bootstrap), space separated <owner>/<repo>@<full commit>:<package>. Installed in the build container to meet the build''s dependencies and never released; the sibling''s own release replaces them'
+      bootstrap-only:
+        type: boolean
+        default: false
+        description: 'Release the one bootstrap package itself instead of the calling repository''s tree: package-name is that package, source-ref is v<its version>, and it goes out at the house snapshot version below the sibling''s own release (rpm Release 0.git<time>.<sha>, deb <version>~git<time>.<sha>), which replaces it. For a cycle whose consumer releases before the sibling (contract-bootstrap.yml)'
       staging-bootstrap:
         type: boolean
         default: false
@@ -248,6 +256,34 @@ jobs:
           [ "$PUBLISH" != true ] || no "staged and staging exclude publish: a staged run publishes to the staging channel only, and a release never builds against it"
           [ "$STAGED" != true ] || [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
 
+      # bootstrap: each entry names one sibling commit in full; bootstrap-only releases exactly one such package, of the
+      # version source-ref names, against the real channel, from the sibling's source and not this repository's
+      - name: Read the bootstrap
+        if: inputs.bootstrap != '' || inputs.bootstrap-only
+        env:
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+          ONLY: ${{ inputs.bootstrap-only }}
+          NAME: ${{ inputs.package-name }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          STAGED: ${{ inputs.staged }}
+          STAGING: ${{ inputs.staging }}
+        run: |
+          no() { echo "::error::$*"; exit 1; }
+          re='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}:[A-Za-z0-9][A-Za-z0-9._+-]*-contract$'
+          n=0
+          for e in $BOOTSTRAP; do
+            [[ $e =~ $re ]] || no "bootstrap entry '$e' is not <owner>/<repo>@<full 40-character commit>:<package>-contract"
+            n=$((n + 1)) pkg=${e##*:}
+          done
+          [ "$ONLY" != true ] || {
+            [ "$n" -eq 1 ] || no "bootstrap-only releases ONE bootstrap package, and bootstrap names $n"
+            [ "$pkg" = "$NAME" ] || no "bootstrap-only: package-name is $NAME, the bootstrap package is $pkg"
+            [ "$STAGED" != true ] && [ "$STAGING" != true ] || no "bootstrap-only is a release against the real channel: not staged or staging"
+            [ -z "$SOURCE_REPOSITORY" ] || no "bootstrap-only builds the commit its entry names: no source-repository"
+            [[ $SOURCE_REF =~ ^v[0-9] ]] || no "bootstrap-only needs source-ref v<version>, the version of the package it releases"
+          }
+
       - name: Read the stage
         env:
           STAGE: ${{ inputs.stage }}
@@ -256,6 +292,7 @@ jobs:
 
       # git history is the changelog: nothing here reads a CHANGELOG.md
       - uses: actions/checkout@v4
+        if: ${{ !inputs.bootstrap-only }}
         with:
           repository: ${{ inputs.source-repository || github.repository }}
           ref: ${{ inputs.source-ref && format('refs/tags/{0}', inputs.source-ref) || '' }}
@@ -264,7 +301,7 @@ jobs:
           persist-credentials: ${{ inputs.source-repository == '' }}
 
       - name: Check the checkout is the verified commit
-        if: inputs.source-sha != ''
+        if: inputs.source-sha != '' && !inputs.bootstrap-only
         env:
           WANT: ${{ inputs.source-sha }}
         run: |
@@ -314,6 +351,7 @@ jobs:
             pipewire-jack-audio-connection-kit-devel $EXTRA
 
       - uses: actions/checkout@v4
+        if: ${{ !inputs.bootstrap-only }}
         with:
           repository: ${{ inputs.source-repository || github.repository }}
           ref: ${{ inputs.source-ref && format('refs/tags/{0}', inputs.source-ref) || '' }}
@@ -322,7 +360,7 @@ jobs:
           persist-credentials: ${{ inputs.source-repository == '' }}
 
       - name: Check the checkout is the verified commit
-        if: inputs.source-sha != ''
+        if: inputs.source-sha != '' && !inputs.bootstrap-only
         env:
           WANT: ${{ inputs.source-sha }}
         run: |
@@ -330,7 +368,7 @@ jobs:
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
       - uses: Open-Mixer/.github/.github/actions/mod-host-rpms@openmixer-v1
-        if: inputs.needs-mod-host
+        if: inputs.needs-mod-host && !inputs.bootstrap-only
 
       # for the build only: the repository exists in this container and is never a dependency of a release
       # staged or staging: the staging channel beside it, at a higher priority, so the build takes what the wave staged
@@ -358,7 +396,33 @@ jobs:
             dnf repoquery "${repos[@]}" --qf '%{name}-%{evr}.%{arch}'
           fi
 
+      # bootstrap (Open-Mixer/.github#230): a sibling's -contract data packages, each built alone at its named commit;
+      # installed here for the build and never released, or, with bootstrap-only, the release itself
+      - uses: Open-Mixer/.github/.github/actions/contract-bootstrap@openmixer-v1
+        if: inputs.bootstrap != ''
+        with:
+          kind: rpm
+          entries: ${{ inputs.bootstrap }}
+          out: ${{ inputs.bootstrap-only && 'rpms' || 'bootstrap' }}
+          install: ${{ !inputs.bootstrap-only }}
+
+      - name: The bootstrap package is the version the release names
+        if: inputs.bootstrap-only
+        env:
+          ARCH: ${{ matrix.arch }}
+          FIRST_ARCH: ${{ needs.preflight.outputs.first-arch }}
+          NAME: ${{ inputs.package-name }}
+        run: |
+          set -euo pipefail
+          v=$(rpm -qp --qf '%{version}' rpms/"$NAME"-[0-9]*.noarch.rpm)
+          [ "v$v" = "$RELEASE_TAG" ] || { echo "::error::the bootstrap package is $NAME $v, and the release is $RELEASE_TAG"; exit 1; }
+          # a noarch package and its source: the first architecture ships them, as for any release
+          mkdir -p release
+          [ "$ARCH" != "$FIRST_ARCH" ] || cp rpms/"$NAME"-[0-9]*.rpm release/
+          find release -name '*.rpm' | sort | tee release.txt
+
       - uses: Open-Mixer/.github/.github/actions/build-rpm@openmixer-v1
+        if: ${{ !inputs.bootstrap-only }}
         with:
           max-jobs: ${{ vars.OMX_RUNNER_CPUS || '3' }}
           tag: ${{ env.RELEASE_TAG }}
@@ -372,6 +436,7 @@ jobs:
           base-url: ${{ inputs.base-url }}
 
       - name: Refuse an empty build, and one of another architecture
+        if: ${{ !inputs.bootstrap-only }}
         env:
           ARCH: ${{ matrix.arch }}
           FIRST_ARCH: ${{ needs.preflight.outputs.first-arch }}
