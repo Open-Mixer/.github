@@ -267,17 +267,32 @@ staged.
 ### Promoting a staged version
 
 `promote-staged.yml` makes a staged build the release without building it again, so what the layers above were built
-and verified against is what ships. A repository calls it from a `promote.yml` of its own (triggered by the push of the tag `v<version>`, with
+and verified against is what ships.
+
+**RULED (owner, 2026-11-23, .github#235):** promote-staged works under the tested-platforms ruling. It KEEPS the
+staged packages of the tested cells (fc45 x86_64, trixie arm64, with their noarch, all and source packages)
+byte-identical, their signatures re-checked, never rebuilt, and BUILDS only the cells the staged run could not hold,
+from exactly the staged commit, then publishes through the tag's release path every cell that built and passed its
+install check. A cell that fails is NOT published: the run names it as failed in its summary and its job is red; it is
+fixed and published afterwards by a re-run of the promotion for the same commit, which builds and publishes only the
+cells the channel root does not serve yet and leaves every published file byte-identical. A repository calls it from a `promote.yml` of its own (triggered by the push of the tag `v<version>`, with
 `contents: write`; the header of `promote-staged.yml` has the caller). The version is the tag's and the commit is the
 one the tag is on; a dispatch of the caller is a dry run that takes `version` and `commit` as inputs.
 
-1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
-   architecture of the matrix, with its source package, and must cover every release the channel root serves the
-   package for. The commit must be on the default branch.
-   A staged build of the quick set does not hold every cell, so it is refused here by name. Since a staged run
-   holds the quick set alone (the ruling above), a version whose matrix is wider is released from its tag.
+1. **Find.** The staging tree must hold the build of that one commit for every TESTED cell of the matrix (quick.txt),
+   with its source package, and must cover every release the channel root serves the package for. The commit must be
+   on the default branch. A tested cell staging lacks is refused by name; every other cell of the matrix that the
+   channel root does not already serve for this version and commit is listed as missing (`collect.py --missing`), to
+   be built. A cell the root serves is neither built nor published again.
+2. **Build the missing cells.** Each missing cell is built from the staged commit, as a snapshot of that commit, so
+   its version string is the staged build's (`+git<commit time>.<sha>`, `.git<commit time>.<sha>`).
+   `built-cells.py` keeps, per cell, the files of the staged commit and version and drops any other, refuses a built
+   file of a kept cell (a tested cell is never rebuilt), and lists every missing cell that has no build or failed
+   its install check as FAILED: it is left out of the publish, named in the run summary, and the job ends red after
+   the healthy cells are published.
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
-   the signed staging index of its suite. Nothing is signed by a promotion.
+   the signed staging index of its suite. The kept packages are not signed again; the built ones are signed by the
+   publish, as a release's are.
 3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
    the channel; the metadata is regenerated and signed, the packages are placed as they are, and the tree is compared
    with the staged checksums before the push is trusted.
