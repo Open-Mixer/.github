@@ -85,12 +85,37 @@ ok "the staged names with a commit time before the sha are found by their sha"
 refuses "two staged commits, none named" 'of 2 commits \(0badc0d 5f455d3\)' "$t/c" "${rpm_args[@]}"
 refuses "a version staging does not hold" 'holds no omx-lib 3.15.0' "$t/c" rpm --name omx-lib --version 3.15.0 --releases 44 --arches x86_64
 refuses "a commit staging does not hold" 'holds no omx-lib 3.14.0 of commit abcdef0' "$t/c" "${rpm_args[@]}" --commit abcdef0
-channel "$t/d"; rm -rf "$t/d/staging/rpm/fedora/45/aarch64" "$t/d/staging/deb/debian/bookworm/arm64"
-refuses "rpm: a missing distribution directory" 'staging/rpm/fedora/45/aarch64 holds no omx-lib 3.14.0 of 5f455d3' "$t/d" "${rpm_args[@]}" --commit 5f455d3
-refuses "deb: a missing distribution directory" 'staging/deb/debian/bookworm/arm64 holds no libomx-lib0 3.14.0 of 5f455d3' "$t/d" "${deb_args[@]}" --commit 5f455d3
-channel "$t/e"; rm "$t/e/staging/rpm/fedora/44/SRPMS/omx-lib-3.14.0-1.git5f455d3.fc44.src.rpm" "$t/e/staging/deb/debian/trixie/all/omx-lib-data_3.14.0+git5f455d3_all.deb"
-refuses "rpm: a release with no source package" 'fedora/44/SRPMS holds no source package' "$t/e" "${rpm_args[@]}" --commit 5f455d3
-refuses "deb: an all package missing from one suite" 'debian/trixie/amd64 holds no omx-lib-data' "$t/e" "${deb_args[@]}" --commit 5f455d3
+# a TESTED cell (quick.txt: fc45 x86_64, trixie arm64) staging lacks is refused; any other is listed missing, to be built
+channel "$t/d"; rm -rf "$t/d/staging/rpm/fedora/45/x86_64" "$t/d/staging/deb/debian/trixie/arm64"
+refuses "rpm: a tested cell staging lacks" 'staging/rpm/fedora/45/x86_64 holds no omx-lib 3.14.0 of 5f455d3' "$t/d" "${rpm_args[@]}" --commit 5f455d3
+refuses "deb: a tested cell staging lacks" 'staging/deb/debian/trixie/arm64 holds no libomx-lib0 3.14.0 of 5f455d3' "$t/d" "${deb_args[@]}" --commit 5f455d3
+# the staged run of the ruling: the tested cells alone; every other cell is missing, nothing refused
+qs() { # <dir>: a channel whose staging holds the tested cells alone, the root serving 3.13.0
+    channel "$1"
+    rm -rf "$1"/rpm/fedora/44 "$1"/staging/rpm/fedora/44 "$1/staging/rpm/fedora/45/aarch64" "$1"/staging/deb/debian/bookworm "$1/staging/deb/debian/trixie/amd64"
+}
+q_rpm=(rpm --name omx-lib --version 3.14.0 --binaries "omx-lib omx-lib-data" --releases 45 --arches "x86_64 aarch64")
+q_deb=(deb --name omx-lib --version 3.14.0 --binaries "libomx-lib0 omx-lib-data" --releases trixie --arches "amd64 arm64")
+qs "$t/q"
+python3 -I "$collect" "$t/q" "${q_rpm[@]}" --commit 5f455d3 --out "$t/qrpm" > "$t/log" 2>&1 || fail "rpm: the tested cells alone are refused: $(cat "$t/log")"
+[ "$(cat "$t/qrpm.missing")" = "45 aarch64" ] || fail "rpm: missing is '$(cat "$t/qrpm.missing")', not 45 aarch64"
+grep -qx 'missing 45 aarch64' "$t/log" || fail "rpm: the run does not say which cell is missing"
+! find "$t/qrpm" -name '*aarch64*' | grep -q . || fail "rpm: a file of the missing cell went along"
+python3 -I "$collect" "$t/q" "${q_deb[@]}" --commit 5f455d3 --out "$t/qdeb" > "$t/log" || fail "deb: the tested cells alone are refused: $(cat "$t/log")"
+[ "$(cat "$t/qdeb.missing")" = "trixie amd64" ] || fail "deb: missing is '$(cat "$t/qdeb.missing")', not trixie amd64"
+ok "a staging of the tested cells alone: kept, and the other cells listed missing (45 aarch64, trixie amd64)"
+# a re-run after the missing cell was published: the root serves it for this commit, so nothing is missing
+mk "$t/q/rpm/fedora/45/aarch64/omx-lib-3.14.0-1.git5f455d3.fc45.aarch64.rpm"
+python3 -I "$collect" "$t/q" "${q_rpm[@]}" --commit 5f455d3 --out "$t/qrpm2" > "$t/log" || fail "rpm: the re-run failed: $(cat "$t/log")"
+[ ! -s "$t/qrpm2.missing" ] || fail "rpm: a cell the root serves for this commit is missing again: $(cat "$t/qrpm2.missing")"
+# served for ANOTHER commit is still missing
+qs "$t/q2"; mk "$t/q2/rpm/fedora/45/aarch64/omx-lib-3.14.0-1.git0badc0d.fc45.aarch64.rpm"
+python3 -I "$collect" "$t/q2" "${q_rpm[@]}" --commit 5f455d3 --out "$t/qrpm3" > "$t/log" || fail "rpm: $(cat "$t/log")"
+[ "$(cat "$t/qrpm3.missing")" = "45 aarch64" ] || fail "rpm: a cell the root serves for another commit is not missing"
+ok "a re-run: a cell the root serves for this commit is done; one it serves for another commit is still missing"
+channel "$t/e"; rm "$t/e/staging/rpm/fedora/45/SRPMS/omx-lib-3.14.0-1.git5f455d3.fc45.src.rpm" "$t/e/staging/deb/debian/trixie/all/omx-lib-data_3.14.0+git5f455d3_all.deb"
+refuses "rpm: a tested release with no source package" 'fedora/45/SRPMS holds no source package' "$t/e" "${rpm_args[@]}" --commit 5f455d3
+refuses "deb: an all package missing from one suite" 'debian/trixie/arm64 holds no omx-lib-data' "$t/e" "${deb_args[@]}" --commit 5f455d3
 channel "$t/f"; mk "$t/f/rpm/fedora/43/x86_64/omx-lib-3.12.0-1.fc43.x86_64.rpm"; mk "$t/f/deb/debian/forky/amd64/libomx-lib0_3.12.0_amd64.deb"
 refuses "rpm: a release the channel serves and the promotion lacks" 'serves omx-lib in rpm/fedora/43' "$t/f" "${rpm_args[@]}" --commit 5f455d3
 refuses "deb: a suite the channel serves and the promotion lacks" 'serves libomx-lib0 in deb/debian/forky' "$t/f" "${deb_args[@]}" --commit 5f455d3
