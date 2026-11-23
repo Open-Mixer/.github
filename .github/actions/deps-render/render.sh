@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # deps-render.sh: the dependency floors AND CEILINGS of a repository come from ONE file, packaging/deps.txt, and are
-# rendered into every place that states one: the RPM spec's Requires, BuildRequires and Recommends, debian/control's
-# Build-Depends and Depends, and the release-tag variables of the workflows.
+# rendered into every place that states one: the RPM spec's Requires, BuildRequires, Recommends and Suggests,
+# debian/control's Build-Depends, Depends, Pre-Depends, Recommends and Suggests, and the release-tag variables of the
+# workflows. A floor may carry an epoch and a revision (1:2.0-3); the Debian form adds its `~` (1:2.0-3~).
 #
 #   render.sh --write [ROOT]      rewrite every floor to what deps.txt says
 #   render.sh --check [ROOT]      refuse when any of them says something else (default)
-#   render.sh --floor NAME [ROOT] print the floor of the dependency whose RPM name is NAME
+#   render.sh --floor NAME [ROOT] print the floor of the dependency whose RPM name is NAME: the one way a workflow
+#                                 install line, a Makefile or a script states it; a dnf or yum install line that types
+#                                 the version of a listed package is refused by --check, whether it agrees or not
 #   render.sh --self-test         each drift, planted in each file, must go red
 #
 # packaging/deps.txt, one dependency per line, blank and # lines ignored:
@@ -29,6 +32,12 @@
 set -euo pipefail
 
 DEPS=packaging/deps.txt
+# a version as packages write it: an optional epoch (1:), the upstream version and an optional revision (-3); Debian's
+# floor form adds a `~` after it (.github#127)
+VER='([0-9]+:)?[0-9][0-9A-Za-z.+]*(-[0-9A-Za-z.+]+)?'
+# the dependency fields read. Recommends and Suggests are the weak ones: read for their floors, and never a ceiling
+SPEC_FIELDS='(Build)?(Requires|Recommends|Suggests)'
+CTL_FIELDS='(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends|Suggests)'
 
 load() { # <root>: fills RPM[] DEB[] FLOOR[] CEIL[] VAR[] from deps.txt
   RPM=(); DEB=(); FLOOR=(); CEIL=(); VAR=()
@@ -38,11 +47,13 @@ load() { # <root>: fills RPM[] DEB[] FLOOR[] CEIL[] VAR[] from deps.txt
     case "$r" in ''|'#'*) continue ;; esac
     # floor-only: no ceiling, `-`, or the 4th field is already the VARIABLE
     if [ "$c" = - ]; then c=""; elif [ -z "$x" ] && [[ "$c" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then x="$c"; c=""; fi
-    [[ "$v" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "deps-render: $DEPS: '$r' has no numeric floor ('$v')" >&2; return 1; }
+    [[ "$v" =~ ^([0-9]+:)?[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.+]+)?$ ]] || { echo "deps-render: $DEPS: '$r' has no numeric floor ('$v')" >&2; return 1; }
     [ -n "$d" ] || { echo "deps-render: $DEPS: '$r' has no deb name" >&2; return 1; }
     if [ -n "$c" ]; then
     [[ "$c" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "deps-render: $DEPS: '$r' has no numeric ceiling ('$c')" >&2; return 1; }
-    [ "$(printf '%s\n%s\n' "$v" "$c" | sort -V | head -n1)" = "$v" ] && [ "$v" != "$c" ] ||
+    # the ceiling is a plain version: it is compared with the floor's upstream part, without its epoch and revision
+    local u="${v#*:}"; u="${u%%-*}"
+    [ "$(printf '%s\n%s\n' "$u" "$c" | sort -V | head -n1)" = "$u" ] && [ "$u" != "$c" ] ||
       { echo "deps-render: $DEPS: the ceiling of '$r' ($c) is not above its floor ($v)" >&2; return 1; }
     fi
     RPM+=("$r"); DEB+=("$d"); FLOOR+=("$v"); CEIL+=("$c"); VAR+=("${x:-}")
@@ -56,33 +67,34 @@ esc() { printf '%s' "$1" | sed 's/[.+*?^$\[\]/\\&/g'; }
 spec_files()  { ls "$1"/packaging/*.spec 2>/dev/null || true; }
 wf_files()    { ls "$1"/.github/workflows/*.yml 2>/dev/null || true; }
 
-# lines of a spec that state a versioned requirement: "<name> >= <floor>" after Requires:, BuildRequires: or Recommends:
-spec_names() { grep -E '^(Build)?(Requires|Recommends):' "$1" | grep -oE '[A-Za-z0-9_.+()-]+ *>= *[0-9][0-9.]*' | sed 's/ *>=.*//' || true; }
+# lines of a spec that state a versioned requirement: "<name> >= <floor>" after Requires:, BuildRequires:, Recommends: or
+# Suggests:
+spec_names() { grep -E "^$SPEC_FIELDS:" "$1" | grep -oE "[A-Za-z0-9_.+()-]+ *>= *$VER" | sed 's/ *>=.*//' || true; }
 # debian/control: a field continues on every following line that starts with white space (comment lines are skipped);
 # ctl_fields prints each dependency field as ONE line, so every reader below sees a dependency wherever it is written
-ctl_fields() { awk '
+ctl_fields() { awk -v re="^$CTL_FIELDS:" '
   /^#/ { next }
   /^[ \t]/ { if (inf) cur = cur " " $0; next }
-  { if (inf) print cur; inf = ($0 ~ /^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/); cur = inf ? $0 : "" }
+  { if (inf) print cur; inf = ($0 ~ re); cur = inf ? $0 : "" }
   END { if (inf) print cur }' "$1"; }
 # the same field extent for sed -i: runs the sed commands $1 on the header and continuation lines of a dependency field
-ctl_sed() { sed -i -E "/^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/{x;s/.*/1/;x;b r}
+ctl_sed() { sed -i -E "/^$CTL_FIELDS:/{x;s/.*/1/;x;b r}
 /^[^[:space:]]/{x;s/.*//;x;b}
 x;/1/{x;b r};x;b
 :r
 $1" "$ctl"; }
 # the Debian floor form is `(>= 1.2.3~)`: the `~` is part of it
-ctl_names()  { ctl_fields "$1" | grep -oE '[a-z0-9.+-]+ \(>= [0-9][0-9.]*~?\)' | sed 's/ .*//' || true; }
+ctl_names()  { ctl_fields "$1" | grep -oE "[a-z0-9.+-]+ \\(>= $VER~?\\)" | sed 's/ .*//' || true; }
 
 # in_list <name> <list...>: 0 when the name is one of the list
 in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
 
-# ctl_dep_lines <ctl>: every RAW line of a dependency field as NR<TAB>R-or-dash<TAB>text (R on a Recommends field), so a
-# refusal names the line it is on, not the field's first line
-ctl_dep_lines() { awk '
+# ctl_dep_lines <ctl>: every RAW line of a dependency field as NR<TAB>R-or-dash<TAB>text (R on a Recommends or Suggests
+# field), so a refusal names the line it is on, not the field's first line
+ctl_dep_lines() { awk -v re="^$CTL_FIELDS:" '
   /^#/ { next }
   /^[ \t]/ { if (inf) printf "%d\t%s\t%s\n", NR, rec, $0; next }
-  { inf = ($0 ~ /^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):/); rec = ($0 ~ /^Recommends:/) ? "R" : "-"
+  { inf = ($0 ~ re); rec = ($0 ~ /^(Recommends|Suggests):/) ? "R" : "-"
     if (inf) printf "%d\t%s\t%s\n", NR, rec, $0 }' "$1"; }
 
 # ceilings <root>: the floors-only rule (.github#146). A ceiling is refused on EVERY package, listed by deps.txt or not,
@@ -99,18 +111,18 @@ ceilings() {
       while read -r name op; do
         case "$op" in
           '<='|'=<') echo "deps-render: $rel:$ln: $name: a <= ceiling: floors only" ;;
-          *) if [[ "$line" == Recommends:* ]]; then echo "deps-render: $rel:$ln: $name: a ceiling in a Recommends: Recommends carries floors only"
+          *) if [[ "$line" == Recommends:* || "$line" == Suggests:* ]]; then echo "deps-render: $rel:$ln: $name: a ceiling in a ${line%%:*}: a weak dependency carries floors only"
              elif ! in_list "$name" "${RPM[@]}"; then echo "deps-render: $rel:$ln: $name: a ceiling on a package $DEPS does not list: floors only"; fi ;;
         esac
       done < <(printf '%s\n' "$line" | grep -oE '[A-Za-z0-9_.+-]+(\([^)]*\))? *(<=|=<|<)' | sed -E 's/ *(<=|=<|<)$/ \1/')
-    done < <(grep -nE '^(Build)?(Requires|Recommends):' "$f")
+    done < <(grep -nE "^$SPEC_FIELDS:" "$f")
   done
   if [ -f "$root/debian/control" ]; then
     while IFS=$'\t' read -r ln rec text; do
       while read -r name op; do
         case "$op" in
           '<=') echo "deps-render: debian/control:$ln: $name: a <= ceiling: floors only" ;;
-          *) if [ "$rec" = R ]; then echo "deps-render: debian/control:$ln: $name: a ceiling in a Recommends: Recommends carries floors only"
+          *) if [ "$rec" = R ]; then echo "deps-render: debian/control:$ln: $name: a ceiling in a Recommends or Suggests: a weak dependency carries floors only"
              elif ! in_list "$name" "${DEB[@]}"; then echo "deps-render: debian/control:$ln: $name: a ceiling on a package $DEPS does not list: floors only"; fi ;;
         esac
       done < <(printf '%s\n' "$text" | grep -oE '[A-Za-z0-9.+-]+ \(<+=?' | sed -E 's/ \(/ /')
@@ -129,6 +141,23 @@ ceilings() {
         for name in $names; do echo "deps-render: $rel:$ln: $name: a version pin in an apt-get install line: floors only"; done
       fi
     done < <(grep -nE '\b(dnf5?|yum|apt-get|apt) .*\binstall\b' "$f")
+  done
+  return 0
+}
+
+# typed_floors <root>: a workflow install line (dnf, yum) that types the version of a package deps.txt lists is a second
+# copy of its floor, refused whether it agrees or not (.github#104, #110): the line reads it with render.sh --floor <name>.
+# Run as $(typed_floors), like ceilings.
+typed_floors() {
+  set +e; set +o pipefail
+  local root="$1" f rel ln line name
+  for f in $(wf_files "$root"); do
+    rel="${f#"$root"/}"
+    while IFS=: read -r ln line; do
+      for name in $(printf '%s\n' "$line" | grep -oE '[A-Za-z0-9_.+-]+(\([^)]*\))? *>= *[0-9]' | sed -E 's/ *>= *[0-9]$//'); do
+        in_list "$name" "${RPM[@]}" && echo "deps-render: $rel:$ln: $name: a typed floor in an install line: read it from $DEPS (render.sh --floor $name)"
+      done
+    done < <(grep -nE '\b(dnf5?|yum) .*\binstall\b' "$f")
   done
   return 0
 }
@@ -152,9 +181,9 @@ run() { # <mode> <root>
     local seen=0
     for f in $(spec_files "$root"); do
       e="$(esc "$n")"
-      if grep -qE "^(Build)?(Requires|Recommends):.*[ ,]$e *>= *[0-9]" "$f"; then seen=1
-        if [ "$mode" = write ]; then sed -i -E "/^(Build)?(Requires|Recommends):/ s/([ ,]$e *>= *)[0-9][0-9.]*/\1${FLOOR[$i]}/" "$f"
-        elif grep -E "^(Build)?(Requires|Recommends):" "$f" | grep -E "[ ,]$e *>= *[0-9]" | grep -qvE "[ ,]$e *>= *${FLOOR[$i]}( |,|\$)"; then
+      if grep -qE "^$SPEC_FIELDS:.*[ ,]$e *>= *[0-9]" "$f"; then seen=1
+        if [ "$mode" = write ]; then sed -i -E "/^$SPEC_FIELDS:/ s/([ ,]$e *>= *)$VER/\1${FLOOR[$i]}/" "$f"
+        elif grep -E "^$SPEC_FIELDS:" "$f" | grep -E "[ ,]$e *>= *[0-9]" | grep -qvE "[ ,]$e *>= *$(esc "${FLOOR[$i]}")( |,|\$)"; then
           echo "deps-render: $f states $n at a floor other than ${FLOOR[$i]}" >&2; bad=1; fi
       fi
     done
@@ -164,18 +193,18 @@ run() { # <mode> <root>
     if [ -z "${CEIL[$i]}" ]; then
       for f in $(spec_files "$root"); do
         e="$(esc "$n")"
-        if grep -qE "^(Build)?(Requires|Recommends):.*[ ,]$e *< *[0-9]" "$f"; then
+        if grep -qE "^$SPEC_FIELDS:.*[ ,]$e *< *[0-9]" "$f"; then
           if [ "$mode" = write ]; then
-            sed -i -E "/^(Build)?(Requires|Recommends): *$e *< *[0-9][0-9.]* *\$/d; /^(Build)?(Requires|Recommends):/ s/,? *$e *< *[0-9][0-9.]*//" "$f"
+            sed -i -E "/^$SPEC_FIELDS: *$e *< *[0-9][0-9.]* *\$/d; /^$SPEC_FIELDS:/ s/,? *$e *< *[0-9][0-9.]*//" "$f"
           else echo "deps-render: $f states a ceiling for $n, which $DEPS declares floor-only" >&2; bad=1; fi
         fi
       done
     else
     for f in $(spec_files "$root"); do
       e="$(esc "$n")"
-      if grep -qE "^(Build)?(Requires|Recommends):.*[ ,]$e *< *[0-9]" "$f"; then cseen=1
-        if [ "$mode" = write ]; then sed -i -E "/^(Build)?(Requires|Recommends):/ s/([ ,]$e *< *)[0-9][0-9.]*/\1${CEIL[$i]}/" "$f"
-        elif grep -E "^(Build)?(Requires|Recommends):" "$f" | grep -E "[ ,]$e *< *[0-9]" | grep -qvE "[ ,]$e *< *${CEIL[$i]}( |,|\$)"; then
+      if grep -qE "^$SPEC_FIELDS:.*[ ,]$e *< *[0-9]" "$f"; then cseen=1
+        if [ "$mode" = write ]; then sed -i -E "/^$SPEC_FIELDS:/ s/([ ,]$e *< *)[0-9][0-9.]*/\1${CEIL[$i]}/" "$f"
+        elif grep -E "^$SPEC_FIELDS:" "$f" | grep -E "[ ,]$e *< *[0-9]" | grep -qvE "[ ,]$e *< *${CEIL[$i]}( |,|\$)"; then
           echo "deps-render: $f states $n below a ceiling other than ${CEIL[$i]}" >&2; bad=1; fi
       fi
     done
@@ -184,20 +213,20 @@ run() { # <mode> <root>
     # control
     if [ -f "$ctl" ]; then
       e="$(esc "${DEB[$i]}")"; cf="$(ctl_fields "$ctl")"
-      if grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(>= [0-9]" <<<"$cf"; then
-        if [ "$mode" = write ]; then ctl_sed "s/($e \(>= )[0-9][0-9.]*/\1${FLOOR[$i]}/g"
-        elif grep -E "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):" <<<"$cf" | grep -oE "$e \(>= [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
+      if grep -qE "^$CTL_FIELDS:.*$e \(>= [0-9]" <<<"$cf"; then
+        if [ "$mode" = write ]; then ctl_sed "s/($e \(>= )$VER/\1${FLOOR[$i]}/g"
+        elif grep -E "^$CTL_FIELDS:" <<<"$cf" | grep -oE "$e \(>= $VER~?\)" | sed 's/~)$/)/' | grep -qvxF "${DEB[$i]} (>= ${FLOOR[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} at a floor other than ${FLOOR[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (>= ${FLOOR[$i]})" >&2; bad=1; fi
       if [ -z "${CEIL[$i]}" ]; then
-        if grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(<< [0-9]" <<<"$cf"; then
+        if grep -qE "^$CTL_FIELDS:.*$e \(<< [0-9]" <<<"$cf"; then
           if [ "$mode" = write ]; then
             ctl_sed "s/, *$e \(<< [0-9][0-9.]*~?\)//g; s/$e \(<< [0-9][0-9.]*~?\), *//g;"
           else echo "deps-render: debian/control states a ceiling for ${DEB[$i]}, which $DEPS declares floor-only" >&2; bad=1; fi
         fi
-      elif grep -qE "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):.*$e \(<< [0-9]" <<<"$cf"; then
+      elif grep -qE "^$CTL_FIELDS:.*$e \(<< [0-9]" <<<"$cf"; then
         if [ "$mode" = write ]; then ctl_sed "s/($e \(<< )[0-9][0-9.]*/\1${CEIL[$i]}/g"
-        elif grep -E "^(Build-Depends(-Indep|-Arch)?|Depends|Pre-Depends|Recommends):" <<<"$cf" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
+        elif grep -E "^$CTL_FIELDS:" <<<"$cf" | grep -oE "$e \(<< [0-9][0-9.]*~?\)" | sed 's/~//' | grep -qvxF "${DEB[$i]} (<< ${CEIL[$i]})"; then
           echo "deps-render: debian/control states ${DEB[$i]} below a ceiling other than ${CEIL[$i]}" >&2; bad=1; fi
       else echo "deps-render: debian/control has no ${DEB[$i]} (<< ${CEIL[$i]}): a dependency needs a ceiling" >&2; bad=1; fi
     else echo "deps-render: $ctl is missing" >&2; bad=1; fi
@@ -229,6 +258,8 @@ run() { # <mode> <root>
   # floors only (.github#146): a ceiling is refused by name, file and line, listed by deps.txt or not, wherever it is
   # written; a Recommends is a FLOOR row too (ruling a), so a ceiling in one is refused there as well
   local out; out="$(ceilings "$root")"
+  if [ -n "$out" ]; then printf '%s\n' "$out" >&2; bad=1; fi
+  out="$(typed_floors "$root")"
   if [ -n "$out" ]; then printf '%s\n' "$out" >&2; bad=1; fi
   [ "$bad" = 0 ] || return 1
   [ "$mode" = check ] && echo "deps-render: spec, debian/control and workflows carry the floors of $DEPS"
@@ -359,6 +390,37 @@ if [ "${1:-}" = --self-test ]; then
     if run check "$S/c" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
   sabc recommends-spec-ceiling-listed    packaging/c.spec '$a Recommends: libx-rec < 2'
   sabc recommends-control-ceiling-listed debian/control   '$a Recommends: libx-rec-dev (<< 2~)'
+  # an epoch (1:2.0) or a revision (1.2-1, Debian 1.2-1~) is part of the version: a dependency written that way is read
+  # and compared like any other (.github#127)
+  sab epoch-control-floor      debian/control   '/^Depends/ s/libx-dev \(>= 1\.2\.0~\)/libx-dev (>= 1:1.2.0~)/'
+  sab revision-control-floor   debian/control   '/^Depends/ s/libx-dev \(>= 1\.2\.0~\)/libx-dev (>= 1.2.0-1~)/'
+  sab epoch-control-unlisted   debian/control   '/^Depends/ s/libx-dev \(>=/libz (>= 1:3.0~), libx-dev (>=/'
+  sab revision-control-unlisted debian/control  '/^Depends/ s/libx-dev \(>=/libz (>= 3.0-2~), libx-dev (>=/'
+  sab epoch-spec-unlisted      packaging/t.spec '$a Requires: extra >= 1:2.0'
+  sab epoch-spec-floor         packaging/t.spec '/^Requires: ownb/ s/1\.4/1:1.4/'
+  # ... and a deps.txt floor that carries an epoch and a revision is rendered and held like a plain one
+  mkepoch() { mk; printf 'epk  libepk  1:2.0-3\n' >> "$S/t/$DEPS"; printf 'Requires: epk >= 1:2.0-3\n' >> "$S/t/packaging/t.spec"
+    sed -i 's/^Depends: /Depends: libepk (>= 1:2.0-3~), /' "$S/t/debian/control"; }
+  mkepoch
+  if run check "$S/t" >/dev/null 2>&1; then echo "epoch and revision floor, stated: green"; else echo "epoch and revision floor, stated: FALSE RED"; fail=1; fi
+  mkepoch; sed -i 's/epk >= 1:2.0-3/epk >= 1:1.9-1/' "$S/t/packaging/t.spec"; sed -i 's/libepk (>= 1:2.0-3~)/libepk (>= 1.9~)/' "$S/t/debian/control"
+  if run check "$S/t" >/dev/null 2>&1; then echo "SABOTAGE epoch floor drift: STAYED GREEN"; fail=1; else echo "SABOTAGE epoch floor drift: red"; fi
+  run write "$S/t" >/dev/null 2>&1 || true
+  if run check "$S/t" >/dev/null 2>&1 && grep -q 'epk >= 1:2.0-3$' "$S/t/packaging/t.spec" && grep -qF 'libepk (>= 1:2.0-3~)' "$S/t/debian/control"
+  then echo "WRITE repairs an epoch and revision floor: ok"; else echo "WRITE left an epoch and revision floor"; fail=1; fi
+  # Suggests is a weak dependency like Recommends (.github#110): read for its floor, and a ceiling in it refused
+  sab suggests-control-unlisted debian/control  '$a Suggests: libz (>= 3.0~)'
+  sab suggests-control-ceiling debian/control   '$a Suggests: libownb (<< 3~)'
+  sab suggests-control-floor   debian/control   '$a Suggests: libownb (>= 1.0~)'
+  sab suggests-spec-unlisted   packaging/t.spec '$a Suggests: extra >= 2.0'
+  sab suggests-spec-ceiling    packaging/t.spec '$a Suggests: lib-devel < 2'
+  # a workflow install line that types a version of a package deps.txt lists is a second copy of its floor, refused
+  # whether it differs or not (.github#104, #110): the line reads it from deps.txt (render.sh --floor <name>)
+  sab workflow-install-floor-differs .github/workflows/ci.yml "\$a jobs:\n  t:\n    steps:\n      - run: dnf install -y 'lib-devel >= 1.1.0'"
+  sab workflow-install-floor-typed   .github/workflows/ci.yml "\$a jobs:\n  t:\n    steps:\n      - run: dnf install -y 'lib-devel >= 1.2.0'"
+  sab workflow-install-epoch-typed   .github/workflows/ci.yml "\$a jobs:\n  t:\n    steps:\n      - run: dnf5 install -y 'ownb >= 1:1.4'"
+  mk; printf 'jobs:\n  t:\n    steps:\n      - run: dnf install -y "lib-devel >= $(packaging/render.sh --floor lib-devel)" other gcc\n' >> "$S/t/.github/workflows/ci.yml"
+  if run check "$S/t" >/dev/null 2>&1; then echo "workflow install line reading the floor: green"; else echo "workflow install line reading the floor: FALSE RED"; fail=1; fi
   [ "$fail" = 0 ] || exit 1
   echo "deps-render self-test: every drift red"
   exit 0
