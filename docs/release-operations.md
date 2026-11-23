@@ -161,6 +161,16 @@ for the real channel: its staged run publishes to the staging channel, and the n
 install-tests against it. The real channel gets the whole set once, in the wave's release pass, from the `v<version>`
 tags. The staging channel is per wave and is purged after the pass.
 
+**RULED (owner, 2026-11-23, .github#233):** "the TESTING channel publishes only the
+TESTED platforms — Fedora 45 x86_64 (the stage box's platform) and Zynthian (Debian trixie arm64) — as soon as their
+tests pass; every other cell of the matrix goes to the real channel only when all tests pass (the tag release)." The
+tested platforms are the quick set (`.github/actions/release-matrix/quick.txt`, "The quick set and the full matrix"),
+written once there. So a staged run builds and publishes the quick set and nothing else: `matrix.sh` refuses a staged
+run told `matrix: full`, and one whose caller's matrix holds no quick cell, and takes the quick set whatever
+`OMX_RELEASE_MATRIX` says; the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
+package of any other cell, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
+and `tests/staged-cells.sh` hold the guards, each sabotaged.
+
 ### Where it is
 
 The staging channel is a second dnf tree and a second apt tree in the same channel repository
@@ -232,8 +242,8 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on arm64), or the whole
-  matrix when told full ("The quick set and the full matrix" below), against the staging channel,
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on arm64), the tested platforms and
+  never more (the ruling above), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
   a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and
@@ -264,8 +274,8 @@ one the tag is on; a dispatch of the caller is a dry run that takes `version` an
 1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
    architecture of the matrix, with its source package, and must cover every release the channel root serves the
    package for. The commit must be on the default branch.
-   A staged build of the quick set does not hold every cell, so it is refused here by name: a version is promoted
-   from a staged run of the full matrix, or released from its tag.
+   A staged build of the quick set does not hold every cell, so it is refused here by name. Since a staged run
+   holds the quick set alone (the ruling above), a version whose matrix is wider is released from its tag.
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
    the signed staging index of its suite. Nothing is signed by a promotion.
 3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
@@ -334,7 +344,7 @@ names, no others. The run says which set it builds, and why, in a notice.
 |-----|----------------|----------------------------|---------|--------|
 | any | `quick` or `full` | the input | the input | the input |
 | a tag, or `source-ref` | empty | **full** | quick | full |
-| `staged: true` | empty | **quick** | quick | full |
+| `staged: true` | empty or `quick` | **quick** | quick | quick |
 | `workflow_dispatch`, not a tag | empty | **quick** | quick | full |
 | a pull request, a push to a branch | empty | full | full | full |
 
@@ -345,9 +355,13 @@ names, no others. The run says which set it builds, and why, in a notice.
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
+- **A staged run is the quick set, always** (the tested platforms, "The staging channel of a release wave"): a
+  `matrix: full` input is refused, `OMX_RELEASE_MATRIX=full` does not widen it, and a caller whose releases hold no
+  quick cell of a kind is refused rather than given its full matrix.
 - The quick set wins: a caller's architectures only narrow it within the set, and when they leave no cell (an
   amd64-only caller while the set is trixie arm64) the run builds the set's own cell, never the caller's full matrix. Only
-  a caller whose releases hold no quick cell of a kind builds its full matrix of that kind and says so.
+  a caller whose releases hold no quick cell of a kind builds its full matrix of that kind and says so (a staged run
+  is refused instead).
 
 ### Checks follow the set
 
