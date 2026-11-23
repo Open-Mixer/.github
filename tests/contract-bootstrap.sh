@@ -142,6 +142,12 @@ Architecture: all
 Depends: ${misc:Depends}
 Description: fx in Catalan
  fx's Catalan catalog.
+
+Package: fx-extra-contract
+Architecture: all
+Depends: ${misc:Depends}
+Description: fx's other definitions
+ Nothing yet: no .install names a file for it.
 EOF
 printf '#!/usr/bin/make -f\n%%:\n\tdh $@\n\noverride_dh_auto_install:\n\t$(MAKE) install-contract DESTDIR=$(CURDIR)/debian/tmp PREFIX=/usr\n' > debian/rules
 chmod +x debian/rules
@@ -156,6 +162,7 @@ git tag -a -m 'annotated' v1.2.0; tagobj=$(git rev-parse v1.2.0)
 git commit -q --allow-empty -m later
 cd "$t"
 export BOOTSTRAP_GIT_BASE=file://$t/base
+export BOOTSTRAP_RENDER=$root/.github/actions/build-deb/render-changelog.sh   # for the sabotaged copies under sab/
 git -C "$lib" config uploadpack.allowAnySHA1InWant true
 
 # the package
@@ -204,6 +211,8 @@ if [ "$mode" = deb ]; then
         && fail "sabotage: without its $cut line the bootstrap still equals the library's own build" || pass "sabotage: without its $cut line the bootstrap differs from the library's own build"
     done
   else fail "the library's own build made no fx-contract package: $(ls ownout 2>&1)"; fi
+  msg=$("$boot" deb "owner/fx@$head:fx-extra-contract" out4 2>&1) && fail "a package of a several-package source with no .install was built" \
+    || { grep -q "no debian/fx-extra-contract.install" <<< "$msg" && pass "a package of a several-package source with no .install is refused" || fail "fx-extra-contract refused for another reason: $msg"; }
 fi
 
 # the versions: meets a consumer's floor, below the library's own release; each with its sabotage
