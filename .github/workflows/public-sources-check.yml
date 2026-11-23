@@ -10,6 +10,8 @@ name: public-sources-check
 #     layout check, it skips only a repository that is private and carries the topic stays-private, read live from
 #     GitHub with the run's token (no input switches it off);
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);
+#   - no tracked JSON file gives a "$schema" or "$id" a code-hosting address (json-schema-url-check): a schema is named
+#     under https://openmixer.org/schema/;
 #   - a public repository keeps no dated document, no dated folder and no folder of evidence or notes
 #     (public-layout-check): the record of how work went is kept in the project's records.
 # Each check proves itself on planted inputs before it reads the tree.
@@ -123,3 +125,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Open-Mixer/.github/.github/actions/no-local-copies@openmixer-v1
+
+  json-schema-urls:
+    name: no JSON schema address names a code host
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Open-Mixer/.github/.github/actions/json-schema-url-check@openmixer-v1

@@ -626,6 +626,7 @@ jobs:
       - name: The private-refs check skips a private target by its live visibility, and refuses an unknown one
         run: .github/actions/private-refs-check/visibility-test.sh
       - uses: ./.github/actions/spdx-check
+      - uses: ./.github/actions/json-schema-url-check
       - run: tests/trigger-gate.sh
       - name: The trigger gate reads this repository's own workflows (this file is the one lint)
         run: .github/actions/trigger-gate/check.sh --lint ci.yml .
