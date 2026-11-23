@@ -74,6 +74,7 @@ jobs:
       - run: tests/release-package-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/contract-bootstrap.sh static
       - run: tests/catch-up-plan.sh
       - run: tests/ci-steps.sh
       - run: tests/no-retired-debian-release.sh
@@ -126,6 +127,34 @@ jobs:
       - env:
           BASE_REF: ${{ github.base_ref }}
         run: .github/scripts/v1-not-behind.sh origin "$BASE_REF" openmixer-v1
+
+  contract-bootstrap:
+    name: Contract bootstrap (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: rpm
+            image: fedora:45
+            tools: dnf install -y --setopt=install_weak_deps=False git
+          - kind: deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
+    steps:
+      - name: Install git for the checkout
+        run: ${{ matrix.tools }}
+
+      - uses: actions/checkout@v4
+
+      # a -contract data package built alone from a fixture library at a named commit: its files and dependencies, its
+      # version against a consumer's floor and the library's release, and the commit refusals, each with its sabotage
+      - name: The bootstrap builds the package, at a version between the floor and the release, from the named commit only
+        shell: bash
+        run: tests/contract-bootstrap.sh ${{ matrix.kind }}
 
   key-transition:
     name: Key transition (${{ matrix.kind }})

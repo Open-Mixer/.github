@@ -104,7 +104,8 @@ for kind, (path, rel_in, key) in WF.items():
     served = [s for s in pre["steps"] if "/actions/release-preflight@" in s.get("uses", "")][0]
     assert served["with"]["releases"].replace(" ", "") == "${{steps.matrix.outputs.releases}}", f"{path}: the already-served check reads releases this run does not publish into"
     if kind == "rpm":
-        assert raw.count("needs.preflight.outputs.first-arch") == 2, f"{path}: the source and noarch packages do not ship from the first architecture the set builds"
+        # the library's own build step and the bootstrap-only step (a bootstrap package is noarch): both ship from it
+        assert raw.count("needs.preflight.outputs.first-arch") == 3, f"{path}: the source and noarch packages do not ship from the first architecture the set builds"
 print("ok   build-rpm.yml and build-deb.yml: one release-matrix call, the build and the install check take its cells")
 
 def run(kind, inputs, event, ref_type, var):

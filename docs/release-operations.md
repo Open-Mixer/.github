@@ -292,6 +292,37 @@ is pushed or released. A promoted package keeps the version string of its staged
 (`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
 
+### A build-dependency cycle: the bootstrap input
+
+Two libraries of a wave can need each other's packages to build (plugin-hostd-protocol needs omx-clap-contract, while
+omx-clap-core, which builds that package, needs plugin-hostd-protocol; Open-Mixer/.github#230). No order satisfies both. A
+stage-box chain line breaks such a cycle with `bootstrap=`. `build-rpm.yml` and `build-deb.yml` break it with the
+`bootstrap` input, the same mechanism: entries `<owner>/<repo>@<full commit>:<package>`. Each entry is one `-contract`
+data package of the later library, built alone from its source at that commit (`actions/contract-bootstrap`:
+`make install-contract`, packed as the library's packaging declares it). The build job builds it before the
+library's own build and installs it in the container, so it meets the build's dependencies. It is never released;
+the library's own release replaces it. The entry must name the commit itself: a short sha, a ref, or an annotated
+tag's object (whose checkout is another commit) is refused before anything is built.
+
+When the consumer has to be **released** before the library, the build container is not enough: the channel must
+serve the package. `bootstrap-only` makes the one bootstrap package the release of the run, with every gate of a
+release (the preflight and its already-served check, channel-installability, the signed publish, the install check),
+and checks out nothing of the calling repository. Its version is the house snapshot form, below the library's own
+release of the same version and above a consumer's floor: rpm `<version>-0.git<commit time>.<short sha>%{?dist}`, deb
+`<version>~git<commit time>.<short sha>`. The library's release of `<version>` supersedes it, and the channel's
+`cells.tsv` records it under `<version>` (`served.sh <package> <version>` answers for it).
+
+`contract-bootstrap.yml` is the caller, here and not in either library. A release publishes only on a tag push of its
+caller; the library's `v<version>` tag is its full release; and the consumer's release workflow is the one its own
+head carries. The caller reads one line of `.github/contract-bootstraps.txt` (`<package> <version>
+<owner>/<repo>@<full commit>`):
+
+- a push of the tag `bootstrap-<package>-<version>` on a commit of main releases that line;
+- `gh workflow run contract-bootstrap.yml -f package=<package>` is a dry run of the same line and publishes nothing.
+
+A line goes when the library's own release of its version is served. `tests/contract-bootstrap.sh static|rpm|deb`
+holds the wiring, the line reader, the package, both version bounds and the commit refusals, each with its sabotage.
+
 ### The purge
 
 After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand, it being on the default
