@@ -177,9 +177,9 @@ jobs:
         shell: bash
         run: tests/channel-profile.sh ${{ matrix.kind }}
 
-      - name: freereac-release leaves the channel, and nothing else does
+      - name: FreeREAC's packages leave the channel where FreeREAC serves them, and nothing else does
         shell: bash
-        run: tests/remove-freereac-release.sh ${{ matrix.kind }}
+        run: tests/remove-freereac-packages.sh ${{ matrix.kind }}
 
       - name: A package of one organisation never goes into the other organisation's channel
         shell: bash

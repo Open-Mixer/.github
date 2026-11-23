@@ -1,28 +1,29 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-name: remove-freereac-release
+name: remove-freereac-packages
 
-# Takes FreeREAC's freereac-release out of the OpenMixer channel, and nothing else (.github#224). The mirror, removed with
-# that issue, published freereac-release 1-2 into this channel (rpm/fedora/45/noarch, deb/debian/trixie/all and its
-# changelog) while openmixer-release 1-7 to 1-9 required it; the OpenMixer and FreeREAC channels are independent (owner
-# ruling 2026-11-23). The channel's own prune cannot drop it: openmixer-release 1-9, which the channel still serves,
-# requires it, and the prune's drop invariant refuses a plan that leaves a kept package uninstallable.
+# Takes FreeREAC's packages out of the OpenMixer channel, and nothing else (.github#224; owner ruling 2026-11-23: the
+# channels are independent and this one serves no FreeREAC package). The channel holds freereac-release (the removed
+# mirror's), libreac, reac-pw and reac-stageboxes (FreeREAC releases that named no target-repo, and a republish workflow
+# of this repository); publish-rpms/channel-owner.sh refuses all of them at the source now. The channel's own prune cannot
+# drop them: openmixer-release 1-9, still served, requires freereac-release, and its drop invariant refuses.
 #
-# tools/remove-freereac-release.sh does the work, the package a constant of the script: it removes the files that are
-# freereac-release by their own header and nothing else, makes the metadata again with the publish's tree scripts and
-# signs it, and audits the checkout so that only freereac-release and metadata changed. channel-pull and channel-push are
-# the publish's, so the push is one signed commit per tree, in the publish concurrency group, and a lost race runs the
-# script again on the new tip (where it removes nothing if a run already did).
+# tools/remove-freereac-packages.sh does the work, the FreeREAC sources a constant of the script: a file goes only when its
+# own header names one of them and FreeREAC as its home, AND FreeREAC's channel serves that package at the same version or
+# newer for the same cell (the listing below); every other candidate is kept and printed as a gap. The metadata is made
+# again with the publish's tree scripts and signed, and the checkout is audited so that only those files, the changelogs of
+# sources that left, and metadata changed. channel-pull and channel-push are the publish's: one signed commit per tree, in
+# the publish concurrency group, and a lost race runs the script again on the new tip.
 #
-# A tag remove-freereac-release-<n> on this repository is the removal; run it after openmixer-release 1-10 is published,
+# A tag remove-freereac-packages-<n> on this repository is the removal; run it after openmixer-release 1-10 is published,
 # so the channel's newest openmixer-release requires nothing it no longer serves. A workflow_dispatch, or the tag's own
-# check jobs, is a dry run: the channel pulled, the removal made unsigned and the change listed, nothing pushed.
+# check jobs, is a dry run: the channel pulled, the removal made unsigned and listed, nothing pushed.
 #
 # Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY.
 
 on:
   push:
-    tags: ['remove-freereac-release-*']
+    tags: ['remove-freereac-packages-*']
   workflow_dispatch: {}
 
 permissions:
@@ -30,6 +31,7 @@ permissions:
 
 env:
   CHANNEL: Open-Mixer/open-mixer.github.io
+  FREEREAC_CHANNEL: FreeREAC/freereac.github.io
 
 defaults:
   run:
@@ -60,14 +62,21 @@ jobs:
           publish-token: ${{ github.token }}
           channel: ${{ env.CHANNEL }}
           strip: none
-      - name: Remove freereac-release from a pulled copy, unsigned, and list the change
+      - name: List what FreeREAC's channel serves (file names only, no package is downloaded)
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 --filter=blob:none --no-checkout "https://github.com/$FREEREAC_CHANNEL.git" build/freereac
+          git -C build/freereac ls-tree -r --name-only HEAD | grep -E '^(rpm|deb)/' > build/freereac-listing.txt
+          echo "FREEREAC_LISTING=$PWD/build/freereac-listing.txt" >> "$GITHUB_ENV"
+          wc -l build/freereac-listing.txt
+      - name: Remove FreeREAC's packages from a pulled copy, unsigned, and list the change
         run: |
           set -o pipefail
-          tools/remove-freereac-release.sh "${{ matrix.kind }}" build/channel
+          tools/remove-freereac-packages.sh "${{ matrix.kind }}" build/channel
           git -C build/channel status --short -- "${{ matrix.kind }}" | tee /dev/stderr | grep -E '\.(rpm|deb)$|changelogs/' || true
 
   rpm:
-    name: Remove freereac-release from rpm/
+    name: Remove FreeREAC's packages from rpm/
     needs: check
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
@@ -91,8 +100,15 @@ jobs:
           strip: none
       - name: Check the signing key is one the channel serves
         run: .github/actions/import-gpg-key/channel-keys.sh check build/channel/rpm/RPM-GPG-KEY-openmixer "$OPENMIXER_GPG_KEY_ID"
-      - name: Remove freereac-release and sign the metadata again
-        run: tools/remove-freereac-release.sh rpm build/channel "$OPENMIXER_GPG_KEY_ID"
+      - name: List what FreeREAC's channel serves (file names only, no package is downloaded)
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 --filter=blob:none --no-checkout "https://github.com/$FREEREAC_CHANNEL.git" build/freereac
+          git -C build/freereac ls-tree -r --name-only HEAD | grep -E '^(rpm|deb)/' > build/freereac-listing.txt
+          echo "FREEREAC_LISTING=$PWD/build/freereac-listing.txt" >> "$GITHUB_ENV"
+          wc -l build/freereac-listing.txt
+      - name: Remove FreeREAC's packages and sign the metadata again
+        run: tools/remove-freereac-packages.sh rpm build/channel "$OPENMIXER_GPG_KEY_ID"
       - uses: ./.github/actions/channel-push
         with:
           publish-token: ${{ secrets.PAGES_TOKEN }}
@@ -100,10 +116,10 @@ jobs:
           channel: ${{ env.CHANNEL }}
           tag: ${{ github.ref_name }}
           what: rpm
-          rebuild: 'tools/remove-freereac-release.sh rpm build/channel "$OPENMIXER_GPG_KEY_ID"'
+          rebuild: 'tools/remove-freereac-packages.sh rpm build/channel "$OPENMIXER_GPG_KEY_ID"'
 
   deb:
-    name: Remove freereac-release from deb/
+    name: Remove FreeREAC's packages from deb/
     needs: [check, rpm]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
@@ -127,8 +143,15 @@ jobs:
           strip: none
       - name: Check the signing key is one the channel serves
         run: .github/actions/import-gpg-key/channel-keys.sh check build/channel/deb/openmixer.asc "$OPENMIXER_GPG_KEY_ID"
-      - name: Remove freereac-release and sign the index again
-        run: tools/remove-freereac-release.sh deb build/channel "$OPENMIXER_GPG_KEY_ID"
+      - name: List what FreeREAC's channel serves (file names only, no package is downloaded)
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 --filter=blob:none --no-checkout "https://github.com/$FREEREAC_CHANNEL.git" build/freereac
+          git -C build/freereac ls-tree -r --name-only HEAD | grep -E '^(rpm|deb)/' > build/freereac-listing.txt
+          echo "FREEREAC_LISTING=$PWD/build/freereac-listing.txt" >> "$GITHUB_ENV"
+          wc -l build/freereac-listing.txt
+      - name: Remove FreeREAC's packages and sign the index again
+        run: tools/remove-freereac-packages.sh deb build/channel "$OPENMIXER_GPG_KEY_ID"
       - uses: ./.github/actions/channel-push
         with:
           publish-token: ${{ secrets.PAGES_TOKEN }}
@@ -136,4 +159,4 @@ jobs:
           channel: ${{ env.CHANNEL }}
           tag: ${{ github.ref_name }}
           what: deb
-          rebuild: 'tools/remove-freereac-release.sh deb build/channel "$OPENMIXER_GPG_KEY_ID"'
+          rebuild: 'tools/remove-freereac-packages.sh deb build/channel "$OPENMIXER_GPG_KEY_ID"'
