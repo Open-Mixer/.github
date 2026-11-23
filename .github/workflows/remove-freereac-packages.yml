@@ -10,7 +10,9 @@ name: remove-freereac-packages
 #
 # tools/remove-freereac-packages.sh does the work, the FreeREAC sources a constant of the script: a file goes only when its
 # own header names one of them and FreeREAC as its home, AND FreeREAC's channel serves that package at the same version or
-# newer for the same cell (the listing below); every other candidate is kept and printed as a gap. The metadata is made
+# newer for the same cell (the listing below), or when it is an rpm of a retired Fedora release (older than the rpm line of
+# release-matrix/quick.txt: Fedora 44, owner ruling 2026-11-23), printed as retired; every other candidate is kept and
+# printed as a gap. The metadata is made
 # again with the publish's tree scripts and signed, and the checkout is audited so that only those files, the changelogs of
 # sources that left, and metadata changed. channel-pull and channel-push are the publish's: one signed commit per tree, in
 # the publish concurrency group, and a lost race runs the script again on the new tip.

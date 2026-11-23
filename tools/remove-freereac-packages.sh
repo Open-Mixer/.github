@@ -21,6 +21,10 @@
 # newer for the same cell: rpm fedora/<release>/<arch>, SRPMS for a source rpm, and for a noarch package
 # fedora/<release>/noarch or every architecture directory of the release this channel has; deb debian/<suite>/<arch>.
 # Every kept candidate is printed as a gap, so a machine of this channel never loses a version it could install from it.
+# A RETIRED FEDORA RELEASE IS NOT A GAP: an rpm candidate under fedora/<release>/ older than the development release (the rpm
+# line of release-matrix/quick.txt, the one place it is written, as channel/gen-keep-list.mjs reads it) is removed whether
+# FreeREAC serves it or not, and printed as retired (owner rulings 2026-11-19 and 2026-11-23: Fedora 44 is dropped, its
+# FreeREAC source rpms are not moved).
 # A deb changelog directory, changelogs/<prefix>/<source>, goes when no package of that source is left in deb/.
 #
 # The metadata is then made again and signed by the tree scripts of a publish (EMPTY_OK: nothing is added), with every
@@ -47,6 +51,8 @@ git -C "$channel" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "$chan
 [ -z "$(git -C "$channel" status --porcelain --untracked-files=all)" ] || fail "$channel has changes before the removal: $(git -C "$channel" status --short | head -5)"
 tree=$channel/$kind
 listing=$FREEREAC_LISTING
+dev_fedora=$(sed 's/#.*//' "$here/../.github/actions/release-matrix/quick.txt" | awk '$1 == "rpm" && $2 ~ /^[0-9]+$/ && NF == 3 {print $2; exit}')
+[ -n "$dev_fedora" ] || fail "release-matrix/quick.txt names no rpm cell: no development Fedora release to judge a retired one by"
 is_source() { local s; for s in "${sources[@]}"; do [ "$1" = "$s" ] && return 0; done; return 1; }
 freereac_home() { case ${1,,} in *github.com/freereac/* | *://freereac.github.io*) return 0 ;; esac; return 1; }
 candidates() { find "$1" -mindepth 2 -type f \( -name 'freereac-*.rpm' -o -name 'libreac*.rpm' -o -name 'reac-*.rpm' \
@@ -100,7 +106,9 @@ while IFS= read -r f; do
     hit=
     if [ "$kind" = rpm ]; then
         r=$(cut -d/ -f3 <<< "$rel"); d=$(cut -d/ -f4 <<< "$rel")
-        if covered "fedora/$r/$d" "$name" "$evr"; then hit=1
+        if [[ $r =~ ^[0-9]+$ ]] && [ "$r" -lt "$dev_fedora" ]; then
+            hit=1; echo "retired $rel: Fedora $r is older than the development release $dev_fedora"
+        elif covered "fedora/$r/$d" "$name" "$evr"; then hit=1
         elif [ "$d" = noarch ]; then
             # served to every architecture of the release: each architecture tree of FreeREAC's must carry it
             hit=1

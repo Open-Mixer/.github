@@ -9,6 +9,9 @@
 #     metadata is made again and signed by the channel's key; a deb source's changelog goes with its last package;
 #   - a FreeREAC package FreeREAC does not serve there (a gap) is kept, named as a gap, and stays in the metadata, and so
 #     does its changelog;
+#   - rpm: a FreeREAC file of a retired Fedora release (older than the development release, the rpm line of
+#     release-matrix/quick.txt) leaves whether FreeREAC serves it or not, named as retired (owner ruling 2026-11-23: the
+#     fc44 source rpms are dropped, not moved);
 #   - every OpenMixer package is byte-identical and still in the metadata;
 #   - a second run finds nothing to remove and changes nothing;
 #   - a file named like a FreeREAC package whose source is not FreeREAC's, or whose home is not FreeREAC, is refused and
@@ -62,7 +65,15 @@ rpm)
         "$(mkpkg reac-pw 1.0.43 1.fc45 "$FR/reac-pw")" "$(mkpkg reac-stageboxes 0.1.0 1.fc45 "$FR/reac-stageboxes")" \
         "$(mkpkg openmixer-release 1 9.fc45 https://www.openmixer.org 'freereac-release >= 1-2')" \
         "$(mkpkg omx-lib 3.14.1 1.fc45 https://www.openmixer.org)" "$work/src/"
+    # a source rpm of the retired Fedora 44 that FreeREAC's channel does not serve: it leaves all the same
+    d=$work/rb-src44; mkdir -p "$d"
+    printf '%s\n' 'Name: reac-stageboxes' 'Version: 0.1.0' 'Release: 1.fc44' 'Summary: t' 'License: MIT' "URL: $FR/reac-stageboxes" \
+        '%description' 't' '%files' > "$d/p.spec"
+    rpmbuild -bs --quiet --define "_topdir $d" "$d/p.spec" >/dev/null 2>&1 || fail "rpmbuild -bs reac-stageboxes fc44"
+    cp "$d/SRPMS/reac-stageboxes-0.1.0-1.fc44.src.rpm" "$work/src/"
     "$root/.github/actions/publish-rpms/publish-tree.sh" "$ch/rpm" "$work/src" "$KEY" >/dev/null
+    [ -f "$ch/rpm/fedora/44/SRPMS/reac-stageboxes-0.1.0-1.fc44.src.rpm" ] || fail "the stub channel has no fc44 source rpm"
+    retired=rpm/fedora/44/SRPMS/reac-stageboxes-0.1.0-1.fc44.src.rpm
     # FreeREAC serves freereac-release in noarch, libreac in each architecture tree, reac-pw newer; reac-stageboxes not at all
     printf '%s\n' rpm/fedora/45/noarch/freereac-release-1-2.fc45.noarch.rpm \
         rpm/fedora/45/x86_64/libreac-1.11.0-1.fc45.noarch.rpm rpm/fedora/45/aarch64/libreac-1.11.0-1.fc45.noarch.rpm \
@@ -100,7 +111,7 @@ deb)
     # FreeREAC serves freereac-release and libreac7 there; reac-pw only for another suite
     printf '%s\n' deb/debian/trixie/all/freereac-release_1-2_all.deb deb/debian/trixie/all/libreac7_1.11.0_all.deb \
         deb/debian/bookworm/all/reac-pw_1.0.43_all.deb > "$FREEREAC_LISTING"
-    want_gone="freereac-release libreac7"; want_kept="reac-pw openmixer-release omx-lib"
+    want_gone="freereac-release libreac7"; want_kept="reac-pw openmixer-release omx-lib"; retired=""
     for c in f/freereac-release libr/libreac r/reac-pw; do [ -d "$ch/deb/changelogs/$c" ] || fail "the stub channel has no changelogs/$c"; done
     listed() { sed -n 's/^Package: //p' "$ch"/deb/debian/*/Packages | sort -u; }
     signed_meta() {
@@ -154,7 +165,14 @@ ok "$kind: the audit refuses tree scripts that change anything but FreeREAC's pa
 "$tool" "$kind" "$ch" "$KEY" > "$work/run.log" 2>&1 || { cat "$work/run.log"; fail "the removal failed"; }
 for p in $want_gone; do ! listed | grep -qx "$p" || fail "the metadata still lists $p"; done
 for p in $want_kept; do listed | grep -qx "$p" || fail "the metadata lost $p"; done
-[ "$(grep -cE '^removed .*\.(rpm|deb)$' "$work/run.log")" = "$(wc -w <<< "$want_gone")" ] || fail "removed other than $want_gone: $(grep '^removed' "$work/run.log")"
+n_gone=$(echo $want_gone $retired | wc -w)
+[ "$(grep -cE '^removed .*\.(rpm|deb)$' "$work/run.log")" = "$n_gone" ] ||
+    fail "removed other than $want_gone $retired: $(grep '^removed' "$work/run.log")"
+if [ -n "$retired" ]; then
+    grep -qx "retired $retired: Fedora 44 is older than the development release 45" "$work/run.log" || fail "the retired file is not named as retired: $(cat "$work/run.log")"
+    grep -qx "removed $retired" "$work/run.log" && [ ! -e "$ch/$retired" ] || fail "the fc44 source rpm FreeREAC does not serve was kept: $(grep "$retired" "$work/run.log")"
+    ! grep -q "^kept (gap) $retired" "$work/run.log" || fail "the retired file is still kept as a gap"
+fi
 gap=${want_kept%% *}
 grep -q "^kept (gap) .*$gap" "$work/run.log" || fail "the gap ($gap) is not named: $(cat "$work/run.log")"
 others | cmp -s - "$work/others.before" || fail "an OpenMixer package changed: $(others | diff "$work/others.before" - | head)"
