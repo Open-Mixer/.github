@@ -25,6 +25,9 @@
 # The environment, for the staging channel (docs/release-operations.md) and its purge:
 #   KEY_FILE        the name of the public key file the tree serves; default openmixer.asc. A channel of another
 #                   project names its own (freereac.asc), with SERVED_KEYS_DIR=none (channel-keys.sh) and its own LABEL.
+#   CHANNEL_REPO    the channel repository, owner/name (publish-debs sets it from its channel input); default
+#                   Open-Mixer/open-mixer.github.io. ../publish-rpms/channel-owner.sh refuses a package of the other house
+#                   organisation.
 #   LABEL           the Origin and Label of every Release file; default OpenMixer (staging: OpenMixer-Staging, which
 #                   the staging pin names)
 #   REQUIRES_TREE   another apt tree a REQUIRES package may be served from: the real deb/ tree, for a staging publish
@@ -89,6 +92,13 @@ label=${LABEL:-OpenMixer}
 
 mapfile -t found < <(find "$src" -name '*.deb' | sort)
 [ "${#found[@]}" -gt 0 ] || [ "${EMPTY_OK:-}" = true ] || { echo "no deb under $src" >&2; exit 1; }
+# a package of one house organisation never goes into the other's channel (.github#224): judged on what this run would
+# place, a file name the tree does not hold yet, never on what it already serves
+newfiles=()
+for f in ${found[@]+"${found[@]}"}; do
+    [ -n "$(find "$tree" -name "$(basename "$f")" -print -quit 2>/dev/null)" ] || newfiles+=("$f")
+done
+"$(dirname "$(readlink -f "$0")")/../publish-rpms/channel-owner.sh" "${CHANNEL_REPO:-Open-Mixer/open-mixer.github.io}" ${newfiles[@]+"${newfiles[@]}"}
 mkdir -p "$tree/debian"
 for suite in ${SKELETON:-}; do
     [[ $suite =~ ^[a-z]+$ ]] || { echo "SKELETON names '$suite', not a Debian release" >&2; exit 1; }

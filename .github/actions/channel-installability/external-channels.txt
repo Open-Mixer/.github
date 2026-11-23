@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# The channels the packages of this channel may depend on: <name> <base url>. channel-installability reads their packages as
-# providers (dnf repository fedora/<release>/<arch>/ under <base>/rpm, apt index debian/<suite>/Packages under <base>/deb) when it
-# judges this channel, and never judges them. This is the ONE declared place: a channel is never inferred from a package's
-# dependencies. openmixer-release requires freereac-release, which FreeREAC's channel serves; reac-pw comes from there too.
-freereac https://freereac.github.io

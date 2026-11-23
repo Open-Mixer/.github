@@ -64,6 +64,7 @@ jobs:
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
       - run: tests/add-openmixer-release-package.sh
+      - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
       - run: tests/release-matrix.sh
       - run: tests/check-matrix.sh
@@ -137,10 +138,10 @@ jobs:
         include:
           - kind: rpm
             image: fedora:45
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils git
           - kind: deb
             image: debian:trixie
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev git ca-certificates
     steps:
       - name: Install the packaging tools
         run: ${{ matrix.tools }}
@@ -176,9 +177,13 @@ jobs:
         shell: bash
         run: tests/channel-profile.sh ${{ matrix.kind }}
 
-      - name: The mirror of freereac-release verifies its source and refuses every lie
+      - name: FreeREAC's packages leave the channel where FreeREAC serves them, and nothing else does
         shell: bash
-        run: tests/mirror-release.sh ${{ matrix.kind }}
+        run: tests/remove-freereac-packages.sh ${{ matrix.kind }}
+
+      - name: A package of one organisation never goes into the other organisation's channel
+        shell: bash
+        run: tests/channel-owner.sh ${{ matrix.kind }}
 
       - name: A package planted in the channel is refused, never signed
         shell: bash
@@ -349,6 +354,12 @@ jobs:
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
           - arm: rpm
+            image: fedora:45
+            tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
+          - arm: one_channel_deb
+            image: debian:trixie
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev
+          - arm: one_channel_rpm
             image: fedora:45
             tools: dnf install -y --setopt=install_weak_deps=False dnf5-plugins createrepo_c rpm-build python3 python3-rpm findutils
     steps:

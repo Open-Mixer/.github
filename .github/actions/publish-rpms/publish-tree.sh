@@ -38,6 +38,8 @@
 #   KEY_FILE    the name of the public key file the tree serves; default RPM-GPG-KEY-openmixer. A channel of another
 #               project names its own (RPM-GPG-KEY-freereac); SERVED_KEYS_DIR=none (channel-keys.sh) keeps OpenMixer's
 #               committed keys out of it, and REPO_FILE is that channel's repository file.
+#   CHANNEL_REPO the channel repository, owner/name (publish-rpms sets it from its channel input); default
+#               Open-Mixer/open-mixer.github.io. channel-owner.sh refuses a package of the other house organisation.
 #   OMX_RELEASE_MATRIX  the organisation variable the releases read (quick while a release wave is open, full or unset otherwise):
 #               with no MATRIX_SET (a regeneration such as the prune of the channel repository), the pin guard judges the
 #               architectures release-matrix/matrix.sh says that matrix publishes, and a caller that wants the open wave's
@@ -67,6 +69,13 @@ repo_file=${REPO_FILE:-$here/../../../packaging/openmixer-release/openmixer.repo
 
 mapfile -t found < <(find "$src" -name '*.rpm' | sort)
 [ "${#found[@]}" -gt 0 ] || [ "${EMPTY_OK:-}" = true ] || { echo "no rpm under $src" >&2; exit 1; }
+# a package of one house organisation never goes into the other's channel (.github#224): judged on what this run would
+# place, a file name the tree does not hold yet, never on what it already serves
+newfiles=()
+for f in ${found[@]+"${found[@]}"}; do
+    [ -n "$(find "$tree" -name "$(basename "$f")" -print -quit 2>/dev/null)" ] || newfiles+=("$f")
+done
+"$here/channel-owner.sh" "${CHANNEL_REPO:-Open-Mixer/open-mixer.github.io}" ${newfiles[@]+"${newfiles[@]}"}
 mkdir -p "$tree"
 for rel in ${SKELETON:-}; do
     [[ $rel =~ ^[0-9]+$ ]] || { echo "SKELETON names '$rel', not a Fedora release" >&2; exit 1; }
