@@ -359,6 +359,37 @@ if [ "${1:-}" = --self-test ]; then
     if run check "$S/c" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
   sabc recommends-spec-ceiling-listed    packaging/c.spec '$a Recommends: libx-rec < 2'
   sabc recommends-control-ceiling-listed debian/control   '$a Recommends: libx-rec-dev (<< 2~)'
+  # an epoch (1:2.0) or a revision (1.2-1, Debian 1.2-1~) is part of the version: a dependency written that way is read
+  # and compared like any other (.github#127)
+  sab epoch-control-floor      debian/control   '/^Depends/ s/libx-dev \(>= 1\.2\.0~\)/libx-dev (>= 1:1.2.0~)/'
+  sab revision-control-floor   debian/control   '/^Depends/ s/libx-dev \(>= 1\.2\.0~\)/libx-dev (>= 1.2.0-1~)/'
+  sab epoch-control-unlisted   debian/control   '/^Depends/ s/libx-dev \(>=/libz (>= 1:3.0~), libx-dev (>=/'
+  sab revision-control-unlisted debian/control  '/^Depends/ s/libx-dev \(>=/libz (>= 3.0-2~), libx-dev (>=/'
+  sab epoch-spec-unlisted      packaging/t.spec '$a Requires: extra >= 1:2.0'
+  sab epoch-spec-floor         packaging/t.spec '/^Requires: ownb/ s/1\.4/1:1.4/'
+  # ... and a deps.txt floor that carries an epoch and a revision is rendered and held like a plain one
+  mkepoch() { mk; printf 'epk  libepk  1:2.0-3\n' >> "$S/t/$DEPS"; printf 'Requires: epk >= 1:2.0-3\n' >> "$S/t/packaging/t.spec"
+    sed -i 's/^Depends: /Depends: libepk (>= 1:2.0-3~), /' "$S/t/debian/control"; }
+  mkepoch
+  if run check "$S/t" >/dev/null 2>&1; then echo "epoch and revision floor, stated: green"; else echo "epoch and revision floor, stated: FALSE RED"; fail=1; fi
+  mkepoch; sed -i 's/epk >= 1:2.0-3/epk >= 1:1.9-1/' "$S/t/packaging/t.spec"; sed -i 's/libepk (>= 1:2.0-3~)/libepk (>= 1.9~)/' "$S/t/debian/control"
+  if run check "$S/t" >/dev/null 2>&1; then echo "SABOTAGE epoch floor drift: STAYED GREEN"; fail=1; else echo "SABOTAGE epoch floor drift: red"; fi
+  run write "$S/t" >/dev/null 2>&1 || true
+  if run check "$S/t" >/dev/null 2>&1 && grep -q 'epk >= 1:2.0-3$' "$S/t/packaging/t.spec" && grep -qF 'libepk (>= 1:2.0-3~)' "$S/t/debian/control"
+  then echo "WRITE repairs an epoch and revision floor: ok"; else echo "WRITE left an epoch and revision floor"; fail=1; fi
+  # Suggests is a weak dependency like Recommends (.github#110): read for its floor, and a ceiling in it refused
+  sab suggests-control-unlisted debian/control  '$a Suggests: libz (>= 3.0~)'
+  sab suggests-control-ceiling debian/control   '$a Suggests: libownb (<< 3~)'
+  sab suggests-control-floor   debian/control   '$a Suggests: libownb (>= 1.0~)'
+  sab suggests-spec-unlisted   packaging/t.spec '$a Suggests: extra >= 2.0'
+  sab suggests-spec-ceiling    packaging/t.spec '$a Suggests: lib-devel < 2'
+  # a workflow install line that types a version of a package deps.txt lists is a second copy of its floor, refused
+  # whether it differs or not (.github#104, #110): the line reads it from deps.txt (render.sh --floor <name>)
+  sab workflow-install-floor-differs .github/workflows/ci.yml "\$a jobs:\n  t:\n    steps:\n      - run: dnf install -y 'lib-devel >= 1.1.0'"
+  sab workflow-install-floor-typed   .github/workflows/ci.yml "\$a jobs:\n  t:\n    steps:\n      - run: dnf install -y 'lib-devel >= 1.2.0'"
+  sab workflow-install-epoch-typed   .github/workflows/ci.yml "\$a jobs:\n  t:\n    steps:\n      - run: dnf5 install -y 'ownb >= 1:1.4'"
+  mk; printf 'jobs:\n  t:\n    steps:\n      - run: dnf install -y "lib-devel >= $(packaging/render.sh --floor lib-devel)" other gcc\n' >> "$S/t/.github/workflows/ci.yml"
+  if run check "$S/t" >/dev/null 2>&1; then echo "workflow install line reading the floor: green"; else echo "workflow install line reading the floor: FALSE RED"; fail=1; fi
   [ "$fail" = 0 ] || exit 1
   echo "deps-render self-test: every drift red"
   exit 0
