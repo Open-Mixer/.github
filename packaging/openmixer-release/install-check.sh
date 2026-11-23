@@ -13,6 +13,8 @@
 # SIGNED=0 skips the signature check of the RPM itself, for a dry run's unsigned build; the repository's
 # metadata and the probe package are verified either way.
 #
+# The testing repositories (RPM) and the testing source (DEB), the staging channel, must be installed and disabled.
+#
 # Fedora (dnf5) or Debian, as root. Fails when the repository is not the one named, the key does not verify the
 # index or the package does not come from the repository.
 set -euo pipefail
@@ -65,6 +67,23 @@ else
     gpg --show-keys /usr/share/keyrings/openmixer-archive-keyring.asc
     apt-get -o Acquire::Retries=5 update 2>&1 | tee "$work/update"
     ! grep -qE '^(W|E):' "$work/update" || fail "apt update with the openmixer source warned or failed"
+    # the testing source (the staging channel) is installed and disabled: the opt-in is the tester's. Disabled, apt
+    # reads nothing from it; enabled, its signed index loads with the shipped key and no warning; disabled again, it
+    # is gone from apt's view. The check puts the file back as the package wrote it.
+    testing=/etc/apt/sources.list.d/openmixer-testing.sources
+    [ -f "$testing" ] && [ ! -L "$testing" ] || fail "$testing is missing (or a link): the testing source is not installed"
+    cat "$testing"
+    grep -qx 'Enabled: no' "$testing" || fail "$testing is not 'Enabled: no': the testing source must be installed disabled"
+    ! grep -q '/staging/deb/' "$work/update" || fail "apt update read the staging channel with the testing source disabled"
+    cp -p "$testing" "$work/testing.sources"
+    sed -i 's/^Enabled: no$/Enabled: yes/' "$testing"
+    apt-get -o Acquire::Retries=5 update 2>&1 | tee "$work/update-testing"
+    cp -p "$work/testing.sources" "$testing"
+    ! grep -qE '^(W|E):' "$work/update-testing" || fail "apt update with the testing source enabled warned or failed"
+    grep -q '/staging/deb/debian/' "$work/update-testing" || fail "apt update with the testing source enabled did not read the staging channel"
+    apt-get -o Acquire::Retries=5 update > "$work/update-again" 2>&1
+    ! grep -q '/staging/deb/' "$work/update-again" || fail "apt update still reads the staging channel after the testing source is disabled again"
+    echo "the testing source is installed disabled, and enabled it loads the signed staging index"
     apt-cache policy | grep openmixer
     apt-get install -y --no-install-recommends "$probe"
     apt-cache policy "$probe" | tee "$work/policy"
