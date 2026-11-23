@@ -47,6 +47,8 @@ check)
         done < <(find "$dir" -name '*.rpm' -print0 | sort -z)
     else
         while IFS= read -r -d '' f; do
+            # only <dir>/<suite>/<package>.deb is judged here: any other layout is publish-tree.sh's to refuse, by name
+            [ "$(dirname "$(dirname "$f")")" = "${dir%/}" ] || continue
             suite=$(basename "$(dirname "$f")")
             arch=$(basename "$f" .deb); arch=${arch##*_}
             case $arch in
