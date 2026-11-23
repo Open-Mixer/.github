@@ -4,15 +4,19 @@ name: commit-message-check
 description: Fail when a commit of the pull request carries an attribution line
 
 # A commit message is published like a file. The commits between the base branch and the checked-out head are read
-# (what is already on the base is not); the checker is run against its own fixtures first and must go blind when its
-# patterns are removed. The patterns are commit-message-patterns.json beside the script: the one list, edited here, which
-# every repository's doors and commit-msg hook read from a checkout of this repository.
+# (what is already on the base is not, nor, with upstream-url, a fork's upstream commits); the checker is run against
+# its own fixtures first and must go blind when its patterns are removed. The patterns are commit-message-patterns.json
+# beside the script: the one list, edited here, which every repository's doors and commit-msg hook read from a checkout
+# of this repository.
 # The caller checks out with fetch-depth: 0 and the pull request head.
 
 inputs:
   base-ref:
     description: the branch the pull request targets
     default: ${{ github.base_ref }}
+  upstream-url:
+    description: a fork's upstream URL (an exact line of ../upstream-exempt/upstream-allowed.txt); its own commits are exempt from both message checks. Empty, no exemption
+    default: ''
 
 runs:
   using: composite
@@ -24,15 +28,17 @@ runs:
       shell: bash
       env:
         BASE_REF: ${{ inputs.base-ref }}
+        UPSTREAM_URL: ${{ inputs.upstream-url }}
       run: |
         set -euo pipefail
         [ -n "$BASE_REF" ] || { echo 'commit-message-check: no base-ref (run on a pull_request)' >&2; exit 2; }
-        "${{ github.action_path }}/commit-message-check.sh" "origin/$BASE_REF..HEAD"
+        "${{ github.action_path }}/commit-message-check.sh" ${UPSTREAM_URL:+--upstream-url "$UPSTREAM_URL"} "origin/$BASE_REF..HEAD"
     - name: The same commits name no private repository, machine or path
       shell: bash
       env:
         BASE_REF: ${{ inputs.base-ref }}
         GH_TOKEN: ${{ github.token }}
+        UPSTREAM_URL: ${{ inputs.upstream-url }}
       run: |
         set -euo pipefail
-        "${{ github.action_path }}/../private-refs-check/check.sh" --messages "origin/$BASE_REF..HEAD"
+        "${{ github.action_path }}/../private-refs-check/check.sh" ${UPSTREAM_URL:+--upstream-url "$UPSTREAM_URL"} --messages "origin/$BASE_REF..HEAD"

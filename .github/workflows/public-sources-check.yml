@@ -37,7 +37,7 @@ on:
         type: string
         default: ''
       upstream-url:
-        description: a fork's upstream URL (an exact line of the upstream-exempt list); the upstream's own commits are exempt from commit-identity-check. Empty, no exemption
+        description: a fork's upstream URL (an exact line of the upstream-exempt list); the upstream's own commits are exempt from commit-identity-check and both message checks. Empty, no exemption
         type: string
         default: ''
       fedora-workflows:
@@ -70,6 +70,7 @@ jobs:
       - uses: Open-Mixer/.github/.github/actions/commit-message-check@openmixer-v1
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
+          upstream-url: ${{ inputs.upstream-url }}
 
   commit-identity:
     name: every commit has the house author and committer and is verified
