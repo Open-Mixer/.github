@@ -1,7 +1,7 @@
 openmixer-release (1-10) unstable; urgency=medium
 
-  * freereac-release is recommended, no longer a dependency: the package
-    installs on its own again, from its one file.
+  * No dependency on freereac-release: the OpenMixer and FreeREAC
+    repositories are independent, and the package installs on its own again.
 
  -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 17:30:00 +0100
 

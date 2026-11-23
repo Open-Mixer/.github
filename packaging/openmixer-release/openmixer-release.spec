@@ -13,10 +13,6 @@ URL:            https://www.openmixer.org
 Source0:        openmixer.repo
 Source1:        RPM-GPG-KEY-openmixer
 BuildArch:      noarch
-# OpenMixer installs reac-pw (floor only, in each package that needs it) and does not carry it: the FreeREAC repository that does
-# is recommended, never required, so this package installs on its own (a dnf install of the one file has no repository to
-# take a required one from)
-Recommends:     freereac-release >= 1-2
 
 %description
 Adds the OpenMixer repository, which carries the OpenMixer console and its plugin hosts, to dnf, with the
@@ -36,7 +32,7 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 
 %changelog
 * Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-10
-- freereac-release is recommended, no longer required: openmixer-release installs on its own again, from its one file (1-7 to 1-9 refused `dnf install openmixer-release.noarch.rpm` on a clean machine).
+- No dependency on freereac-release: OpenMixer's repository and FreeREAC's are independent, and openmixer-release installs on its own again from its one file (1-7 to 1-9 required freereac-release and refused `dnf install openmixer-release.noarch.rpm` on a clean machine). A rig that drives a stagebox adds FreeREAC's repository itself (openmixer-full requires reac-pw).
 
 * Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-9
 - The testing repositories, openmixer-testing and openmixer-testing-noarch: the staging channel of the release wave, installed disabled, as Fedora's updates-testing; enabling them is the whole opt-in to the builds a wave proved before their release.

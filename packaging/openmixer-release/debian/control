@@ -13,7 +13,6 @@ Package: openmixer-release
 Architecture: all
 Multi-Arch: foreign
 Depends: ${misc:Depends}
-Recommends: freereac-release (>= 1-2)
 Description: OpenMixer package repository configuration for apt
  Adds the apt source of the OpenMixer repository, which carries the OpenMixer
  console and its plugin hosts, with the key that signs its index. The source
