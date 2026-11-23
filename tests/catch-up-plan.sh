@@ -5,7 +5,7 @@
 # up"), offline. matrix.sh is run as the first job runs it, against a fixture cells.tsv shaped like the channel's on
 # 2026-11-13: plugin-qualify 0.20.4 served for fc44 x86_64, fc45 x86_64 and trixie arm64, three of the four quick
 # cells, with its language packs arch-independent (noarch, all). Proves:
-#   - the deb run plans exactly trixie amd64, the missing cell; the rpm run plans nothing and says so (count 0, cells
+#   - the deb run plans exactly trixie arm64, the missing cell; the rpm run plans nothing and says so (count 0, cells
 #     []), and so does a version served in every cell of the set;
 #   - an arch-independent package (all, noarch) serves every cell of its release and is never judged there, so a
 #     release naming one beside an arch package still plans the arch package's missing cell;
@@ -27,13 +27,13 @@ matrix=${MATRIX_SH:-$here/.github/actions/release-matrix/matrix.sh}
 printf '# package\tversion\tset\tcells\n' > "$t/deb.tsv"
 printf '%s\t%s\t%s\t%s\n' \
     plugin-qualify 0.20.3 - 'bookworm/amd64 bookworm/arm64 trixie/amd64 trixie/arm64' \
-    plugin-qualify 0.20.4 quick 'trixie/arm64' \
+    plugin-qualify 0.20.4 quick 'trixie/amd64' \
     plugin-qualify 0.20.5 quick 'trixie/amd64 trixie/arm64' \
     plugin-qualify-l10n-ca 0.20.4 quick 'trixie/all' \
     plugin-qualify-l10n-de 0.20.4 quick 'trixie/all' \
-    libfoo1 1.0.0 full 'bookworm/amd64 bookworm/arm64 trixie/arm64' \
+    libfoo1 1.0.0 full 'bookworm/amd64 bookworm/arm64 trixie/amd64' \
     libfoo-dev 1.0.0 full 'bookworm/amd64 bookworm/arm64 trixie/arm64 trixie/amd64' \
-    libbar1 2.0.0 full 'bookworm/amd64 bookworm/arm64 trixie/arm64' \
+    libbar1 2.0.0 full 'bookworm/amd64 bookworm/arm64 trixie/amd64' \
     bar-contract 2.0.0 full 'bookworm/all trixie/all' \
     >> "$t/deb.tsv"
 printf '# package\tversion\tset\tcells\n' > "$t/rpm.tsv"
@@ -62,12 +62,12 @@ refused() { # <what> <pattern the refusal names> <plan args...>
 }
 
 : > "$t/out"; plan deb v0.20.4 plugin-qualify || { cat "$t/log"; fail "the deb catch-up of plugin-qualify v0.20.4 failed"; }
-[ "$(out cells)" = '[{"suite":"trixie","arch":"amd64"}]' ] || { cat "$t/log" "$t/out"; fail "the deb catch-up planned $(out cells), not trixie amd64 alone"; }
-[ "$(out count)" = 1 ] && [ "$(out releases)" = trixie ] && [ "$(out first-arch)" = amd64 ] && [ "$(out set)" = quick ] ||
-    fail "the deb catch-up outputs are not count 1, trixie, amd64, quick: $(cat "$t/out")"
-grep -q 'trixie/arm64 already serves plugin-qualify 0.20.4: not built' "$t/log" || fail "the served cell is not named as left out: $(cat "$t/log")"
+[ "$(out cells)" = '[{"suite":"trixie","arch":"arm64"}]' ] || { cat "$t/log" "$t/out"; fail "the deb catch-up planned $(out cells), not trixie arm64 alone"; }
+[ "$(out count)" = 1 ] && [ "$(out releases)" = trixie ] && [ "$(out first-arch)" = arm64 ] && [ "$(out set)" = quick ] ||
+    fail "the deb catch-up outputs are not count 1, trixie, arm64, quick: $(cat "$t/out")"
+grep -q 'skipped while quick: .*trixie amd64' "$t/log" || fail "the served cell outside the quick set is not named as left out: $(cat "$t/log")"
 grep -q 'catch-up of v0.20.4' "$t/log" || fail "the plan does not say it is a catch-up"
-ok "deb: plugin-qualify v0.20.4, served in trixie arm64, plans trixie amd64 alone"
+ok "deb: plugin-qualify v0.20.4, served in trixie amd64, plans trixie arm64 alone"
 
 : > "$t/out"; plan rpm v0.20.4 plugin-qualify || { cat "$t/log"; fail "the rpm catch-up of plugin-qualify v0.20.4 failed"; }
 [ "$(out cells)" = '[]' ] && [ "$(out count)" = 0 ] && [ -z "$(out first-arch)" ] ||
@@ -80,28 +80,28 @@ ok "rpm: the same version, served in fc44 and fc45 x86_64, plans nothing and say
 ok "deb: a version served in every quick cell plans nothing"
 
 : > "$t/out"; plan deb v0.20.4 'plugin-qualify plugin-qualify-l10n-*' || { cat "$t/log"; fail "an arch package beside arch-independent ones failed"; }
-[ "$(out cells)" = '[{"suite":"trixie","arch":"amd64"}]' ] || fail "with its language packs named, the deb catch-up planned $(out cells)"
+[ "$(out cells)" = '[{"suite":"trixie","arch":"arm64"}]' ] || fail "with its language packs named, the deb catch-up planned $(out cells)"
 : > "$t/out"; plan deb v0.20.4 'plugin-qualify-l10n-*' || { cat "$t/log"; fail "an all-only release failed"; }
 [ "$(out count)" = 0 ] || fail "packages served in trixie/all planned $(out cells): all serves every cell of its release"
 : > "$t/out"; plan rpm v0.20.4 'plugin-qualify-langpack-*' || { cat "$t/log"; fail "a noarch-only release failed"; }
 [ "$(out count)" = 0 ] || fail "packages served in fc44/noarch and fc45/noarch planned $(out cells)"
 : > "$t/out"; plan deb v2.0.0 'libbar1 bar-contract' || { cat "$t/log"; fail "an arch library beside its all package failed"; }
-[ "$(out cells)" = '[{"suite":"trixie","arch":"amd64"}]' ] || fail "libbar1 with its all package planned $(out cells)"
+[ "$(out cells)" = '[{"suite":"trixie","arch":"arm64"}]' ] || fail "libbar1 with its all package planned $(out cells)"
 ok "arch-independent packages (all, noarch) serve their whole release and are never judged against the arch ones"
 
 : > "$t/out"; plan deb v0.20.4 plugin-qualify full || { cat "$t/log"; fail "the full-matrix catch-up failed"; }
-[ "$(out cells)" = '[{"suite":"bookworm","arch":"amd64"},{"suite":"bookworm","arch":"arm64"},{"suite":"trixie","arch":"amd64"}]' ] ||
+[ "$(out cells)" = '[{"suite":"bookworm","arch":"amd64"},{"suite":"bookworm","arch":"arm64"},{"suite":"trixie","arch":"arm64"}]' ] ||
     fail "the full-matrix catch-up planned $(out cells)"
 : > "$t/out"; plan rpm v0.3.0 omx-thing full || { cat "$t/log"; fail "the full rpm catch-up failed"; }
 [ "$(out cells)" = '[{"fedora":"44","arch":"x86_64"}]' ] && [ "$(out first-arch)" = x86_64 ] ||
     fail "omx-thing, missing fc44 x86_64 alone, planned $(out cells) (first arch $(out first-arch))"
 : > "$t/out"; plan rpm v0.3.0 omx-thing quick '["44", "45"]' '["x86_64"]' || { cat "$t/log"; fail "the quick rpm catch-up failed"; }
-[ "$(out cells)" = '[{"fedora":"44","arch":"x86_64"}]' ] || fail "the quick rpm catch-up planned $(out cells), outside the set or served"
+[ "$(out count)" = 0 ] || fail "the quick rpm catch-up planned $(out cells): fc44 is outside the quick set (fc45 x86_64, served)"
 ok "the full matrix plans its missing cells only; aarch64, outside the quick set, is never planned by a quick run"
 
 refused "a version the channel does not serve" 'serves no plugin-qualify 0.21.0 at all' deb v0.21.0 plugin-qualify
 refused "a package of the release with no line at the version" 'no plugin-qualify-extra 0.20.4' deb v0.20.4 'plugin-qualify plugin-qualify-extra'
-refused "a cell one package serves and another lacks" 'trixie/amd64 serves libfoo-dev 1.0.0 but not libfoo1' deb v1.0.0 'libfoo1 libfoo-dev'
+refused "a cell one package serves and another lacks" 'trixie/arm64 serves libfoo-dev 1.0.0 but not libfoo1' deb v1.0.0 'libfoo1 libfoo-dev'
 refused "a tag that names no version" "'main' is not v<version>" deb main plugin-qualify
 TSV=$t/none refused "a run with no cells.tsv" 'no cells.tsv' deb v0.20.4 plugin-qualify
 printf 'not a header\n' > "$t/bad.tsv"
@@ -112,7 +112,7 @@ ok "refused by name: an unserved version, a missing package, a half-served cell,
 # without CATCH_UP nothing changes: the same deb run builds both quick cells
 env -i PATH=/usr/bin:/bin KIND=deb MATRIX=quick RELEASES='["bookworm", "trixie"]' ARCHES='["amd64", "arm64"]' EVENT=workflow_dispatch \
     SOURCE_REF=v0.20.4 CELLS_TSV="$t/deb.tsv" NAMES=plugin-qualify GITHUB_OUTPUT="$t/plain" bash "$matrix" > /dev/null
-grep -qx 'cells=\[{"suite":"trixie","arch":"amd64"},{"suite":"trixie","arch":"arm64"}\]' "$t/plain" || fail "a run that is not a catch-up planned $(cat "$t/plain")"
+grep -qx 'cells=\[{"suite":"trixie","arch":"arm64"}\]' "$t/plain" || fail "a run that is not a catch-up planned $(cat "$t/plain")"
 ok "a run that is not a catch-up builds the set as before"
 
 # ---- the workflows hand catch-up on, and an empty plan builds and publishes nothing
@@ -138,8 +138,8 @@ for kind in ("rpm", "deb"):
     pf = [s for s in pre["steps"] if "release-preflight" in s.get("uses", "")][0]["with"]
     assert pf.get("catch-up") == "${{ inputs.catch-up }}", f"build-{kind}.yml does not hand catch-up to the preflight"
     assert "needs.preflight.outputs.count != '0'" in jobs["build"]["if"], f"build-{kind}.yml builds on an empty plan"
-    assert "needs.preflight.outputs.count != '0'" in jobs["publish"]["if"], f"build-{kind}.yml publishes on an empty plan"
-    pub = [s for s in jobs["publish"]["steps"] if s.get("id") == "publish"][0]["with"]
+    assert "needs.preflight.outputs.count != '0'" in jobs["publish-go"]["if"], f"build-{kind}.yml publishes on an empty plan"
+    pub = [s for s in jobs["publish-release"]["steps"] if s.get("id") == "publish"][0]["with"]
     assert pub.get("catch-up") == "${{ inputs.catch-up }}", f"build-{kind}.yml does not hand catch-up to the publish"
     assert pub.get("matrix-set") == "${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}", \
         f"build-{kind}.yml records a set of its own on a catch-up (cells.tsv must keep the version's)"
@@ -166,7 +166,7 @@ if [ -z "${MATRIX_SH:-}" ]; then
     sed '/^    cells=(\${keep\[@\]+"\${keep\[@\]}"})$/d' "$matrix" > "$t/matrix-sab.sh"
     ! cmp -s "$matrix" "$t/matrix-sab.sh" || fail "the sabotage did not change matrix.sh"
     if MATRIX_SH=$t/matrix-sab.sh bash "$0" > "$t/sab.log" 2>&1; then cat "$t/sab.log"; fail "with the subtraction taken out, a served cell was planned and this test stayed green"; fi
-    grep -q 'FAIL: the deb catch-up planned' "$t/sab.log" || { cat "$t/sab.log"; fail "the sabotage went red for another reason"; }
-    ok "sabotage: matrix.sh without the subtraction plans the served trixie arm64 cell, and this test goes red"
+    grep -q 'FAIL: the rpm catch-up of a version served in both quick rpm cells planned' "$t/sab.log" || { cat "$t/sab.log"; fail "the sabotage went red for another reason"; }
+    ok "sabotage: matrix.sh without the subtraction plans the served fc45 x86_64 cell, and this test goes red"
 fi
 echo "catch-up-plan: the missing cells only, an empty plan builds nothing, refusals by name"

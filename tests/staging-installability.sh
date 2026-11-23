@@ -42,13 +42,13 @@ mk() { # <dir> <name> <version> <release> [requires]; a noarch package
     rpmbuild -bb -D "_topdir $d" "$d/p.spec" >/dev/null 2>&1 || fail "rpmbuild $2 $3"
     mkdir -p "$1"; mv "$d"/RPMS/noarch/*.rpm "$1/"
 }
-for a in x86_64 noarch; do mkdir -p "$ch/rpm/fedora/44/$a" "$ch/staging/rpm/fedora/44/$a"; done
-mk "$ch/rpm/fedora/44/noarch" omx-lib 3.13.0 1.fc44
-mk "$ch/rpm/fedora/44/noarch" omx-app 1.0 1.fc44 '(omx-lib >= 3.13 with omx-lib < 3.14)'
-mk "$ch/staging/rpm/fedora/44/noarch" omx-lib 3.14.0 1.git5f455d3.fc44
-mk "$t/new-ok" omx-tool 1.0 1.fc44 '(omx-lib >= 3.13 with omx-lib < 3.14)'
-mk "$t/new-red" omx-needs-new 1.0 1.fc44 '(omx-lib >= 3.14 with omx-lib < 3.15)'
-for d in rpm staging/rpm; do for a in x86_64 noarch; do createrepo_c -q "$ch/$d/fedora/44/$a"; done; done
+for a in x86_64 noarch; do mkdir -p "$ch/rpm/fedora/45/$a" "$ch/staging/rpm/fedora/45/$a"; done
+mk "$ch/rpm/fedora/45/noarch" omx-lib 3.13.0 1.fc45
+mk "$ch/rpm/fedora/45/noarch" omx-app 1.0 1.fc45 '(omx-lib >= 3.13 with omx-lib < 3.14)'
+mk "$ch/staging/rpm/fedora/45/noarch" omx-lib 3.14.0 1.git5f455d3.fc45
+mk "$t/new-ok" omx-tool 1.0 1.fc45 '(omx-lib >= 3.13 with omx-lib < 3.14)'
+mk "$t/new-red" omx-needs-new 1.0 1.fc45 '(omx-lib >= 3.14 with omx-lib < 3.15)'
+for d in rpm staging/rpm; do for a in x86_64 noarch; do createrepo_c -q "$ch/$d/fedora/45/$a"; done; done
 
 # the system: no distribution repository (offline), the real channel as openmixer-release adds it
 mkdir -p "$t/distro-repos"; mv /etc/yum.repos.d/*.repo "$t/distro-repos/" 2>/dev/null || true
@@ -56,18 +56,18 @@ sed "s|https://www.openmixer.org/|file://$ch/|" "$here/packaging/openmixer-relea
 
 verdict() { # <label> <new dir>: runs the gate as run.sh does (no --reposdir: the system's repositories), prints rc and verdict
     local rc=0
-    python3 -I "$gate" rpm --channel "$ch/rpm" --fedora 44 --arch x86_64 --new-dir "$2" > "$t/$1.out" 2>&1 || rc=$?
+    python3 -I "$gate" rpm --channel "$ch/rpm" --fedora 45 --arch x86_64 --new-dir "$2" > "$t/$1.out" 2>&1 || rc=$?
     echo "$rc $(grep -o 'channel-installability rpm: [A-Z]*' "$t/$1.out" || echo none)"
 }
 green="0 channel-installability rpm: GREEN" red="1 channel-installability rpm: RED"
 v=$(verdict real-ok "$t/new-ok"); [ "$v" = "$green" ] || { cat "$t/real-ok.out"; fail "omx-tool on the real channel alone: $v"; }
 v=$(verdict real-red "$t/new-red"); [ "$v" = "$red" ] || { cat "$t/real-red.out"; fail "omx-needs-new on the real channel alone: $v"; }
-grep -q 'omx-needs-new 1.0-1.fc44.noarch is new and does not install' "$t/real-red.out" || { cat "$t/real-red.out"; fail "the red verdict does not name omx-needs-new"; }
+grep -q 'omx-needs-new 1.0-1.fc45.noarch is new and does not install' "$t/real-red.out" || { cat "$t/real-red.out"; fail "the red verdict does not name omx-needs-new"; }
 ok "on the real channel alone: omx-tool is GREEN, omx-needs-new (omx-lib >= 3.14) is RED"
 
 BASE_URL=file://$ch "$here/.github/actions/add-openmixer/add-staging.sh" >/dev/null
-dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --setopt='*.repo_gpgcheck=0' makecache >/dev/null || fail "the staging channel does not load"
-dnf repoquery --disablerepo='*' --enablerepo='openmixer*' --setopt='*.repo_gpgcheck=0' omx-lib > "$t/rq" 2>&1 || true; grep -q 'omx-lib-0:3.14.0-1.git5f455d3' "$t/rq" || { cat "$t/rq"; fail "the staged minor is not visible to dnf"; }
+dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' --setopt='*.repo_gpgcheck=0' makecache >/dev/null || fail "the staging channel does not load"
+dnf repoquery --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' --setopt='*.repo_gpgcheck=0' omx-lib > "$t/rq" 2>&1 || true; grep -q 'omx-lib-0:3.14.0-1.git5f455d3' "$t/rq" || { cat "$t/rq"; fail "the staged minor is not visible to dnf"; }
 v=$(verdict staged-ok "$t/new-ok"); [ "$v" = "$green" ] || { cat "$t/staged-ok.out"; fail "a staged minor changed omx-tool's verdict to $v"; }
 v=$(verdict staged-red "$t/new-red"); [ "$v" = "$red" ] || { cat "$t/staged-red.out"; fail "a staged minor changed omx-needs-new's verdict to $v"; }
 grep -q '3\.14\.0' "$t/staged-ok.out" "$t/staged-red.out" && fail "the gate's report names the staged omx-lib 3.14.0"

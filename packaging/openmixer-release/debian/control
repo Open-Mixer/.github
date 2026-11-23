@@ -19,3 +19,7 @@ Description: OpenMixer package repository configuration for apt
  names the Debian release of the system it is installed on (bookworm or
  trixie, Raspberry Pi OS included). apt upgrade keeps this configuration
  current.
+ .
+ It also adds the testing source, openmixer-testing.sources, disabled: the
+ builds a release wave has proved before their release, as Fedora's
+ updates-testing. Setting Enabled: yes in it is the whole opt-in.

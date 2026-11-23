@@ -85,22 +85,26 @@ rpm)
         find "$d/RPMS" -name '*.rpm'
     }
     mkdir -p "$work/real" "$work/staged"
-    cp "$(mkpkg omx-lib 3.13.0 1.fc44)" "$(mkpkg omx-lib 3.14.1 1.fc44)" "$(mkpkg omx-app 1.0 1.fc44 'omx-lib >= 3.13')" "$work/real/"
-    cp "$(mkpkg omx-lib 3.14.0 1.git$A.fc44)" "$work/staged/"
+    cp "$(mkpkg omx-lib 3.13.0 1.fc45)" "$(mkpkg omx-lib 3.14.1 1.fc45)" "$(mkpkg omx-app 1.0 1.fc45 'omx-lib >= 3.13')" "$work/real/"
+    cp "$(mkpkg omx-lib 3.14.0 1.git$A.fc45)" "$work/staged/"
     "$actions/publish-rpms/publish-tree.sh" "$ch/rpm" "$work/real" "$NEW_ID" >/dev/null
     ;;
 deb)
     mkdeb() { # <name> <version> [depends]
         local d=$work/db-$1-$2
         mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$1"
-        printf '%s\n' "Package: $1" "Version: $2" 'Architecture: amd64' 'Maintainer: t <t@example.org>' 'Description: t' > "$d/DEBIAN/control"
+        printf '%s\n' "Package: $1" "Version: $2" "Architecture: ${DEB_ARCH:-amd64}" 'Maintainer: t <t@example.org>' 'Description: t' > "$d/DEBIAN/control"
         [ -z "${3:-}" ] || echo "Depends: $3" >> "$d/DEBIAN/control"
-        dpkg-deb --root-owner-group -b "$d" "$work/$1_$2_amd64.deb" >/dev/null
-        echo "$work/$1_$2_amd64.deb"
+        dpkg-deb --root-owner-group -b "$d" "$work/$1_$2_${DEB_ARCH:-amd64}.deb" >/dev/null
+        echo "$work/$1_$2_${DEB_ARCH:-amd64}.deb"
     }
     mkdir -p "$work/real/trixie" "$work/staged/trixie"
-    cp "$(mkdeb libmod-host-protocol0 0.10.11)" "$(mkdeb omx-lib 3.13.0)" "$(mkdeb omx-lib 3.14.1)" "$work/real/trixie/"
-    cp "$(mkdeb omx-lib 3.14.0+git$A libmod-host-protocol0)" "$work/staged/trixie/"
+    cp "$(mkdeb libmod-host-protocol0 0.10.11)" "$(DEB_ARCH=arm64 mkdeb libmod-host-protocol0 0.10.11)" \
+        "$(mkdeb omx-lib 3.13.0)" "$(mkdeb omx-lib 3.14.1)" "$work/real/trixie/"
+    # a staged run stages the tested platforms alone (trixie arm64, and all): the client of this amd64 container takes
+    # the all package; the arm64 one is the cell the requires check judges
+    cp "$(DEB_ARCH=all mkdeb omx-lib 3.14.0+git$A libmod-host-protocol0)" \
+        "$(DEB_ARCH=arm64 mkdeb omx-tool 1.0+git$A libmod-host-protocol0)" "$work/staged/trixie/"
     REQUIRES=libmod-host-protocol0 "$actions/publish-debs/publish-tree.sh" "$ch/deb" "$work/real" "$NEW_ID" >/dev/null
     ;;
 *) fail "rpm or deb, not $kind" ;;
@@ -121,8 +125,8 @@ if [ "$kind" = rpm ]; then
     (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$work/staged SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID \
         bash -e "$work/assemble.sh") > "$work/publish.log" 2>&1 || { cat "$work/publish.log"; fail "the staged rpm publish failed"; }
     s=$ch/staging/rpm
-    f=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$A.fc44.noarch.rpm
-    [ -f "$f" ] || fail "the staged package is not at staging/rpm/fedora/44/noarch: $(cd "$ch" && find staging -name '*.rpm')"
+    f=$s/fedora/45/noarch/omx-lib-3.14.0-1.git$A.fc45.noarch.rpm
+    [ -f "$f" ] || fail "the staged package is not at staging/rpm/fedora/45/noarch: $(cd "$ch" && find staging -name '*.rpm')"
     rpm -qpi "$f" 2>/dev/null | grep -E '^Signature *:' | grep -qiv '(none)' || fail "the staged package is not signed"
     for rel in 44 45; do for a in x86_64 aarch64 noarch SRPMS; do
         [ -s "$s/fedora/$rel/$a/repodata/repomd.xml.asc" ] || fail "no signed metadata in staging/rpm/fedora/$rel/$a"
@@ -146,7 +150,8 @@ else
         REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs bash -e "$work/assemble.sh") \
         > "$work/publish.log" 2>&1 || { cat "$work/publish.log"; fail "the staged deb publish failed"; }
     s=$ch/staging/deb
-    [ -f "$s/debian/trixie/amd64/omx-lib_3.14.0+git${A}_amd64.deb" ] || fail "the staged package is not at staging/deb/debian/trixie/amd64"
+    [ -f "$s/debian/trixie/all/omx-lib_3.14.0+git${A}_all.deb" ] || fail "the staged package is not at staging/deb/debian/trixie/all (a staged run stages the tested platforms alone: arm64 and all)"
+    ! grep -E "^Architectures:.*amd64" "$s/debian/trixie/Release" || fail "the staging index names amd64: a staged run stages the tested platforms alone"
     for suite in bookworm trixie; do
         [ -s "$s/debian/$suite/InRelease" ] || fail "no signed index for staging/deb/debian/$suite"
         grep -qx 'Label: OpenMixer-Staging' "$s/debian/$suite/InRelease" || fail "staging/deb/debian/$suite is not labelled OpenMixer-Staging"
@@ -175,12 +180,12 @@ echo "$err" | grep -q 'never alone' || fail "add-staging.sh does not say why: $e
 if [ "$kind" = rpm ]; then
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
-    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' "$@"; }
+    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' "$@"; }
     BASE_URL=$base "$actions/add-openmixer/add-staging.sh" >/dev/null
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null
     q install omx-app >/dev/null
     got=$(rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib); repo=$(dnf -q repoquery --installed --qf '%{from_repo}' omx-lib)
-    [ "$got" = 3.14.0-1.git$A.fc44 ] || fail "with staging the client took omx-lib $got, not the staged 3.14.0-1.git$A"
+    [ "$got" = 3.14.0-1.git$A.fc45 ] || fail "with staging the client took omx-lib $got, not the staged 3.14.0-1.git$A"
     case $repo in openmixer-staging*) ;; *) fail "the staged omx-lib came from $repo" ;; esac
     q remove omx-app omx-lib >/dev/null
     mv /etc/yum.repos.d/openmixer-staging.repo "$work/"
@@ -212,13 +217,13 @@ ok "$kind: a client with staging added takes the staged build over a higher real
 mkdir -p "$work/staged-b"
 if [ "$kind" = rpm ]; then
     cmpv() { rpm --eval "%{lua:print(rpm.vercmp('$1', '$2'))}"; }
-    [ "$(cmpv "1.git$B.fc44" "1.git$A.fc44")" = 1 ] || fail "the later commit's release 1.git$B does not sort above 1.git$A"
-    [ "$(cmpv "1.git${B#*.}.fc44" "1.git${A#*.}.fc44")" = -1 ] || fail "the two shas alone sort by time: this is not the case under test"
-    cp "$(mkpkg omx-lib 3.14.0 "1.git$B.fc44")" "$work/staged-b/"
-    old=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$A.fc44.noarch.rpm
-    new=$s/fedora/44/noarch/omx-lib-3.14.0-1.git$B.fc44.noarch.rpm
+    [ "$(cmpv "1.git$B.fc45" "1.git$A.fc45")" = 1 ] || fail "the later commit's release 1.git$B does not sort above 1.git$A"
+    [ "$(cmpv "1.git${B#*.}.fc45" "1.git${A#*.}.fc45")" = -1 ] || fail "the two shas alone sort by time: this is not the case under test"
+    cp "$(mkpkg omx-lib 3.14.0 "1.git$B.fc45")" "$work/staged-b/"
+    old=$s/fedora/45/noarch/omx-lib-3.14.0-1.git$A.fc45.noarch.rpm
+    new=$s/fedora/45/noarch/omx-lib-3.14.0-1.git$B.fc45.noarch.rpm
     taken() { q makecache --refresh >/dev/null; q install omx-lib >/dev/null; rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib; q remove omx-lib >/dev/null; }
-    want=3.14.0-1.git$B.fc44
+    want=3.14.0-1.git$B.fc45
     # both builds in the index, as a publish that drops nothing leaves them: the order alone decides
     (cd "$ws" && NEWEST_ONLY='' "$actions/publish-rpms/publish-tree.sh" "$s" "$work/staged-b" "$NEW_ID") > "$work/both.log" 2>&1 || { cat "$work/both.log"; fail "the publish of the later commit failed"; }
     [ -f "$old" ] && [ -f "$new" ] || fail "without NEWEST_ONLY a publish removed a package"
@@ -229,9 +234,9 @@ else
     dpkg --compare-versions "3.14.0+git$B" gt "3.14.0+git$A" || fail "the later commit's 3.14.0+git$B does not sort above 3.14.0+git$A"
     dpkg --compare-versions "3.14.0+git${B#*.}" lt "3.14.0+git${A#*.}" || fail "the two shas alone sort by time: this is not the case under test"
     mkdir -p "$work/staged-b/trixie"
-    cp "$(mkdeb omx-lib "3.14.0+git$B" libmod-host-protocol0)" "$work/staged-b/trixie/"
-    old=$s/debian/trixie/amd64/omx-lib_3.14.0+git${A}_amd64.deb
-    new=$s/debian/trixie/amd64/omx-lib_3.14.0+git${B}_amd64.deb
+    cp "$(DEB_ARCH=all mkdeb omx-lib "3.14.0+git$B" libmod-host-protocol0)" "$work/staged-b/trixie/"
+    old=$s/debian/trixie/all/omx-lib_3.14.0+git${A}_all.deb
+    new=$s/debian/trixie/all/omx-lib_3.14.0+git${B}_all.deb
     taken() { apt-get update -qq -o APT::Update::Error-Mode=any; apt-cache policy omx-lib | awk '/Candidate:/ {print $2}'; }
     want=3.14.0+git$B
     (cd "$ws" && NEWEST_ONLY='' REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs \

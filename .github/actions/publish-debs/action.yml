@@ -6,8 +6,8 @@ description: Sign DEBs and publish them into the deb/ tree of an Open-Mixer Page
 # The DEB half of a release, run in a Debian container by the reusable build-deb workflow on a release tag
 # only. The tree is one flat apt repository per Debian release, deb/debian/<suite>/, holding <arch>/*.deb,
 # Packages, Release, InRelease and Release.gpg; users point apt at it with `deb [signed-by=...] <url> ./`.
-# The key is the one that signs the RPMs. cosign-key, when set, also signs Release.gpg and InRelease: a key
-# change for apt users, whose signed-by file holds the key they saved at install time (publish-tree.sh).
+# The key is the one that signs the RPMs, the dnf metadata and the apt index: Release.gpg and InRelease carry
+# that one signature and no other.
 # sign=false assembles an unsigned tree in build/repo and pushes nothing. The shared-tree race is described
 # in channel-pull.
 #
@@ -30,10 +30,17 @@ inputs:
     default: ''
   gpg-passphrase:
     default: ''
-  cosign-key:
-    description: a second key that also signs the apt index, armored; empty for none
+  key-file:
+    description: "the name of the public key file the channel serves in its deb/ tree; empty means openmixer.asc, OpenMixer's. Another project's channel names its own"
     default: ''
-  cosign-passphrase:
+  committed-keys:
+    description: "'false' keeps the public keys committed in this repository, which are OpenMixer's, out of the key file: the channel of another project serves exactly the key it signs with"
+    default: 'true'
+  signing-fingerprint:
+    description: "the primary fingerprint the signing key must have; empty checks none. A channel that is not OpenMixer's names its own, so a secret mapped to the wrong key refuses the run before anything is signed"
+    default: ''
+  label:
+    description: "the Origin and Label of the Release files of the real channel; empty means OpenMixer (the staging channel always labels OpenMixer-Staging)"
     default: ''
   publish-token:
     default: ''
@@ -78,7 +85,7 @@ inputs:
 outputs:
   commit:
     description: the commit pushed to the channel; empty when nothing was pushed (a dry run, or the channel already carried the tree)
-    value: ${{ steps.push.outputs.commit }}
+    value: ${{ steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
 
 runs:
   using: composite
@@ -95,8 +102,24 @@ runs:
         MATRIX_SET: ${{ inputs.matrix-set }}
         CATCH_UP: ${{ inputs.catch-up }}
         SUITES: ${{ inputs.suites }}
+        KEY_FILE_IN: ${{ inputs.key-file }}
+        COMMITTED_KEYS: ${{ inputs.committed-keys }}
+        SIGNING_FPR: ${{ inputs.signing-fingerprint }}
+        LABEL_IN: ${{ inputs.label }}
+        CHANNEL_IN: ${{ inputs.channel }}
       run: |
         set -o pipefail
+        # the channel, for the tree script's organisation guard (publish-rpms/channel-owner.sh) and the lost-race rebuild alike
+        echo "CHANNEL_REPO=$CHANNEL_IN" >> "$GITHUB_ENV"
+        # the channel profile: another project's key file, label and committed keys, for the tree script and the lost-race rebuild alike
+        [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" want "$COMMITTED_KEYS" "$SIGNING_FPR"
+        if [ "$COMMITTED_KEYS" = false ]; then
+          # the trust root of another project's channel is the one fingerprint its caller names, not OpenMixer's pinned list
+          pins=$(mktemp -d)/pinned.txt; printf '%s packages the channel key named by the caller\n' "${SIGNING_FPR^^}" > "$pins"
+          { echo "SERVED_KEYS_DIR=none"; echo "PINNED_FINGERPRINTS=$pins"; } >> "$GITHUB_ENV"
+        fi
+        [ -z "$LABEL_IN" ] || [ "$STAGING" = true ] || echo "LABEL=$LABEL_IN" >> "$GITHUB_ENV"
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
         # a catch-up, for the tree script and the lost-race rebuild alike
@@ -104,12 +127,15 @@ runs:
         # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/
         if [ "$STAGING" = true ]; then
           { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
-            echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"; } >> "$GITHUB_ENV"
+            echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"
+            echo "SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb)"; } >> "$GITHUB_ENV"
         else
           echo "DEB_TREE=deb" >> "$GITHUB_ENV"
         fi
         find "$DEB_DIR" -name '*.deb' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no DEB under $DEB_DIR"; exit 1; }
+        # the testing channel carries the tested platforms alone (owner ruling 2026-11-23): nothing of another cell is staged
+        [ "$STAGING" != true ] || "$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" check deb "$DEB_DIR"
 
     - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true'
@@ -118,12 +144,13 @@ runs:
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
-      if: inputs.sign == 'true' && inputs.cosign-key != ''
-      with:
-        gpg-key: ${{ inputs.cosign-key }}
-        gpg-passphrase: ${{ inputs.cosign-passphrase }}
-        id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
+    - name: Check the fingerprint of the signing key is the one named
+      if: inputs.sign == 'true' && inputs.signing-fingerprint != ''
+      shell: bash
+      env:
+        WANT: ${{ inputs.signing-fingerprint }}
+      run: |
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" key "$OPENMIXER_GPG_KEY_ID" "$WANT"
 
     - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
@@ -137,9 +164,8 @@ runs:
       shell: bash
       run: |
         set -o pipefail
-        # shellcheck disable=SC2086 # the co-signer is one fingerprint or empty
-        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check build/channel/deb/openmixer.asc \
-          "$OPENMIXER_GPG_KEY_ID" ${OPENMIXER_GPG_COSIGN_KEY_ID:-}
+        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "build/channel/deb/${KEY_FILE:-openmixer.asc}" \
+          "$OPENMIXER_GPG_KEY_ID"
 
     # Before the tree is assembled and signed: the channel with this release in it still installs everything that
     # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
@@ -174,7 +200,7 @@ runs:
       run: |
         set -o pipefail
         if [ "$SIGN" = true ]; then
-          COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$DEB_TREE" "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$DEB_TREE" "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
         else
           "$GITHUB_ACTION_PATH/publish-tree.sh" "build/repo/$DEB_TREE" "$DEB_DIR"
         fi
@@ -191,7 +217,7 @@ runs:
         test -n "$(find "$tree" -name Packages -print -quit)" || { echo "::error::no index in the tree"; exit 1; }
         if [ "$SIGN" = true ]; then
           test -n "$(find "$tree" -name InRelease -print -quit)" || { echo "::error::the index is not signed"; exit 1; }
-          test -s "$tree/openmixer.asc" || { echo "::error::no public key in the tree"; exit 1; }
+          test -s "$tree/${KEY_FILE:-openmixer.asc}" || { echo "::error::no public key in the tree"; exit 1; }
         fi
 
     # The rebuild command runs inside the job's container, where the action lives under a different path than
@@ -201,18 +227,31 @@ runs:
       shell: bash
       run: echo "PUBLISH_DEBS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
-    - id: push
+    - id: push-staging
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true'
+      if: inputs.sign == 'true' && inputs.staging == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.tag }}
-        what: ${{ inputs.staging == 'true' && 'staging/deb' || 'deb' }}
+        what: staging/deb
         # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
-        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+
+    - id: push-real
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.staging != 'true'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.tag }}
+        what: deb
+        # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 
     # After the push: a push that lost a race rebuilds and re-signs the tree, and the copies must be the bytes
     # the channel serves, not those of the first attempt.

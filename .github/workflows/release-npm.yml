@@ -46,6 +46,7 @@ defaults:
 jobs:
   publish:
     name: npm publish
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -77,6 +78,40 @@ jobs:
         run: ${{ inputs.prove }}
       - name: Publish
         working-directory: ${{ inputs.working-directory }}
+        run: npm publish --provenance --access public
+
+  dry-run:
+    name: npm publish, dry run
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Open-Mixer/.github/.github/actions/npm-publish-setup@openmixer-v1
+        with:
+          node-version: ${{ inputs.node-version }}
+      - uses: Open-Mixer/.github/.github/actions/tag-names-version@openmixer-v1
+        with:
+          version-command: node -p "require('./${{ inputs.working-directory }}/package.json').version"
+      - name: Install
+        working-directory: ${{ inputs.working-directory }}
         env:
-          DRY: ${{ github.ref_type != 'tag' && '--dry-run' || '' }}
-        run: npm publish --provenance --access public $DRY
+          PM: ${{ inputs.package-manager }}
+          PNPM_VERSION: ${{ inputs.pnpm-version }}
+        run: |
+          case "$PM" in
+            npm) npm ci ;;
+            pnpm) npm install -g "pnpm@$PNPM_VERSION"; pnpm install --frozen-lockfile ;;
+            *) echo "release-npm: package-manager is npm or pnpm, not $PM" >&2; exit 2 ;;
+          esac
+      - if: inputs.setup-action
+        uses: ./.github/actions/ci-setup
+      - name: The proof
+        working-directory: ${{ inputs.working-directory }}
+        run: ${{ inputs.prove }}
+      - name: Dry run, nothing is published
+        working-directory: ${{ inputs.working-directory }}
+        run: npm publish --provenance --access public --dry-run

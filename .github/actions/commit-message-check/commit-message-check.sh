@@ -8,7 +8,11 @@
 # subject, so a body line on line 2 publishes a whole paragraph as the subject). That last rule is one function,
 # blank_hit(), read by both commit doors: the range and the commit-msg hook.
 #
-#   commit-message-check.sh <range>          every commit in the range (e.g. origin/main..HEAD)
+#   commit-message-check.sh [--upstream-url U] <range>
+#                                            every commit in the range (e.g. origin/main..HEAD); with U, a fork's upstream
+#                                            commits are exempt through ../upstream-exempt/upstream-exempt.sh (the one
+#                                            source: U an exact listed URL, not rewritten, fetched, the commit its ancestor);
+#                                            our own commits and merges keep every check
 #   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped), and
 #                                            before the commit exists: the attribution patterns, private-refs-check's
 #                                            message patterns beside this action, and the commit's author and
@@ -30,7 +34,7 @@
 set -euo pipefail
 export COMMIT_MESSAGE_CHECK_SELF="${BASH_SOURCE[0]}"
 exec python3 -I - "$@" <<'PY'
-import json, os, re, subprocess, sys
+import json, os, re, shutil, subprocess, sys
 
 here = os.path.dirname(os.path.realpath(os.environ["COMMIT_MESSAGE_CHECK_SELF"]))
 pfile = os.environ.get("COMMIT_MESSAGE_PATTERNS") or os.path.join(here, "commit-message-patterns.json")
@@ -133,6 +137,16 @@ def house_origin():
     return p.returncode == 0 and bool(HOUSE_ORIGIN.search(p.stdout.strip()))
 
 
+ORIGIN_REPO = re.compile(r"github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+
+
+def origin_repo():
+    """OWNER/REPO of this repository's GitHub origin, or None."""
+    p = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    m = ORIGIN_REPO.search(p.stdout.strip()) if p.returncode == 0 else None
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
 def house_hits():
     """The commit about to be made: its author and committer, as git var reads them, against the list's house identity.
     Judged only in a repository whose origin names a house org; a fixture or foreign repository is not judged, and says so."""
@@ -161,7 +175,23 @@ def private_refs(msg_file):
     if not os.path.isfile(chk):
         print(f"commit-message-check: no private-refs-check beside this action ({chk}), so the message is not judged", file=sys.stderr)
         return 2
-    return subprocess.run(["bash", chk, "--msg-file", msg_file], stdout=subprocess.DEVNULL).returncode
+    # the check is a public repository's: it reads the target's visibility, so it is told which repository this is (in
+    # CI the run's own, else the GitHub origin of the repository committing); with neither it refuses (2), by name.
+    # Its skip line for a private target is passed on; its clean line is not
+    repo = os.environ.get("GITHUB_REPOSITORY") or origin_repo()
+    # its lookup needs a token: a runner has the run's own; on a desk, with none set, gh (when it is there) lends its
+    # login's. Without either the check refuses (2), by name
+    env = dict(os.environ)
+    if not (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")) and shutil.which("gh"):
+        t = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+        if t.returncode == 0 and t.stdout.strip():
+            env["GH_TOKEN"] = t.stdout.strip()
+    p = subprocess.run(["bash", chk, *(["--repo", repo] if repo else []), "--msg-file", msg_file],
+                       stdout=subprocess.PIPE, text=True, env=env)
+    for line in p.stdout.splitlines():
+        if "does not apply" in line:
+            print(line, file=sys.stderr)
+    return p.returncode
 
 
 def git(*a):
@@ -287,20 +317,38 @@ def main(a):
             print(f"commit-message-check: {e}", file=sys.stderr)
             return 2
         return 1 if report_blank("commit message", text) else 0
+    upstream = None
+    if len(a) == 3 and a[0] == "--upstream-url":
+        upstream, a = a[1], a[2:]
     if len(a) == 1 and not a[0].startswith("-"):
         shas = git("rev-list", a[0]).split()
-        bad = 0
+        bad = exempted = 0
         ident, branch = load_ident()
+        ex = os.path.join(here, "..", "upstream-exempt", "upstream-exempt.sh")
+        ex_state = None  # lazy: a clean range fetches nothing, and with no --upstream-url there is no exemption at all
         for sha in shas:
             msg = git("log", "-1", "--format=%B", sha)
+            lines = [f"{sha[:12]}: [{name}]: {line}" for _, name, line in commit_ident_hits(sha, ident, branch)]
+            if not (hits(msg, markers) or blank_hit(msg) is not None or lines):
+                continue
+            if upstream:
+                if ex_state is None:
+                    p = subprocess.run([ex, "prepare", upstream], capture_output=True, text=True)
+                    ex_state = (p.returncode == 0, p.stderr.strip().removeprefix("upstream-exempt: "))
+                if ex_state[0] and subprocess.run([ex, "holds", sha], capture_output=True).returncode == 0:
+                    exempted += 1
+                    continue
             bad += report(sha[:12], msg, markers)
             bad += report_blank(sha[:12], msg)
-            for _, name, line in commit_ident_hits(sha, ident, branch):
-                print(f"{sha[:12]}: [{name}]: {line}")
+            for line in lines:
+                print(line)
                 bad += 1
-        print(f"commit-message-check: {len(shas)} commits, {bad} offending lines")
+            if upstream and not ex_state[0]:
+                print(f"{sha[:12]}: no upstream exemption: {ex_state[1]}")
+        print(f"commit-message-check: {len(shas)} commits, {bad} offending lines"
+              + (f", {exempted} upstream commits exempt" if exempted else ""))
         return 1 if bad else 0
-    print(__doc__ if False else "usage: commit-message-check.sh <range> | --msg-file FILE | --text-file FILE | --subject-blank-file FILE | --selftest", file=sys.stderr)
+    print(__doc__ if False else "usage: commit-message-check.sh [--upstream-url U] <range> | --msg-file FILE | --text-file FILE | --subject-blank-file FILE | --selftest", file=sys.stderr)
     return 2
 
 

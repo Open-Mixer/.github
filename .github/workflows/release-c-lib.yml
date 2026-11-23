@@ -33,9 +33,6 @@ on:
         description: the DEBs debian/control builds; empty is the package name
         type: string
         default: ''
-      publish:
-        type: boolean
-        default: false
       arm:
         description: build aarch64/arm64 too
         type: boolean
@@ -84,7 +81,7 @@ jobs:
     with:
       package-name: ${{ inputs.package-name }}
       binary-names: ${{ inputs.rpm-binary-names || inputs.package-name }}
-      publish: ${{ github.event_name == 'push' || inputs.publish }}
+      publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
       stage: build
       needs-mod-host: ${{ inputs.needs-mod-host }}
       channel-deps: ${{ inputs.channel-deps }}
@@ -98,7 +95,7 @@ jobs:
     with:
       package-name: ${{ inputs.package-name }}
       binary-names: ${{ inputs.deb-binary-names || inputs.package-name }}
-      publish: ${{ github.event_name == 'push' || inputs.publish }}
+      publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
       stage: build
       dependencies: ${{ inputs.deb-dependencies }}
       requires: ${{ inputs.deb-requires }}
@@ -116,7 +113,7 @@ jobs:
       rpm-artifacts: ${{ inputs.package-name }}-rpms-fc*
       deb-artifacts: ${{ inputs.package-name }}-debs-*-*
       same-pass: ${{ inputs.same-pass }}
-      dry-run: ${{ !((github.event_name == 'push' || inputs.publish) && startsWith(github.ref, 'refs/tags/')) }}
+      dry-run: ${{ !((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && startsWith(github.ref, 'refs/tags/')) }}
   rpm:
     needs: installability
     if: ${{ !cancelled() && needs.installability.result == 'success' }}
@@ -124,7 +121,7 @@ jobs:
     with:
       package-name: ${{ inputs.package-name }}
       binary-names: ${{ inputs.rpm-binary-names || inputs.package-name }}
-      publish: ${{ github.event_name == 'push' || inputs.publish }}
+      publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
       stage: publish
       same-pass: ${{ inputs.same-pass }}
       needs-mod-host: ${{ inputs.needs-mod-host }}
@@ -141,7 +138,7 @@ jobs:
     with:
       package-name: ${{ inputs.package-name }}
       binary-names: ${{ inputs.deb-binary-names || inputs.package-name }}
-      publish: ${{ github.event_name == 'push' || inputs.publish }}
+      publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
       stage: publish
       same-pass: ${{ inputs.same-pass }}
       dependencies: ${{ inputs.deb-dependencies }}
