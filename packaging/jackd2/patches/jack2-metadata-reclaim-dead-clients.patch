@@ -20,7 +20,7 @@ Description: metadata: release what dead clients leave in the DB environment
  the server start over an environment nobody can use".
 Author: Pau Aliagas <linuxnow@gmail.com>
 Bug: https://github.com/jackaudio/jack2/issues/988
-Forwarded: not-yet
+Forwarded: https://github.com/jackaudio/jack2/pull/1030
 Last-Update: 2026-11-23
 ---
 diff --git a/common/JackEngine.cpp b/common/JackEngine.cpp
