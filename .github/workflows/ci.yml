@@ -486,6 +486,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: tests/deb-rerun-layout.sh
 
+  rpm-rerun-layout:
+    name: a rerun of an RPM release keeps its packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: fedora:45
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False --setopt=retries=10 rpm-build createrepo_c gnupg2 findutils python3 python3-pyyaml python3-rpm
+      - uses: actions/checkout@v4
+      - run: tests/rpm-rerun-layout.sh
+
   channel-push-race:
     name: channel push survives a lost race
     runs-on: ubuntu-latest
