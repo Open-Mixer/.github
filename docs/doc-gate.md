@@ -101,9 +101,12 @@ does not carry is red (the list only shrinks); a Doxyfile setting that differs f
 `doxygen -x` in its own tree, is red by key with both values. Every setting is compared but the ones that only shape
 the rendered output (`PROJECT_*`, `OUTPUT_DIRECTORY`, `GENERATE_*`, `HTML_*`, `LATEX_*`, the graphs, the search): a
 list of the keys that silence rows would always be one key short (`EXTRACT_ALL`, `RECURSIVE` and `WARN_FORMAT` were
-each found after such a list was written). `accept-config-change: true` lets a meant change through, logged in the
-run's output with the key and both values (the ruff configuration with its diff), and is itself red when nothing
-differs, so it never stays in a workflow. The limit that stays: a declaration under a preprocessor condition that is
+each found after such a list was written). `accept-config-change: <key>` lets a meant change through: the red names
+the change's key (a hash of the watched settings and the ruff configuration, at the merge-base and here), and only
+that key accepts it, so a configuration change pushed after the reviewer read the first is red again, by setting,
+naming the old key as another change's. The accepted change is logged in the run's output with the key and both values
+(the ruff configuration with its diff) and the change's key, and the input is itself red when nothing differs, so it
+never stays in a workflow. The limit that stays: a declaration under a preprocessor condition that is
 false with only the Doxyfile's `PREDEFINED` (an `#ifdef X` block) is not read, as a C compiler would not read it
 either; its rows are neither warned nor missed. A base without the gate's files is the change that brings it,
 and has nothing to compare. The reusable workflow compares on a pull request (`origin/${{ github.base_ref }}`) and
