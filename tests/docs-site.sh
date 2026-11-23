@@ -39,12 +39,13 @@ run_arms() { # $1: the script under test; exit status 0 when every arm holds
   # no index page: one is written, every page of the top two levels once, a directory with an index.html as itself
   mkdir -p "$w/noindex/api" "$w/noindex/docs"; printf '# Alpha\n' > "$w/noindex/a.md"; printf '# Beta\n' > "$w/noindex/docs/b.md"
   printf '<html><head><title>API</title></head></html>\n' > "$w/noindex/api/index.html"; cp "$w/noindex/api/index.html" "$w/noindex/api/x.html"
+  mkdir -p "$w/noindex/docs/plugins"; printf '# Plugin pages\n' > "$w/noindex/docs/plugins/README.md"; printf '# One\n' > "$w/noindex/docs/plugins/one.md"
   bash "$s" assemble "$w/noindex" omx-test >/dev/null || { echo "assemble refused a tree with no index page"; return 1; }
   grep -q '<h1>omx-test</h1>' "$w/noindex/index.html" || { echo "the written index lacks its title"; return 1; }
-  for l in 'href="a.html">Alpha' 'href="docs/b.html">Beta' 'href="api/">API'; do
+  for l in 'href="a.html">Alpha' 'href="docs/b.html">Beta' 'href="api/">API' 'href="docs/plugins/">Plugin pages'; do
     grep -q "$l" "$w/noindex/index.html" || { echo "the written index lacks $l"; return 1; }
   done
-  if grep -q 'api/x.html' "$w/noindex/index.html"; then echo "the written index lists a page of a directory that has its own index"; return 1; fi
+  if grep -q 'api/x.html\|plugins/one.html' "$w/noindex/index.html"; then echo "the written index lists a page of a directory that has its own index"; return 1; fi
   mkdir -p "$w/nopage"; printf 'x\n' > "$w/nopage/notes.txt"
   if bash "$s" assemble "$w/nopage" 2>"$w/err"; then echo "a tree with no page was accepted"; return 1; fi
   grep -q 'no page to index' "$w/err" || { echo "the no-page refusal names nothing"; return 1; }
@@ -92,6 +93,8 @@ sab() { # $1: name, $2: sed expression
 sab "plain sort for the highest version" 's/sort -V/sort/g'
 # shellcheck disable=SC2016 # sed expressions: $p and $pages are matched, never expanded
 sab "a directory's own index left out of the written index" 's/^\( *\)\*\/index.html) echo "\$p" ;;/\1*\/index.html) ;;/'
+# shellcheck disable=SC2016
+sab "a directory's README not taken as its index" 's/cp "\$f" "\${f%\/README.html}\/index.html"/true/'
 # shellcheck disable=SC2016
 sab "the no-page guard removed" 's/^\( *\)\[ -n "\$pages" \] || die.*$/\1true/'
 sab "the symbolic-link guard removed" 's/^\( *\)links=.*$/\1links=/'

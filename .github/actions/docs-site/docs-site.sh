@@ -9,8 +9,9 @@
 #
 #   assemble <site>   every *.md becomes *.html beside it and every man page *.[1-8] becomes *.[1-8].html (pandoc),
 #                     a link to a .md page is rewritten to its .html page. With no index.html, one is written (its
-#                     heading [title], default the directory's name): every page of the top two levels by its own
-#                     <title>, a directory that has an index.html once.
+#                     heading [title], default the directory's name): every page of the top two levels and every
+#                     directory index of the third, by its own <title>, a directory that has an index page once.
+#                     Below the top, a directory's README page is its index page.
 #                     Refused by name: no such directory, an empty tree, a symbolic link (it would publish whatever it
 #                     points at), a tree with no page at all.
 #   place <site> <channel> <repo> <version>
@@ -61,15 +62,22 @@ LUA
     pandoc -f man -t html5 -s --metadata pagetitle="$(basename "$f")" -o "$f.html" "$f"
   done < <(find "$site" -type f -regex '.*\.[1-8]$' -print0 | sort -z)
   rm -f "$filter"
+  # below the top, a directory's README page is its index page (docs/plugins/README.md); the top gets the listing
+  while IFS= read -r -d '' f; do
+    [ -f "${f%/README.html}/index.html" ] || cp "$f" "${f%/README.html}/index.html"
+  done < <(find "$site" -mindepth 2 -type f -name README.html -print0 | sort -z)
   [ -f "$site/index.html" ] || index "$site" "${2:-$(basename "$site")}"
   echo "docs-site: assembled $(find "$site" -type f -name '*.html' | wc -l) html page(s) in $site"
 }
 
-index() { # $1 site, $2 title: the entry page, every page of the tree's top two levels by its own <title>
+index() { # $1 site, $2 title: the entry page, every page of the tree's top two levels and every directory index of the
+  # third, each by its own <title>; a directory that has an index page is listed once, as itself
   local site=$1 title=$2 pages p t
-  pages=$( (cd "$site" && find . -mindepth 1 -maxdepth 2 -type f -name '*.html' -printf '%P\n') \
+  pages=$( (cd "$site" && find . -mindepth 1 -maxdepth 3 -type f -name '*.html' -printf '%P\n') \
     | while IFS= read -r p; do
         case $p in
+          */*/index.html) [ -f "$site/${p%%/*}/index.html" ] || echo "$p" ;;
+          */*/*) ;;
           */index.html) echo "$p" ;;
           */*) [ -f "$site/${p%/*}/index.html" ] || echo "$p" ;;
           *) echo "$p" ;;
