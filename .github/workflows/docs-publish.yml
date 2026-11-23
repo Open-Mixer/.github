@@ -15,8 +15,11 @@ name: docs-publish
 #     docs:
 #       uses: Open-Mixer/.github/.github/workflows/docs-publish.yml@openmixer-v1
 #       with:
-#         apt: libjson-c-dev            # what the target needs beyond doxygen, pandoc and make; none by default
+#         apt: libjson-c-dev            # what the target needs beyond doxygen, pandoc, make and git; none by default
 #         node-version: '24'            # a target that runs node; none by default
+#         image: debian:trixie          # with channel: a Debian image the OpenMixer channel serves
+#         channel: true
+#         channel-packages: omx-panel   # what the target takes from the channel
 #       secrets: inherit
 #
 # The make target writes into $DOCS_OUT (an absolute, empty directory) and only what its generators produce from this
@@ -32,8 +35,20 @@ on:
         description: the make target that writes the reference into $DOCS_OUT
         type: string
         default: docs-site
+      image:
+        description: the container the target runs in (ubuntu:24.04 serves the doxygen 1.9.8 the doc gates pin)
+        type: string
+        default: ubuntu:24.04
       apt:
-        description: apt packages the target needs beyond doxygen, pandoc and make, space-separated
+        description: apt packages the target needs beyond doxygen, pandoc, make and git, space-separated
+        type: string
+        default: ''
+      channel:
+        description: add the OpenMixer channel (actions/add-openmixer) before channel-packages; a Debian image
+        type: boolean
+        default: false
+      channel-packages:
+        description: apt packages the target takes from the channel, space-separated (omx-panel)
         type: string
         default: ''
       node-version:
@@ -65,23 +80,39 @@ jobs:
     name: generated reference (make ${{ inputs.target }})
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 30
+    container:
+      image: ${{ inputs.image }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       repo: ${{ steps.version.outputs.repo }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: doxygen, pandoc and make from apt
+      - name: doxygen, pandoc, make and git from apt
         shell: bash
         env:
           APT: ${{ inputs.apt }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
+          apt-get update -qq
           # shellcheck disable=SC2086 # APT is a space-separated list
-          sudo apt-get install -y -qq --no-install-recommends doxygen pandoc make $APT
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends doxygen pandoc make git ca-certificates curl $APT
           doxygen --version; pandoc --version | head -n 1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: The checkout is a git directory this job may read
+        shell: bash
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - if: inputs.channel
+        uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+      - if: inputs.channel-packages != ''
+        name: What the target takes from the channel
+        shell: bash
+        env:
+          PACKAGES: ${{ inputs.channel-packages }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086 # PACKAGES is a space-separated list
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $PACKAGES
       - if: inputs.node-version != ''
         uses: actions/setup-node@v4
         with:

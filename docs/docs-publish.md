@@ -37,8 +37,11 @@ A repository calls it with one job:
       docs:
         uses: Open-Mixer/.github/.github/workflows/docs-publish.yml@openmixer-v1
         with:
-          apt: libjson-c-dev        # beyond doxygen, pandoc and make; none by default
+          apt: libjson-c-dev        # beyond doxygen, pandoc, make and git; none by default
           node-version: '24'        # a target that runs node; none by default
+          image: debian:trixie      # default ubuntu:24.04, the doxygen 1.9.8 the doc gates pin
+          channel: true             # add the OpenMixer channel (a Debian image) ...
+          channel-packages: omx-panel   # ... and install what the target reads from it
         secrets: inherit
 
 ## Why /reference/ and not /docs/
