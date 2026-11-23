@@ -138,10 +138,10 @@ jobs:
         include:
           - kind: rpm
             image: fedora:45
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd diffutils git
           - kind: deb
             image: debian:trixie
-            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev
+            tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev git
     steps:
       - name: Install the packaging tools
         run: ${{ matrix.tools }}
@@ -176,6 +176,10 @@ jobs:
       - name: Another project's channel serves its own key under its own name, and none of OpenMixer's
         shell: bash
         run: tests/channel-profile.sh ${{ matrix.kind }}
+
+      - name: freereac-release leaves the channel, and nothing else does
+        shell: bash
+        run: tests/remove-freereac-release.sh ${{ matrix.kind }}
 
       - name: A package planted in the channel is refused, never signed
         shell: bash
