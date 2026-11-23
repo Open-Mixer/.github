@@ -6,7 +6,8 @@
 # Open-Mixer/.github's jobs action (the cgroup's CPU quota, bounded by the runner's declared CPUs) and builds with
 # make -j"$OMX_JOBS". --self-test proves the scan sees a planted nproc and passes a clean file.
 set -eu
-scan() { grep -nE 'nproc|getconf +_NPROCESSORS' "$1"/*.yml 2>/dev/null | grep -vE '^[^:]+:[0-9]+: *#' || true; }
+# the command, not the word: nproc or getconf _NPROCESSORS* run by a $( ) or backquote substitution
+scan() { grep -nE '(\$\(|`)[[:space:]]*(nproc|getconf +_NPROCESSORS)' "$1"/*.yml 2>/dev/null | grep -vE '^[^:]+:[0-9]+: *#' || true; }
 if [ "${1:-}" = --self-test ]; then
   t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
   printf 'jobs:\n  a:\n    steps:\n      - run: make -j"$(nproc)" test\n' > "$t/bad.yml"
