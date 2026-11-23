@@ -764,7 +764,7 @@ jobs:
         if: inputs.staged
         env:
           NAME: ${{ inputs.package-name }}
-          BINARIES: ${{ inputs.binary-names }}
+          BINARIES: ${{ fromJSON(inputs.arch-binary-names)[matrix.arch] || inputs.binary-names }}
           BASE_URL: ${{ inputs.base-url }}
         run: |
           set -o pipefail

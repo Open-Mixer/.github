@@ -755,7 +755,7 @@ jobs:
         if: inputs.staged
         env:
           NAME: ${{ inputs.package-name }}
-          BINARIES: ${{ inputs.binary-names }}
+          BINARIES: ${{ fromJSON(inputs.arch-binary-names)[matrix.arch] || inputs.binary-names }}
           URL: ${{ inputs.base-url }}/staging/deb
           SUITE: ${{ matrix.suite }}
         run: |
