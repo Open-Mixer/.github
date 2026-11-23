@@ -22,6 +22,10 @@ under. arms.yml beside this file is the table that holds the reader to its rules
         and whose arguments hold every ARG runs always and gates; --conditional also takes one that runs conditionally.
         A step whose `if:` compares github.event_name and is false on every event of the workflow's `on:` runs never,
         and is refused by name; an `if:` that cannot be decided stays conditional.
+  ci_steps.py --on EVENT ... --require ...
+        the events that count (pull_request, push, ...): a command in a workflow whose `on:` lists none of them is
+        refused by name, with that `on:`. A reusable workflow (workflow_call) or one with no `on:` is started by events
+        it cannot name, and is not refused for them. Without --on, the triggers are not asked.
 
 Exit 0, 1 (a requirement is not met), 2 (usage, or a workflow that cannot be read).
 """
@@ -1121,7 +1125,7 @@ def read(doc, path=""):
             entry["uses"] = str(job["uses"])
         entry["when"] = conditions(job, "job", [c for s in steps for c in s["commands"]], events)
         jobs.append(entry)
-    return {"workflow": path, "jobs": jobs}
+    return {"workflow": path, "on": events, "jobs": jobs}
 
 
 def read_file(path):
@@ -1139,10 +1143,12 @@ def matches(cmd, want):
     return (word == want[0] or word.endswith("/" + want[0])) and all(w in cmd["words"][1:] for w in want[1:])
 
 
-def required(reports, want, conditional=False):
-    """-> (met, lines): where the wanted command runs and gates, or every place it is written and why it falls short."""
+def required(reports, want, conditional=False, on=None):
+    """-> (met, lines): where the wanted command runs and gates, or every place it is written and why it falls short.
+    `on`, the events that count: a workflow whose triggers are known and hold none of them starts on none of them."""
     good, short_of = [], []
     for report in reports:
+        idle = bool(on) and report.get("on") is not None and not set(on) & set(report["on"])
         for job in report["jobs"]:
             for step in job["steps"]:
                 where = "%s job %s step %d" % (report["workflow"], job["id"], step["index"])
@@ -1151,7 +1157,10 @@ def required(reports, want, conditional=False):
                         continue
                     ok = cmd["gates"] and (cmd["runs"] == "always" or (conditional and cmd["runs"] == "conditional"))
                     line = "%s line %d: `%s`" % (where, cmd["line"], cmd["text"])
-                    if ok:
+                    if idle:
+                        short_of.append(line + ": the workflow starts on none of %s (on: %s)"
+                                        % (", ".join(on), ", ".join(report["on"])))
+                    elif ok:
                         good.append(line)
                     else:
                         short_of.append(line + ": " + ("; ".join(cmd["why"]) or "runs %s" % cmd["runs"]))
@@ -1185,6 +1194,8 @@ def main(argv=None):
     ap.add_argument("--require", action="append", default=[], metavar="'CMD [ARG...]'",
                     help="a command that must run always and gate; may be given more than once")
     ap.add_argument("--conditional", action="store_true", help="a required command may run conditionally")
+    ap.add_argument("--on", action="append", default=[], metavar="EVENT",
+                    help="an event that counts for --require (pull_request, push, ...); may be given more than once")
     args = ap.parse_args(argv)
     try:
         reports = [read_file(path) for path in args.workflows]
@@ -1201,7 +1212,7 @@ def main(argv=None):
         if not want:
             print("ci-steps: an empty --require", file=sys.stderr)
             return 2
-        met, lines = required(reports, want, args.conditional)
+        met, lines = required(reports, want, args.conditional, args.on)
         out = sys.stderr if args.json else sys.stdout
         if met:
             print("ok   `%s` runs and gates: %s" % (text, lines[0]), file=out)

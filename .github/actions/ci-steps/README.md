@@ -23,6 +23,7 @@ the action goes red when a required command is written but not enforced.
 | `workflows` | the workflow files to read, one per line |
 | `require` | one command per line, `CMD [ARG...]`: a command whose command word is CMD (a path may be longer on the left) and whose arguments hold every ARG must run always and gate, in one of the workflows |
 | `conditional` | `true` to take a command that runs conditionally |
+| `events` | the events that count (each passed as `--on`), space or line separated (`pull_request push`): a required command in a workflow whose `on:` lists none of them is refused by name, with that `on:`. A reusable workflow (`workflow_call`) is started by its caller's events and is not refused for them. Empty (the default): the triggers are not asked |
 
 The action first runs the table and the sabotage rows below against the reader, then the requirements. It needs python3
 with PyYAML (the hosted ubuntu runners have both). `ci_steps.py` can also be run by hand: `ci_steps.py WORKFLOW...` for the

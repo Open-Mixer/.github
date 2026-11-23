@@ -18,6 +18,10 @@ inputs:
     description: 'true to take a command that runs conditionally'
     required: false
     default: 'false'
+  events:
+    description: The events that count, space or line separated (pull_request push); a required command in a workflow none of them starts is refused. Empty, the triggers are not asked
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -27,6 +31,7 @@ runs:
         WORKFLOWS: ${{ inputs.workflows }}
         REQUIRE: ${{ inputs.require }}
         CONDITIONAL: ${{ inputs.conditional }}
+        EVENTS: ${{ inputs.events }}
       run: |
         python3 -c 'import yaml' || { echo "ci-steps: python3 has no PyYAML" >&2; exit 2; }
         python3 -I "$GITHUB_ACTION_PATH/arms.py"
@@ -37,6 +42,7 @@ runs:
         done <<< "$REQUIRE"
         [ "${#args[@]}" -gt 0 ] || { echo "ci-steps: no command is required" >&2; exit 2; }
         [ "$CONDITIONAL" = true ] && args+=(--conditional)
+        for event in $EVENTS; do args+=(--on "$event"); done
         files=()
         while IFS= read -r line; do
           [ -n "$line" ] && files+=("$GITHUB_WORKSPACE/$line")

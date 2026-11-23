@@ -47,3 +47,13 @@ req_on 0 "a dispatch-only workflow, no --on (nothing changes)" workflow_dispatch
 req_on 0 "a push and pull_request workflow, --on pull_request" "[push, pull_request]" --on pull_request
 req_on 0 "a reusable workflow (its events are the caller's), --on pull_request" "{workflow_call: {}}" --on pull_request
 echo "ci-steps --on: a workflow no named event starts is refused by name; without --on, or started by one, it passes"
+# the action passes its events input as --on: its own run script, on the dispatch-only workflow
+python3 -I - "$dir/action.yml" > "$work/action.sh" <<'PY'
+import sys, yaml
+print(yaml.safe_load(open(sys.argv[1]))["runs"]["steps"][0]["run"])
+PY
+printf 'on: workflow_dispatch\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: tests/x.sh\n' > "$work/o.yml"
+act() { GITHUB_ACTION_PATH=$dir GITHUB_WORKSPACE=$work WORKFLOWS=o.yml REQUIRE=tests/x.sh CONDITIONAL=false EVENTS=$1 bash "$work/action.sh" > /dev/null 2>&1; }
+if act 'pull_request push'; then echo "the action's events input does not reach --on" >&2; exit 1; fi
+act '' || { echo "the action with no events refuses a dispatch-only workflow" >&2; exit 1; }
+echo "ci-steps action: events reaches --on; empty, the triggers are not asked"
