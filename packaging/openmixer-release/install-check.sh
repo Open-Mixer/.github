@@ -48,6 +48,11 @@ if command -v dnf >/dev/null; then
     for id in openmixer openmixer-noarch; do
         grep -q "^$id " "$work/repolist" || fail "dnf repolist names no $id"
     done
+    # the testing repositories (the staging channel) are installed and disabled: the opt-in is the operator's
+    dnf repolist --disabled | tee "$work/disabled"
+    for id in openmixer-testing openmixer-testing-noarch; do
+        grep -q "^$id " "$work/disabled" || fail "dnf repolist --disabled names no $id: the testing repository is missing or enabled"
+    done
     dnf install -y --setopt=install_weak_deps=False --setopt=retries=10 "$probe"
     from=$(dnf repoquery --installed --qf '%{from_repo}\n' "$probe" | head -1)
     case "$from" in openmixer|openmixer-noarch) echo "$probe installed from $from" ;; *) fail "$probe came from '$from'" ;; esac

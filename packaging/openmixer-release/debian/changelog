@@ -1,3 +1,10 @@
+openmixer-release (1-9) unstable; urgency=medium
+
+  * The RPM gains the testing repositories (the staging channel, disabled);
+    the DEB is unchanged and released at 1-9 so both carry one release.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 13:00:00 +0100
+
 openmixer-release (1-8) unstable; urgency=medium
 
   * The package of 1-7, released: the 1-7 run was refused by the installability

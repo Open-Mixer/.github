@@ -570,7 +570,7 @@ publishes it.
 
 | | RPM | DEB |
 | --- | --- | --- |
-| repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch` | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME` |
+| repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch`; `openmixer-testing` and `openmixer-testing-noarch` (the staging channel, disabled, as Fedora's updates-testing) | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME` |
 | key | `/etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer`, the channel's `rpm/RPM-GPG-KEY-openmixer` | `/usr/share/keyrings/openmixer-archive-keyring.asc`, the channel's `deb/openmixer.asc` |
 | stable name | `rpm/openmixer-release.noarch.rpm` (the oldest Fedora release's build; noarch installs on every release) | `deb/openmixer-release.deb` |
 | updates from | `fedora/<release>/noarch/` of the tree: one build per Fedora release of the set, since the dist tag `.fcNN` ties a build to its release | `debian/<suite>/all/` of the tree |

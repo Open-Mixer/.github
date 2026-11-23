@@ -6,7 +6,7 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        8%{?dist}
+Release:        9%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
 License:        MIT
 URL:            https://www.openmixer.org
@@ -33,6 +33,9 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
+* Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-9
+- The testing repositories, openmixer-testing and openmixer-testing-noarch: the staging channel of the release wave, installed disabled, as Fedora's updates-testing; enabling them is the whole opt-in to the builds a wave proved before their release.
+
 * Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-8
 - The package of 1-7, released: the 1-7 run was refused by the installability gate, which read the FreeREAC channel without its noarch tree where freereac-release lives. Requires freereac-release >= 1-2: the floor the gate asks of every dependency between our own packages, now that this channel serves freereac-release (the mirror).
 
