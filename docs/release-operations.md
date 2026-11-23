@@ -590,7 +590,7 @@ not downgrade what is installed).
 | | RPM | DEB |
 | --- | --- | --- |
 | file | `openmixer-testing`, `openmixer-testing-noarch` in `/etc/yum.repos.d/openmixer.repo` (`%config(noreplace)`) | `/etc/apt/sources.list.d/openmixer-testing.sources`, a file postinst writes from `/usr/share/openmixer-release/testing/openmixer-testing-<suite>.sources` |
-| tree | `staging/rpm/fedora/$releasever/` | `staging/deb/debian/trixie/` (no testing source on bookworm: the channel tests trixie alone) |
+| tree | `staging/rpm/fedora/$releasever/`: fc45 x86_64 and noarch, the tested platform | `staging/deb/debian/trixie/`: arm64 and all, the tested platform (Zynthian, the Pi); an amd64 machine finds only the `all` packages there, and bookworm gets no testing source |
 | on, once | `dnf --enablerepo=openmixer-testing --enablerepo=openmixer-testing-noarch upgrade` | none: apt has no per-command switch |
 | on | `dnf config-manager setopt openmixer-testing.enabled=1 openmixer-testing-noarch.enabled=1` | `sed -i 's/^Enabled: no$/Enabled: yes/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
 | off | the same with `enabled=0` | `sed -i 's/^Enabled: yes$/Enabled: no/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
