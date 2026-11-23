@@ -321,7 +321,7 @@ gate() {
 }
 
 self_test() {
-  local fail=0 script t main_c
+  local fail=0 script t main_c ckey rkey
   script=$HERE/${BASH_SOURCE[0]##*/}
   work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_CONFIG_GLOBAL=/dev/null
@@ -447,9 +447,18 @@ SH
   # against the base
   echo 'EXCLUDE = src/b.h' >> "$t/Doxyfile"
   red "a watched Doxyfile setting changed against the base is red, by key, both values" 1 "Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "${G[@]}" "${B[@]}"
-  green "the same change, accepted" "${G[@]}" "${B[@]}" --accept-config-change
-  if grep -q "accepted: Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "$work/out"; then ok "and the accepted change is logged, key and both values"; else no "the accepted change is not logged"; fi
-  reset; red "the accept flag with nothing changed is itself red: it never stays" 1 "drop the flag" "${G[@]}" "${B[@]}" --accept-config-change
+  # the acceptance is bound to the change (.github#120): the red names the change's key, and only that key accepts it
+  ckey=$(sed -n 's/.*--accept-config-change \([0-9a-f]\{16\}\).*/\1/p' "$work/out" | head -n 1)
+  if [ -n "$ckey" ]; then ok "and names the change's key ($ckey)"; else no "the red does not name the change's key"; fi
+  green "the same change, accepted by its key" "${G[@]}" "${B[@]}" --accept-config-change "$ckey"
+  if grep -q "accepted: Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "$work/out" && grep -q "accepted change $ckey" "$work/out"; then ok "and the accepted change is logged, key and both values, and the change's key"; else no "the accepted change is not logged"; fi
+  red "a key that is not this change's (true) is red, naming the change's key" 1 "the key true is not this change's: $ckey" "${G[@]}" "${B[@]}" --accept-config-change true
+  if grep -q "Doxyfile changes EXCLUDE against main" "$work/out"; then ok "and every changed setting is red again, by key"; else no "a wrong key does not name the changed setting"; fi
+  echo 'ALIASES = "x=y"' >> "$t/Doxyfile"
+  red "a later configuration change under the same key is red again, by key" 1 "Doxyfile changes ALIASES against main" "${G[@]}" "${B[@]}" --accept-config-change "$ckey"
+  if grep -q "the key $ckey is not this change's" "$work/out"; then ok "and the key is named as another change's"; else no "the stale key is not named"; fi
+  red "a bare --accept-config-change (no key) is refused by name" 2 "--accept-config-change needs the change's key" "${G[@]}" "${B[@]}" --accept-config-change
+  reset; red "the accept flag with nothing changed is itself red: it never stays" 1 "drop the flag" "${G[@]}" "${B[@]}" --accept-config-change "$ckey"
   sed -i 's/^PREDEFINED = X=$/PREDEFINED = X= Y=/' "$t/Doxyfile"
   red "PREDEFINED changed against the base is red, by key" 1 "Doxyfile changes PREDEFINED against main" "${G[@]}" "${B[@]}"; reset
   echo 'ALIASES = "x=y"' >> "$t/Doxyfile"
@@ -484,7 +493,9 @@ SH
   green "a suppression removed with the function documented" "${G[@]}" "${B[@]}"; reset
   printf '\n[lint.per-file-ignores]\n"py/*" = ["D103"]\n' >> "$t/ruff.toml"
   red "a changed ruff configuration against the base is red, by name" 1 "ruff.toml differs from the base's" "${G[@]}" "${B[@]}"
-  green "the same change, accepted" "${G[@]}" "${B[@]}" --accept-config-change
+  rkey=$(sed -n 's/.*--accept-config-change \([0-9a-f]\{16\}\).*/\1/p' "$work/out" | head -n 1)
+  [ "$rkey" != "$ckey" ] && [ -n "$rkey" ] && ok "the ruff change has its own key ($rkey)" || no "the ruff change's key ($rkey)"
+  green "the same change, accepted by its key" "${G[@]}" "${B[@]}" --accept-config-change "$rkey"
   if grep -q "accepted: ruff.toml differs from the base's at main" "$work/out" && grep -q '^  +\[lint.per-file-ignores\]' "$work/out"; then ok "and the accepted change is logged, with its diff"; else no "the accepted ruff change is not logged"; fi
   reset
   red "a ruff of another version than the pin is refused, both named" 2 "ruff is $ruff_real, the pin is 0.0.1" "${G[@]}" --base main --py py --ruff-config ruff.toml --ruff-version 0.0.1
