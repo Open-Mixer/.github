@@ -133,6 +133,20 @@ self_test() {
   [ "$(git -C "$full" rev-parse origin/main)" = "$b" ] || no "the fixture: origin/main in the clone is stale"
   resolved "a stale origin/main is fetched first: the upstream's commit, never the copy" "$full" "$c" "$a" origin/main
   if [ "$(git -C "$full" rev-parse origin/main)" = "$c" ]; then ok "the remote-tracking ref is the upstream's after the fetch"; else no "the remote-tracking ref after the fetch"; fi
+  # a local branch is a copy too (.github#121): held to its upstream, or the caller says it is the authority
+  git -C "$full" update-ref refs/remotes/origin/main "$b"
+  refused "a local main behind its upstream is refused by name, after the upstream is fetched" "$full" 1 "main is behind its upstream origin/main by 1 commit" main
+  git -C "$full" branch -q -f main "$c"
+  resolved "a local main at its upstream resolves" "$full" "$c" "$a" main
+  git -C "$full" branch -q -f main "$b"
+  git -C "$full" remote set-url origin "file://$t/gone"
+  refused "a local main whose upstream cannot be fetched is refused by name" "$full" 2 "could not fetch main's upstream origin/main" main
+  git -C "$full" remote set-url origin "file://$up"
+  git -C "$full" branch -q lonely "$b"
+  refused "a local branch with no upstream is refused by name" "$full" 1 "lonely is a local branch with no upstream" lonely
+  resolved "the same branch, the caller its authority (--local-authority), resolves" "$full" "$b" "$a" lonely --local-authority
+  if (cd "$full" && RESOLVE_BASE_LOCAL_AUTHORITY=1 bash "$script" lonely) 2>/dev/null | grep -qx "commit=$b"; then ok "RESOLVE_BASE_LOCAL_AUTHORITY=1 is the same authority"; else no "RESOLVE_BASE_LOCAL_AUTHORITY"; fi
+  git -C "$full" branch -q -f main "$c"
   git -C "$full" update-ref refs/remotes/origin/main "$b"
   git -C "$full" remote set-url origin "file://$t/gone"
   refused "a stale origin/main whose remote cannot be reached is refused by name, never read" "$full" 2 "could not fetch origin/main from origin" origin/main
@@ -178,8 +192,8 @@ self_test() {
   # shallow history on both sides: the base resolves, the merge-base does not exist in the clone
   git -C "$thin" remote add origin "file://$up"
   git -C "$thin" fetch -q --depth 1 --no-tags origin "+refs/heads/main:refs/heads/shallow-main"
-  refused "a base that resolves in shallow history with no merge-base is refused, naming fetch-depth 0" "$thin" 2 "no merge-base between HEAD and shallow-main" shallow-main
-  if run "$thin" shallow-main --no-merge-base && grep -qx "commit=$c" "$t/out"; then ok "the same base without a merge-base asked resolves"; else no "shallow base without merge-base"; fi
+  refused "a base that resolves in shallow history with no merge-base is refused, naming fetch-depth 0" "$thin" 2 "no merge-base between HEAD and shallow-main" shallow-main --local-authority
+  if run "$thin" shallow-main --no-merge-base --local-authority && grep -qx "commit=$c" "$t/out"; then ok "the same base without a merge-base asked resolves"; else no "shallow base without merge-base"; fi
 
   # sabotage: with the fetch gone, the stale copy is read (the fetch is what catches it); with the HEAD guard gone,
   # HEAD against HEAD passes
@@ -189,6 +203,11 @@ self_test() {
   # shellcheck disable=SC2016 # the script's own text is matched
   sed '/^resolve()/,/^}/s/\[ "$commit" != "$head" \] ||/true ||/' "$script" > "$t/noguard.sh"
   if (cd "$full" && bash "$t/noguard.sh" topic 2>/dev/null | grep -q '^commit='); then ok "sabotage: without the guard HEAD against HEAD passes, so the guard is what catches it"; else no "sabotage: the HEAD guard"; fi
+
+  # sabotage: with the local rule gone, a local main behind its upstream is read as it is
+  git -C "$full" branch -q -f main "$b"
+  sed '/^resolve()/,/^}/{/# the local rule/,/# end of the local rule/d}' "$script" > "$t/nolocal.sh"
+  if (cd "$full" && bash "$t/nolocal.sh" main 2>/dev/null | grep -qx "commit=$b"); then ok "sabotage: without the local rule a stale local main is read, so the rule is what catches it"; else no "sabotage: the local rule"; fi
 
   [ "$fail" = 0 ] && echo "resolve-base self-test: every arm as wanted"
   return "$fail"
