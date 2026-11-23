@@ -14,13 +14,17 @@
 #        own release of that version, which replaces it. Built with rpmbuild -ba from a tarball of the commit, so the
 #        source package is the source.
 #   deb: an `Architecture: all` stanza of debian/control. Its Depends (substitution variables dropped), Multi-Arch and
-#        Description are the stanza's, Maintainer, Section and Homepage the source stanza's; copyright, the stanza's
-#        .docs and the changelog as debhelper lays them. Version: debian/changelog's first, <version>~git<commit
+#        Description are the stanza's, Maintainer, Section and Homepage the source stanza's; the files debian/<package>
+#        .install names (another package's are left out), the directories its .dirs names, copyright, its .docs, and the
+#        changelog as build-deb.sh renders it (render-changelog.sh: the body from git, the snapshot version), all laid out
+#        as debhelper lays them: the library's own snapshot build of the package, file for file. Version: debian/changelog's first, <version>~git<commit
 #        time>.<short sha>, below the sibling's own <version>, above a consumer's (>= <version>~) floor.
 # Both versions are the house snapshot forms (build-deb.sh, build-rpm.sh), so the channel's cells.tsv records the
 # upstream version (release-matrix/cells.sh). Prints `BOOTSTRAP <package> ok <file> ...`; anything else is red, exit 1.
-# BOOTSTRAP_GIT_BASE replaces https://github.com (a test's local fixtures).
+# BOOTSTRAP_GIT_BASE replaces https://github.com (a test's local fixtures); BOOTSTRAP_RENDER names render-changelog.sh for
+# a copy of this script outside the tree (a test's sabotage).
 set -euo pipefail
+here=$(dirname "$(readlink -f "$0")")
 kind=${1:-} entry=${2:-} outdir=${3:-}
 red() { echo "BOOTSTRAP ${pkg:-$entry} FAIL $*"; exit 1; }
 case $kind in rpm | deb) ;; *) echo "usage: bootstrap.sh rpm|deb <owner>/<repo>@<full commit>:<package> <out dir>" >&2; exit 2 ;; esac
@@ -32,7 +36,10 @@ repo=${BASH_REMATCH[1]} sha=${BASH_REMATCH[2]} pkg=${BASH_REMATCH[3]}
 b=$(mktemp -d); trap 'rm -rf "$b"' EXIT
 tree=$b/src
 git init -q "$tree"
-git -C "$tree" fetch -q --depth 1 "${BOOTSTRAP_GIT_BASE:-https://github.com}/$repo" "$sha" 2>"$b/fetch.log" \
+# deb: the history and the tags, which the changelog's rendering reads (render-changelog.sh, as build-deb.sh's checkout
+# with fetch-depth: 0); rpm: the commit alone
+how=(--depth 1); [ "$kind" = rpm ] || how=(--tags)
+git -C "$tree" fetch -q "${how[@]}" "${BOOTSTRAP_GIT_BASE:-https://github.com}/$repo" "$sha" 2>"$b/fetch.log" \
   || { tail -3 "$b/fetch.log"; red "$repo has no commit $sha"; }
 git -C "$tree" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
 got=$(git -C "$tree" rev-parse HEAD)
@@ -101,10 +108,11 @@ else
   # Depends with the substitution variables dropped (${misc:Depends} is debhelper's, empty for a data package)
   # shellcheck disable=SC2016 # a literal ${...}, matched, never expanded
   deps=$(awk '$1 == "Depends:" {on=1; sub(/^Depends:[[:space:]]*/, ""); print; next} on && /^[[:space:]]/ {print; next} {on=0}' <<< "$st" \
-    | tr '\n' ' ' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^\${[^}]*}$' | grep . | paste -sd, | sed 's/,/, /g')
+    | tr '\n' ' ' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | { grep -v -e '^\${[^}]*}$' -e '^$' || true; } | paste -sd, | sed 's/,/, /g')
   desc=$(awk '$1 == "Description:" {on=1} on' <<< "$st")
   # debian/<package>.install names what dh_install puts in the package: every other file the install made is another
-  # package's (a language pack's catalog), as the spec's other %files sections say on the rpm side
+  # package's (a language pack's catalog), as the spec's other %files sections say on the rpm side. With no .install, a
+  # source of one binary package installs everything into it; a source of several puts none of debian/tmp in it.
   if [ -f "$tree/debian/$pkg.install" ]; then
     mapfile -t mine < <(grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$tree/debian/$pkg.install" | awk '{print "/" $1}' | sed 's#^//*#/#')
     n=0
@@ -119,7 +127,11 @@ else
     done
     find "$b/root" -mindepth 1 -type d -empty -delete
     [ "$n" -gt 0 ] || red "debian/$pkg.install names none of the files make install-contract installed"
+  elif [ "$(grep -c '^Package:' "$ctl")" -gt 1 ]; then
+    red "debian/control has several packages and no debian/$pkg.install: dh_install would put none of install-contract's files in $pkg"
   fi
+  # debian/<package>.dirs: the directories dh_installdirs makes in it, kept when empty (the language packs' directory)
+  [ ! -f "$tree/debian/$pkg.dirs" ] || grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$tree/debian/$pkg.dirs" | while read -r dir _; do mkdir -p "$b/root/${dir#/}"; done   # DIRS
   dd=$b/root/usr/share/doc/$pkg; mkdir -p "$dd"
   cpr=$tree/debian/$pkg.copyright; [ -f "$cpr" ] || cpr=$tree/debian/copyright
   [ ! -f "$cpr" ] || install -m 644 "$cpr" "$dd/copyright"
@@ -130,6 +142,9 @@ else
     done < <(grep -v '^[[:space:]]*#' "$tree/debian/$pkg.docs")
   fi
   cl=changelog.Debian; grep -qx '3.0 (native)' "$tree/debian/source/format" 2>/dev/null && cl=changelog
+  # the changelog as the library's own snapshot build carries it: build-deb.sh's rendering (render-changelog.sh), at the
+  # house snapshot separator, then laid out as dh_installchangelogs and dh_compress do
+  "${BOOTSTRAP_RENDER:-$here/../build-deb/render-changelog.sh}" -C "$tree" -s '~git' >"$b/render.log" 2>&1 || { tail -3 "$b/render.log"; red "render-changelog.sh"; }   # RENDER
   install -m 644 "$tree/debian/changelog" "$dd/$cl"
   find "$dd" -type f ! -name copyright -size +4096c -exec gzip -9n {} \;
   [ -f "$dd/$cl.gz" ] || gzip -9n "$dd/$cl"
