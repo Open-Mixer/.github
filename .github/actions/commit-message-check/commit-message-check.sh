@@ -8,7 +8,11 @@
 # subject, so a body line on line 2 publishes a whole paragraph as the subject). That last rule is one function,
 # blank_hit(), read by both commit doors: the range and the commit-msg hook.
 #
-#   commit-message-check.sh <range>          every commit in the range (e.g. origin/main..HEAD)
+#   commit-message-check.sh [--upstream-url U] <range>
+#                                            every commit in the range (e.g. origin/main..HEAD); with U, a fork's upstream
+#                                            commits are exempt through ../upstream-exempt/upstream-exempt.sh (the one
+#                                            source: U an exact listed URL, not rewritten, fetched, the commit its ancestor);
+#                                            our own commits and merges keep every check
 #   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped), and
 #                                            before the commit exists: the attribution patterns, private-refs-check's
 #                                            message patterns beside this action, and the commit's author and
@@ -280,20 +284,38 @@ def main(a):
             print(f"commit-message-check: {e}", file=sys.stderr)
             return 2
         return 1 if report_blank("commit message", text) else 0
+    upstream = None
+    if len(a) == 3 and a[0] == "--upstream-url":
+        upstream, a = a[1], a[2:]
     if len(a) == 1 and not a[0].startswith("-"):
         shas = git("rev-list", a[0]).split()
-        bad = 0
+        bad = exempted = 0
         ident, branch = load_ident()
+        ex = os.path.join(here, "..", "upstream-exempt", "upstream-exempt.sh")
+        ex_state = None  # lazy: a clean range fetches nothing, and with no --upstream-url there is no exemption at all
         for sha in shas:
             msg = git("log", "-1", "--format=%B", sha)
+            lines = [f"{sha[:12]}: [{name}]: {line}" for _, name, line in commit_ident_hits(sha, ident, branch)]
+            if not (hits(msg, markers) or blank_hit(msg) is not None or lines):
+                continue
+            if upstream:
+                if ex_state is None:
+                    p = subprocess.run([ex, "prepare", upstream], capture_output=True, text=True)
+                    ex_state = (p.returncode == 0, p.stderr.strip().removeprefix("upstream-exempt: "))
+                if ex_state[0] and subprocess.run([ex, "holds", sha], capture_output=True).returncode == 0:
+                    exempted += 1
+                    continue
             bad += report(sha[:12], msg, markers)
             bad += report_blank(sha[:12], msg)
-            for _, name, line in commit_ident_hits(sha, ident, branch):
-                print(f"{sha[:12]}: [{name}]: {line}")
+            for line in lines:
+                print(line)
                 bad += 1
-        print(f"commit-message-check: {len(shas)} commits, {bad} offending lines")
+            if upstream and not ex_state[0]:
+                print(f"{sha[:12]}: no upstream exemption: {ex_state[1]}")
+        print(f"commit-message-check: {len(shas)} commits, {bad} offending lines"
+              + (f", {exempted} upstream commits exempt" if exempted else ""))
         return 1 if bad else 0
-    print(__doc__ if False else "usage: commit-message-check.sh <range> | --msg-file FILE | --text-file FILE | --subject-blank-file FILE | --selftest", file=sys.stderr)
+    print(__doc__ if False else "usage: commit-message-check.sh [--upstream-url U] <range> | --msg-file FILE | --text-file FILE | --subject-blank-file FILE | --selftest", file=sys.stderr)
     return 2
 
 

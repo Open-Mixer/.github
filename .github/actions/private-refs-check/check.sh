@@ -9,8 +9,12 @@
 # scope, are not pointers and are not matched.
 #
 #   check.sh [ROOT]               the check, over every file ROOT (default: the current directory) tracks
-#   check.sh --messages RANGE     the same patterns, over the message of every commit in RANGE
-#                                 (less the paths of git's own conflict block that name files of that commit)
+#   check.sh [--upstream-url U] --messages RANGE
+#                                 the same patterns, over the message of every commit in RANGE
+#                                 (less the paths of git's own conflict block that name files of that commit); with U, a
+#                                 fork's upstream commits are exempt through ../upstream-exempt/upstream-exempt.sh (the one
+#                                 source: U an exact listed URL, not rewritten, fetched, the commit its ancestor); our own
+#                                 commits and merges keep the check
 #   check.sh --msg-file FILE [--msg-file FILE ...]
 #                                 the same patterns, over messages before their commits exist (the commit-msg hook,
 #                                 through commit-message-check; the host pre-push, every message a push sends, in ONE run
@@ -107,8 +111,20 @@ without_conflict_block() { # <sha>: its message on stdin, less the paths of git'
   done
 }
 
+UXS=$(dirname "${BASH_SOURCE[0]}")/../upstream-exempt/upstream-exempt.sh
+ux_state=; ux_reason=
+# exempt <sha>: the upstream exemption (upstream-exempt.sh, the one source) for a commit whose message has a hit; lazy, so a
+# clean range fetches nothing, and with no --upstream-url there is no exemption at all
+exempt() {
+  [ -n "$UPSTREAM_URL" ] || return 1
+  if [ -z "$ux_state" ]; then
+    if ux_reason=$("$UXS" prepare "$UPSTREAM_URL" 2>&1); then ux_state=ok; else ux_state=no; fi
+  fi
+  [ "$ux_state" = ok ] && "$UXS" holds "$1"
+}
+
 messages() { # <range>, in the current directory
-  local range="$1" args=() hargs=() p shas sha bad=0 n=0 text
+  local range="$1" args=() hargs=() p shas sha bad=0 n=0 text exempted=0 out
   for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
   for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
   shas=$(git -c safe.directory="$PWD" rev-list "$range") || { echo "private-refs-check: git cannot read $range" >&2; return 1; }
@@ -122,12 +138,16 @@ messages() { # <range>, in the current directory
     n=$((n + 1))
     text=$(git -c safe.directory="$PWD" log -1 --format=%B "$sha") || { echo "private-refs-check: git cannot read $sha" >&2; return 1; }
     text=$(without_conflict_block "$sha" <<<"$text")
-    if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
+    out=$(grep -iE "${args[@]}" <<<"$text"; grep -E "${hargs[@]}" <<<"$text" || :)
+    if [ -n "$out" ]; then
+      if exempt "$sha"; then exempted=$((exempted + 1)); continue; fi
+      printf '%s\n' "$out" >&2
       echo "private-refs-check: commit ${sha:0:12} points into a private repository; the lines above" >&2; bad=1
+      [ -z "$UPSTREAM_URL" ] || [ "$ux_state" != no ] || echo "private-refs-check: ${sha:0:12}: no upstream exemption: ${ux_reason#upstream-exempt: }" >&2
     fi
   done <<<"$shas"
   [ "$bad" = 0 ] || return 1
-  echo "private-refs-check: $n commit messages read, none points into a private repository"
+  echo "private-refs-check: $n commit messages read, none points into a private repository$([ "$exempted" = 0 ] || echo ", $exempted upstream commits exempt")"
 }
 
 msg_file() { # <file>: one commit message as the commit-msg hook hands it over
@@ -148,11 +168,13 @@ by_file() { local l; while IFS= read -r l; do printf '%s: %s\n' "$1" "$l"; done;
 
 REPO=
 REPO_SET=0
+UPSTREAM_URL=
 rest=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) [ $# -ge 2 ] && [ -n "$2" ] || refuse "--repo needs OWNER/REPO"; REPO=$2; REPO_SET=1; shift 2 ;;
     --repo=*) REPO=${1#--repo=}; [ -n "$REPO" ] || refuse "--repo needs OWNER/REPO"; REPO_SET=1; shift ;;
+    --upstream-url) [ $# -ge 2 ] && [ -n "$2" ] || refuse "--upstream-url needs a URL"; UPSTREAM_URL=$2; shift 2 ;;
     *) rest+=("$1"); shift ;;
   esac
 done
@@ -365,7 +387,7 @@ if [ "${1:-}" = --msg-file ]; then
   exit "$worst"
 fi
 if [ "${1:-}" = --messages ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh [--repo OWNER/REPO] --messages RANGE" >&2; exit 2; }
+  [ -n "${2:-}" ] || { echo "usage: check.sh [--repo OWNER/REPO] [--upstream-url U] --messages RANGE" >&2; exit 2; }
   applies "$PWD"
   messages "$2"
   exit
