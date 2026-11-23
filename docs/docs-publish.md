@@ -22,8 +22,9 @@ One mechanism, three parts, nothing of the content written by hand:
   `reference/<repo>/<version>/`. `latest/` moves only when the release is the highest the channel holds, in version
   order (0.10.0 above 0.9.0), so a backport release never moves it. The version list and the repository list are
   written from the tree, so a place repeated on a newer channel tip writes the same bytes.
-- **`workflows/docs-publish.yml`** runs both: on a pull request it builds and assembles (red there when the doc check
-  is), on a tag push it publishes into `Open-Mixer/open-mixer.github.io` through `channel-pull` and `channel-push` (a
+- **`workflows/docs-publish.yml`** runs both, on a repository's release tags and by dispatch: only the repository's
+  one lint workflow runs on a pull request (actions/trigger-gate), and its doc check runs there. A dispatch builds and
+  assembles; a tag push publishes into `Open-Mixer/open-mixer.github.io` through `channel-pull` and `channel-push` (a
   signed commit, retried on a lost race by placing again on the new tip) and waits for Pages with `pages-live`.
 
 A repository calls it with one job:
@@ -31,7 +32,7 @@ A repository calls it with one job:
     on:
       push:
         tags: ['v*']
-      pull_request:
+      workflow_dispatch:
     jobs:
       docs:
         uses: Open-Mixer/.github/.github/workflows/docs-publish.yml@openmixer-v1

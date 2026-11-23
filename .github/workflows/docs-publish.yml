@@ -3,13 +3,14 @@
 name: docs-publish
 # Every repository's generated reference, built from its own source by its own `make docs-site` and published on the
 # site under /reference/<repo>/<version>/ and /reference/<repo>/latest/ (docs/docs-publish.md). A repository calls it
-# with one `uses:` line; on a pull request it builds and assembles (the same make target, so an undocumented symbol is
-# red there first), and on a release tag it publishes.
+# with one `uses:` line, on its release tags and by dispatch (the delivery rule, actions/trigger-gate: only a
+# repository's one lint workflow runs on a pull request, and that is where its doc check runs); a dispatch builds and
+# assembles, only a tag push publishes.
 #
 #   on:
 #     push:
 #       tags: ['v*']
-#     pull_request:
+#     workflow_dispatch:
 #   jobs:
 #     docs:
 #       uses: Open-Mixer/.github/.github/workflows/docs-publish.yml@openmixer-v1
