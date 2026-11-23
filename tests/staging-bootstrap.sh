@@ -120,7 +120,7 @@ ok "$kind: control: the channel has no staging path, its staging index answers 4
 if [ "$kind" = rpm ]; then
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
-    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' "$@"; }
+    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' "$@"; }
     staging_files=(/etc/yum.repos.d/openmixer-staging.repo)
 else
     install -D -m 644 "$ch/deb/openmixer.asc" /usr/share/keyrings/openmixer-archive-keyring.asc

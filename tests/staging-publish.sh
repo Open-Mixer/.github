@@ -175,7 +175,7 @@ echo "$err" | grep -q 'never alone' || fail "add-staging.sh does not say why: $e
 if [ "$kind" = rpm ]; then
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
-    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' "$@"; }
+    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' "$@"; }
     BASE_URL=$base "$actions/add-openmixer/add-staging.sh" >/dev/null
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null
     q install omx-app >/dev/null
