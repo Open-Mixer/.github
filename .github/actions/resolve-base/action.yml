@@ -16,6 +16,9 @@ inputs:
   merge-base:
     description: also give the merge-base with HEAD (false for a gate that reads the base's tip)
     default: 'true'
+  local-authority:
+    description: 'true when a plain local branch base with no upstream is the authority (a release branch built locally); otherwise such a base is refused by name'
+    default: 'false'
 outputs:
   commit:
     description: the commit the base resolves to
@@ -32,9 +35,9 @@ runs:
       env:
         BASE: ${{ inputs.base }}
         MERGE_BASE: ${{ inputs.merge-base }}
+        LOCAL_AUTHORITY: ${{ inputs.local-authority }}
       run: |
-        if [ "$MERGE_BASE" = true ]; then
-          "$GITHUB_ACTION_PATH/resolve-base.sh" "$BASE"
-        else
-          "$GITHUB_ACTION_PATH/resolve-base.sh" "$BASE" --no-merge-base
-        fi
+        opts=()
+        [ "$MERGE_BASE" = true ] || opts+=(--no-merge-base)
+        [ "$LOCAL_AUTHORITY" != true ] || opts+=(--local-authority)
+        "$GITHUB_ACTION_PATH/resolve-base.sh" "$BASE" "${opts[@]}"

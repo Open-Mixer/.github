@@ -350,7 +350,8 @@ for h in $(get INPUT); do
 done
 SH
   chmod +x "$work/doxygen"
-  export STANDIN=$standin DOXYGEN=$work/doxygen RESOLVE_BASE=$HERE/../resolve-base/resolve-base.sh
+  # the fixtures' bases are local branches with no upstream, and the fixture is their authority (resolve-base, .github#121)
+  export STANDIN=$standin DOXYGEN=$work/doxygen RESOLVE_BASE=$HERE/../resolve-base/resolve-base.sh RESOLVE_BASE_LOCAL_AUTHORITY=1
 
   # the scratch repository: `before` has no gate; `main` brings it; `topic` is one commit on, the tree the arms edit
   t=$work/tree; mkdir -p "$t/src" "$t/docs" "$t/py"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas
-# resolve-base resolve-base.sh <base> [--no-merge-base] | --self-test
+# resolve-base resolve-base.sh <base> [--no-merge-base] [--local-authority] | --self-test
 #
 # The one base-resolution rule of every compare gate (a baseline that only shrinks, a debt that only falls, a count
 # held to the base branch): a gate never resolves its base itself, it asks this script, so every gate refuses the
@@ -16,6 +16,10 @@
 #   - an empty base (a CI expression that yielded nothing), a base with no name at all, and a remote with no branch
 #     (origin/) are refused by name, never a default and never a skipped compare;
 #   - HEAD is no base, and neither is a ref that resolves to HEAD's own commit: a compare of HEAD with HEAD finds nothing;
+#   - a plain local branch (main, not origin/main) is a copy too (.github#121): one with an upstream is held to it (the
+#     upstream is fetched, and a local branch lacking any commit of it is refused by name); one with no upstream, or a
+#     local one (.), is refused by name unless the caller says it is the authority: --local-authority, or
+#     RESOLVE_BASE_LOCAL_AUTHORITY=1 (a fixture, a release branch built locally);
 #   - the base resolves with git rev-parse -q --verify <base>^{commit}: a name this clone does not hold (a depth-1
 #     single-branch clone) is refused by name;
 #   - the merge-base with HEAD is where a gate reads the base's copy of a file (what this change started from, never
@@ -33,10 +37,16 @@ refuse() { # <exit> <message>
   exit "$1"
 }
 
-resolve() { # <base> [--no-merge-base]
-  local base=${1-} want_merge_base=1 remote branch err commit head merge_base
+resolve() { # <base> [--no-merge-base] [--local-authority]
+  local base=${1-} want_merge_base=1 local_authority=${RESOLVE_BASE_LOCAL_AUTHORITY:-0} remote branch err commit head merge_base opt
   [ $# -ge 1 ] || refuse 1 "no base given: name the base branch (origin/main), never a default"
-  [ "${2:-}" != --no-merge-base ] || want_merge_base=0
+  for opt in "${@:2}"; do
+    case $opt in
+      --no-merge-base) want_merge_base=0 ;;
+      --local-authority) local_authority=1 ;;
+      *) refuse 1 "unknown option $opt" ;;
+    esac
+  done
   [ -n "$base" ] || refuse 1 "the base is empty: name the base branch (origin/main), never a default and never a skipped compare"
   case $base in
     HEAD | HEAD[~^]* | @ | @[~^]*) refuse 1 "$base is no base: a compare of HEAD with HEAD finds nothing" ;;
@@ -81,6 +91,22 @@ resolve() { # <base> [--no-merge-base]
   fi
   head=$(git rev-parse -q --verify "HEAD^{commit}") || refuse 2 "HEAD does not resolve: not a checkout"
   [ "$commit" != "$head" ] || refuse 1 "$base resolves to HEAD's own commit ${commit:0:12}: a compare of HEAD with HEAD finds nothing"
+  # the local rule: a plain local branch is held to its upstream, or the caller is its authority
+  if git show-ref -q --verify "refs/heads/$base"; then
+    local up_remote up_merge up_ref behind
+    up_remote=$(git config "branch.$base.remote" || true); up_merge=$(git config "branch.$base.merge" || true)
+    if [ -n "$up_remote" ] && [ "$up_remote" != . ] && [ -n "$up_merge" ]; then
+      up_ref=refs/remotes/$up_remote/${up_merge#refs/heads/}
+      if ! err=$(git fetch -q --no-tags -- "$up_remote" "+$up_merge:$up_ref" 2>&1); then
+        refuse 2 "could not fetch $base's upstream ${up_ref#refs/remotes/} from $up_remote (${err%%$'\n'*}): a local branch not held to its upstream is no base"
+      fi
+      behind=$(git rev-list --count "$commit..$up_ref")
+      [ "$behind" = 0 ] || refuse 1 "$base is behind its upstream ${up_ref#refs/remotes/} by $behind commit$([ "$behind" = 1 ] || echo s): name ${up_ref#refs/remotes/} as the base"
+    elif [ "$local_authority" != 1 ]; then
+      refuse 1 "$base is a local branch with no upstream: name the remote base (origin/main), or pass --local-authority when this branch is the authority"
+    fi
+  fi
+  # end of the local rule
   if [ "$want_merge_base" = 1 ]; then
     if ! merge_base=$(git merge-base HEAD "$commit" 2>/dev/null); then
       refuse 2 "no merge-base between HEAD and $base (${commit:0:12}): shallow history, fetch with fetch-depth 0"
@@ -202,7 +228,7 @@ self_test() {
   if (cd "$full" && bash "$t/nofetch.sh" origin/main 2>/dev/null | grep -qx "commit=$b"); then ok "sabotage: without the fetch the stale copy is read, so the fetch is what catches it"; else no "sabotage: the fetch"; fi
   # shellcheck disable=SC2016 # the script's own text is matched
   sed '/^resolve()/,/^}/s/\[ "$commit" != "$head" \] ||/true ||/' "$script" > "$t/noguard.sh"
-  if (cd "$full" && bash "$t/noguard.sh" topic 2>/dev/null | grep -q '^commit='); then ok "sabotage: without the guard HEAD against HEAD passes, so the guard is what catches it"; else no "sabotage: the HEAD guard"; fi
+  if (cd "$full" && bash "$t/noguard.sh" topic --local-authority 2>/dev/null | grep -q '^commit='); then ok "sabotage: without the guard HEAD against HEAD passes, so the guard is what catches it"; else no "sabotage: the HEAD guard"; fi
 
   # sabotage: with the local rule gone, a local main behind its upstream is read as it is
   git -C "$full" branch -q -f main "$b"
