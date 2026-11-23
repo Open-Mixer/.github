@@ -460,7 +460,7 @@ jobs:
           done
           # the source and noarch packages come out of every job of one Fedora release under the same file name
           # with different bytes; merge-multiple would write them over each other, so only the first architecture
-          # ships them (each release's dist tag, .fc44 or .fc45, keeps the releases apart)
+          # ships them (each release's dist tag, .fcNN, keeps the releases apart)
           if [ "$ARCH" != "$FIRST_ARCH" ]; then
             rm -f release/*.src.rpm release/*.noarch.rpm
           fi

@@ -3,9 +3,9 @@
 name: synthv1 and samplv1 RPMs
 
 # Builds synthv1 and samplv1 1.5.1 from packaging/synthv1 and packaging/samplv1 at the v1.5.1 commits of
-# .github/pins.txt, with the scheduler teardown fix upstream merged after that tag, for Fedora 44 and 45 on x86_64 and
+# .github/pins.txt, with the scheduler teardown fix upstream merged after that tag, for Fedora 45 on x86_64 and
 # aarch64, and publishes them into rpm/ of the Pages repository. The packages keep Fedora's names and carry .omx in
-# their Release, so they replace Fedora's 0.9.91 (fc44) and 1.4.2 (fc45) in place. Released by a tag, once per change of
+# their Release, so they replace Fedora's 1.4.2 (fc45) in place. Released by a tag, once per change of
 # either spec: a published NEVRA is never rebuilt with new bytes. A v* tag builds, checks and publishes them. A pull request runs only tests/rncbc-v1-package.sh (ci.yml).
 #
 # A push of a `v*` tag publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an

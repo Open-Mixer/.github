@@ -5,7 +5,7 @@ name: CLAP RPMs
 # 1.2.10), for every Fedora release the channel serves and every architecture, proves it in a clean container (it
 # installs from a clean state, pkg-config and a compile see 1.2.10, and it upgrades the Fedora release's own older
 # clap-devel), then publishes it into rpm/ of the Pages repository. 1.2.10 is the CLAP floor of every package of the
-# channel, and Fedora 44 and 45 ship 1.2.7; clap-headers-deb.yml serves the same pin to Debian. Released by a tag, once per
+# channel, and Fedora 45 ships 1.2.7; clap-headers-deb.yml serves the same pin to Debian. Released by a tag, once per
 # change of the spec (no heavy Action on a push or pull request; tags and dispatch only, plus one named lint: a dry-run dispatch is the check of a change to the spec, the pins or this file): a published NEVRA is never rebuilt with new bytes.
 #
 # A push of a tag `clap-headers-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
