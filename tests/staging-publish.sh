@@ -93,14 +93,18 @@ deb)
     mkdeb() { # <name> <version> [depends]
         local d=$work/db-$1-$2
         mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$1"
-        printf '%s\n' "Package: $1" "Version: $2" 'Architecture: amd64' 'Maintainer: t <t@example.org>' 'Description: t' > "$d/DEBIAN/control"
+        printf '%s\n' "Package: $1" "Version: $2" "Architecture: ${DEB_ARCH:-amd64}" 'Maintainer: t <t@example.org>' 'Description: t' > "$d/DEBIAN/control"
         [ -z "${3:-}" ] || echo "Depends: $3" >> "$d/DEBIAN/control"
-        dpkg-deb --root-owner-group -b "$d" "$work/$1_$2_amd64.deb" >/dev/null
-        echo "$work/$1_$2_amd64.deb"
+        dpkg-deb --root-owner-group -b "$d" "$work/$1_$2_${DEB_ARCH:-amd64}.deb" >/dev/null
+        echo "$work/$1_$2_${DEB_ARCH:-amd64}.deb"
     }
     mkdir -p "$work/real/trixie" "$work/staged/trixie"
-    cp "$(mkdeb libmod-host-protocol0 0.10.11)" "$(mkdeb omx-lib 3.13.0)" "$(mkdeb omx-lib 3.14.1)" "$work/real/trixie/"
-    cp "$(mkdeb omx-lib 3.14.0+git$A libmod-host-protocol0)" "$work/staged/trixie/"
+    cp "$(mkdeb libmod-host-protocol0 0.10.11)" "$(DEB_ARCH=arm64 mkdeb libmod-host-protocol0 0.10.11)" \
+        "$(mkdeb omx-lib 3.13.0)" "$(mkdeb omx-lib 3.14.1)" "$work/real/trixie/"
+    # a staged run stages the tested platforms alone (trixie arm64, and all): the client of this amd64 container takes
+    # the all package; the arm64 one is the cell the requires check judges
+    cp "$(DEB_ARCH=all mkdeb omx-lib 3.14.0+git$A libmod-host-protocol0)" \
+        "$(DEB_ARCH=arm64 mkdeb omx-tool 1.0+git$A libmod-host-protocol0)" "$work/staged/trixie/"
     REQUIRES=libmod-host-protocol0 "$actions/publish-debs/publish-tree.sh" "$ch/deb" "$work/real" "$NEW_ID" >/dev/null
     ;;
 *) fail "rpm or deb, not $kind" ;;
@@ -146,7 +150,8 @@ else
         REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs bash -e "$work/assemble.sh") \
         > "$work/publish.log" 2>&1 || { cat "$work/publish.log"; fail "the staged deb publish failed"; }
     s=$ch/staging/deb
-    [ -f "$s/debian/trixie/amd64/omx-lib_3.14.0+git${A}_amd64.deb" ] || fail "the staged package is not at staging/deb/debian/trixie/amd64"
+    [ -f "$s/debian/trixie/all/omx-lib_3.14.0+git${A}_all.deb" ] || fail "the staged package is not at staging/deb/debian/trixie/all (a staged run stages the tested platforms alone: arm64 and all)"
+    ! grep -E "^Architectures:.*amd64" "$s/debian/trixie/Release" || fail "the staging index names amd64: a staged run stages the tested platforms alone"
     for suite in bookworm trixie; do
         [ -s "$s/debian/$suite/InRelease" ] || fail "no signed index for staging/deb/debian/$suite"
         grep -qx 'Label: OpenMixer-Staging' "$s/debian/$suite/InRelease" || fail "staging/deb/debian/$suite is not labelled OpenMixer-Staging"
@@ -229,9 +234,9 @@ else
     dpkg --compare-versions "3.14.0+git$B" gt "3.14.0+git$A" || fail "the later commit's 3.14.0+git$B does not sort above 3.14.0+git$A"
     dpkg --compare-versions "3.14.0+git${B#*.}" lt "3.14.0+git${A#*.}" || fail "the two shas alone sort by time: this is not the case under test"
     mkdir -p "$work/staged-b/trixie"
-    cp "$(mkdeb omx-lib "3.14.0+git$B" libmod-host-protocol0)" "$work/staged-b/trixie/"
-    old=$s/debian/trixie/amd64/omx-lib_3.14.0+git${A}_amd64.deb
-    new=$s/debian/trixie/amd64/omx-lib_3.14.0+git${B}_amd64.deb
+    cp "$(DEB_ARCH=all mkdeb omx-lib "3.14.0+git$B" libmod-host-protocol0)" "$work/staged-b/trixie/"
+    old=$s/debian/trixie/all/omx-lib_3.14.0+git${A}_all.deb
+    new=$s/debian/trixie/all/omx-lib_3.14.0+git${B}_all.deb
     taken() { apt-get update -qq -o APT::Update::Error-Mode=any; apt-cache policy omx-lib | awk '/Candidate:/ {print $2}'; }
     want=3.14.0+git$B
     (cd "$ws" && NEWEST_ONLY='' REQUIRES=libmod-host-protocol0 CHANGELOGS_URL=https://www.openmixer.org/staging/deb/changelogs \
