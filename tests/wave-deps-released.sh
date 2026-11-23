@@ -21,7 +21,7 @@ case "$*" in
 esac
 SH
 printf '#!/bin/bash\nexit 0\n' > "$T/act/build.sh"; printf 'x' > "$T/build-rpm.sh"; chmod +x "$T/bin/git" "$T/act/build.sh"
-mkdir -p "$T/build-rpm" "$T/build-deb"; touch "$T/build-rpm/build-rpm.sh" "$T/build-deb/build-deb.sh"
+mkdir -p "$T/build-rpm" "$T/build-deb"; touch "$T/build-rpm/build-rpm.sh" "$T/build-deb/build-deb.sh" "$T/build-deb/render-changelog.sh"
 run() { env -i PATH="$T/bin:/usr/bin:/bin" GITHUB_ACTION_PATH="$T/act" GITHUB_OUTPUT="$T/out" BRANCH=dedupe/all OWNER=o REPOS="$1" \
   bash -c "sleep() { :; }; export -f sleep; . $T/key.sh" > "$T/log" 2>&1; }
 : > "$T/out"; if run "kept released"; then
