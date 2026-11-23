@@ -36,7 +36,7 @@ ch=$work/channel
 mkdir -p "$ch/rpm" "$ch/deb" "$ch/docs" "$work/src"
 echo '<html>site</html>' > "$ch/index.html"
 git -C "$ch" init -q
-commit() { (cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org commit -qm "$1"); }
+commit() { (cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm "$1"); }
 
 case $kind in
 rpm)
