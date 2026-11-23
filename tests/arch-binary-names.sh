@@ -19,7 +19,8 @@ assert inputs["arch-binary-names"]["default"] == "{}", f"{f}: arch-binary-names 
 per_arch = "${{ fromJSON(inputs.arch-binary-names)[matrix.arch] || inputs.binary-names }}"
 seen = 0
 for name, job in d["jobs"].items():
-    in_matrix = "arch" in (((job.get("strategy") or {}).get("matrix")) or {})
+    # a matrix job: its cells carry the architecture, written out or as the preflight's include list
+    in_matrix = bool((job.get("strategy") or {}).get("matrix"))
     for step in job.get("steps") or []:
         b = (step.get("env") or {}).get("BINARIES")
         if b is None:
