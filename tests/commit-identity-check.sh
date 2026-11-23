@@ -112,4 +112,65 @@ grep -q 'rev-list -1' "$tmp/head-only.sh" || fail "sabotage setup: the head-only
 "$tmp/head-only.sh" --author-email "$A" --committer-email "$C" main..HEAD >"$tmp/out" || fail "sabotage setup: the head-only reader should read clean"
 if grep -q "^$wc:" "$tmp/out" && grep -q "^$uv:" "$tmp/out"; then fail "the head-only reader named both bad commits"; fi
 echo "sabotage: a head-only reader is blind to both bad commits (red on the naming assertion), the range reader names them"
+# ---- the UPSTREAM EXEMPTION (../upstream-exempt, the one source): a fork's range holds its upstream's own commits, authored by others and
+# unverified. They pass ONLY when --upstream-url is an exact listed URL, git does not rewrite it, it is fetched, and the commit is an ancestor
+# of the fetched ref. The test fetches file:// URLs of its own bare repos, from a COPY of the actions whose list names them (no insteadOf).
+mkdir -p "$tmp/act"; cp -r "$here/.github/actions/commit-identity-check" "$here/.github/actions/upstream-exempt" "$tmp/act/"
+chk2=$tmp/act/commit-identity-check/commit-identity-check.sh
+UPU=file://$tmp/up.git
+printf '%s\n' "$UPU" > "$tmp/act/upstream-exempt/upstream-allowed.txt"
+mkup() { # <bare dir>: two commits of a third party, unverified
+  rm -rf "$tmp/$1" "$tmp/$1-w"; git init -q -b main "$tmp/$1-w"; git -C "$tmp/$1-w" config user.name t; git -C "$tmp/$1-w" config commit.gpgsign false
+  for i in 1 2; do GIT_AUTHOR_EMAIL=third@example.org GIT_COMMITTER_EMAIL=third@example.org git -C "$tmp/$1-w" commit -q --allow-empty -m "upstream $1 $i"
+    echo "false unsigned" > "$tmp/fix/$(git -C "$tmp/$1-w" rev-parse HEAD)"; done
+  git clone -q --bare "$tmp/$1-w" "$tmp/$1"; rm -rf "$tmp/$1-w"
+}
+mkup up.git; mkup evil.git; git clone -q --bare "$tmp/up.git" "$tmp/up3.git"   # up3: the same commits at an URL NOT on the list
+# fork <name> <source bare>: main (house base), a branch of one own commit plus our signed merge of the source's history
+fork() {
+  rm -rf "$tmp/$1"; git init -q -b main "$tmp/$1"; cd "$tmp/$1" || exit 1; git config user.name t; git config commit.gpgsign false
+  mk $A $C true "fork base"
+  git fetch -q "$tmp/$2" main:upmain; git checkout -q -b topic; mk $A $C true "own one"
+  GIT_AUTHOR_EMAIL=$A GIT_COMMITTER_EMAIL=$C git merge -q --allow-unrelated-histories --no-ff upmain -m "own merge of upstream"
+  echo "true valid" > "$tmp/fix/$(git rev-parse HEAD)"
+}
+runx() { "${CHK:-$chk2}" --author-email "$A" --committer-email "$C" --upstream-url "$1" main..HEAD; }
+fork f1 up.git
+runx "$UPU" >"$tmp/out" || fail "an upstream history in the range was refused with the listed URL: $(cat "$tmp/out")"
+grep -q 'upstream commits exempt' "$tmp/out" || fail "the exempt count is not said"
+rc=0; "$chk2" --author-email "$A" --committer-email "$C" main..HEAD >"$tmp/out" || rc=$?
+[ "$rc" = 1 ] || fail "without --upstream-url the upstream commits passed (rc $rc)"
+# our own commit with a wrong author, and our own merge with a wrong committer, on top of upstream: named, nothing else
+mk wrong@example.invalid $C true "own wrong author"; ow=$sha
+rc=0; runx "$UPU" >"$tmp/out" || rc=$?
+[ "$rc" = 1 ] && grep -q "^$ow: \[author-email\] wrong@example.invalid" "$tmp/out" && [ "$(grep -c '^[0-9a-f]\{40\}: \[' "$tmp/out")" = 1 ] || fail "our own wrong-author commit was not the only offence: $(cat "$tmp/out")"
+git reset -q --hard HEAD~1
+GIT_AUTHOR_EMAIL=$A GIT_COMMITTER_EMAIL=$A git commit -q --allow-empty -m "own bad merge-shaped commit"; echo "true valid" > "$tmp/fix/$(git rev-parse HEAD)"; ob=$(git rev-parse HEAD)
+git checkout -q -b mt HEAD~1; GIT_AUTHOR_EMAIL=$A GIT_COMMITTER_EMAIL=$A git merge -q --no-ff -m "own wrong-committer merge" topic 2>/dev/null || true
+git checkout -q topic; git checkout -q -B bm topic; git branch -q -f side main; git checkout -q side; mk $A $C true "side"
+git checkout -q bm; GIT_AUTHOR_EMAIL=$A GIT_COMMITTER_EMAIL=$A git merge -q --no-ff -m "own wrong-committer merge" side; echo "true valid" > "$tmp/fix/$(git rev-parse HEAD)"; om=$(git rev-parse HEAD)
+rc=0; runx "$UPU" >"$tmp/out" || rc=$?
+[ "$rc" = 1 ] && grep -q "^$om: \[committer-email\]" "$tmp/out" || fail "our own merge with a wrong committer was exempted: $(cat "$tmp/out")"
+# a URL not on the list, and look-alikes: no exemption, and the refusal says why
+for bad in "file://$tmp/up3.git" "$UPU.evil" "$UPU/" "${UPU%.git}" "x$UPU" "$tmp/up.git"; do
+  fork f2 up.git; rc=0; runx "$bad" >"$tmp/out" 2>&1 || rc=$?
+  [ "$rc" = 1 ] && grep -q 'no upstream exemption' "$tmp/out" || fail "URL $bad was exempted or silent: $(cat "$tmp/out")"
+done
+# a listed URL that url.*.insteadOf rewrites to a repository of our own unsigned commits: refused, and the sabotage copy passes them
+fork f3 evil.git; git config "url.$tmp/evil.git.insteadOf" "$UPU"
+rc=0; runx "$UPU" >"$tmp/out" 2>&1 || rc=$?
+[ "$rc" = 1 ] && grep -q 'rewritten by local url' "$tmp/out" || fail "a rewritten URL was trusted: $(cat "$tmp/out")"
+# SABOTAGE: each check removed from a copy turns its arm red (the bad case passes)
+sab() { # <marker> <label>: a copy of the action with that line removed or neutered
+  rm -rf "$tmp/sab"; mkdir "$tmp/sab"; cp -r "$tmp/act/." "$tmp/sab/"
+  case $1 in UPANC) sed -i 's/^\(.*\)# UPANC$/    exit 0   # UPANC/' "$tmp/sab/upstream-exempt/upstream-exempt.sh" ;; *) sed -i "/# $1\$/d" "$tmp/sab/upstream-exempt/upstream-exempt.sh" ;; esac
+  grep -q "$1" "$tmp/sab/upstream-exempt/upstream-exempt.sh" && [ "$1" != UPANC ] && fail "sabotage $2: the sed did not remove the line"
+  CHK=$tmp/sab/commit-identity-check/commit-identity-check.sh
+}
+fork f4 up.git; mk wrong@example.invalid $C true "own wrong author"
+sab UPANC ancestor; runx "$UPU" >/dev/null 2>&1 && : || fail "sabotage: with the ancestor test removed our wrong-author commit should (wrongly) pass"
+fork f5 up.git; sab UPLIST list; runx "file://$tmp/up3.git" || fail "sabotage: with the list check removed an unlisted URL should (wrongly) pass"
+fork f6 evil.git; git config "url.$tmp/evil.git.insteadOf" "$UPU"; sab UPREWRITE rewrite; runx "$UPU" >/dev/null 2>&1 || fail "sabotage: with the rewrite check removed the rewritten URL should (wrongly) pass"
+CHK=
+echo "upstream exemption: the listed upstream's commits pass; ours (commit, merge), unlisted, look-alike and rewritten URLs are refused; each check removed turns its arm red"
 echo PASS

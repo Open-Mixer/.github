@@ -85,14 +85,14 @@ deb)
     mkdeb() { # <name> <version>
         local d=$work/db-$1-$2
         mkdir -p "$d/DEBIAN"
-        printf '%s\n' "Package: $1" "Version: $2" 'Architecture: amd64' 'Maintainer: t <t@example.org>' 'Description: t' > "$d/DEBIAN/control"
-        dpkg-deb --root-owner-group -b "$d" "$work/$1_$2_amd64.deb" >/dev/null
-        echo "$work/$1_$2_amd64.deb"
+        printf '%s\n' "Package: $1" "Version: $2" "Architecture: ${DEB_ARCH:-amd64}" 'Maintainer: t <t@example.org>' 'Description: t' > "$d/DEBIAN/control"
+        dpkg-deb --root-owner-group -b "$d" "$work/$1_$2_${DEB_ARCH:-amd64}.deb" >/dev/null
+        echo "$work/$1_$2_${DEB_ARCH:-amd64}.deb"
     }
     mkdir -p "$work/real/trixie" "$work/staged/trixie" "$work/staged2/trixie"
     cp "$(mkdeb omx-lib 3.13.0)" "$work/real/trixie/"
-    cp "$(mkdeb omx-lib 3.14.0+git5f455d3)" "$work/staged/trixie/"
-    cp "$(mkdeb omx-lib 3.14.0+git6a0b1c2)" "$work/staged2/trixie/"
+    cp "$(DEB_ARCH=all mkdeb omx-lib 3.14.0+git5f455d3)" "$work/staged/trixie/"
+    cp "$(DEB_ARCH=all mkdeb omx-lib 3.14.0+git6a0b1c2)" "$work/staged2/trixie/"
     "$actions/publish-debs/publish-tree.sh" "$ch/deb" "$work/real" "$NEW_ID" >/dev/null
     index=staging/deb/debian/trixie/InRelease
     real_index=deb/debian/trixie/InRelease
@@ -120,7 +120,7 @@ ok "$kind: control: the channel has no staging path, its staging index answers 4
 if [ "$kind" = rpm ]; then
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
-    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' "$@"; }
+    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' "$@"; }
     staging_files=(/etc/yum.repos.d/openmixer-staging.repo)
 else
     install -D -m 644 "$ch/deb/openmixer.asc" /usr/share/keyrings/openmixer-archive-keyring.asc

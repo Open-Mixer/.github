@@ -182,7 +182,7 @@ base=file://$ch
 if [ "$kind" = rpm ]; then
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
-    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' "$@"; }
+    q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' "$@"; }
     q --setopt=skip_if_unavailable=False makecache --refresh >/dev/null
     q install omx-lib-3.14.0 >/dev/null
     got=$(rpm -q --qf '%{VERSION}-%{RELEASE}' omx-lib); repo=$(dnf -q repoquery --installed --qf '%{from_repo}' omx-lib)

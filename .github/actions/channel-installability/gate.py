@@ -709,68 +709,6 @@ def served_suites(channel, work):
     return suites
 
 
-# ----------------------------------------------------------------------------------------------- external channels
-
-def external_channels(path):
-    """The channels the packages of this channel may depend on, from the one declared file: <name> <base url or directory>,
-    one per line, # comments. A release package of this channel may Require another channel's release package
-    (openmixer-release requires freereac-release): that channel's packages are providers the gate reads, never judged.
-    No file, or an empty one, declares none. A name or line that is not well formed is not read past: the gate refuses."""
-    if not path:
-        return []
-    out, seen = [], set()
-    try:
-        lines = open(path).read().splitlines()
-    except OSError as e:
-        raise Cannot(f"the external channels file {path} could not be read: {e}") from e
-    for n, line in enumerate(lines, 1):
-        line = line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        parts = line.split()
-        if len(parts) != 2 or not re.match(r"^[a-z][a-z0-9]*$", parts[0]) or parts[0] in seen:
-            raise Cannot(f"{path}:{n}: '{line}' is not '<name> <base url>' with a name used once")
-        seen.add(parts[0])
-        out.append((parts[0], parts[1]))
-    return out
-
-
-def external_rpm_repos(externals, rel, arch, notes, where):
-    """[(repo id, path)] of each external channel's dnf repositories for this release and architecture: the architecture's tree and
-    its noarch tree, as this channel's own are read (a noarch package such as a release package lives in the noarch tree). A channel
-    that serves neither is named in the notes (what depends on it is then unmet, by name, in the verdict)."""
-    repos = []
-    for name, base in externals:
-        found = []
-        for tree, suffix in ((arch, ""), ("noarch", "-noarch")):
-            p = join(base, "rpm", "fedora", rel, tree) + "/"
-            if exists(join(p, "repodata", "repomd.xml")):
-                found.append((f"omx-ext-{name}{suffix}", p))
-        if not found:
-            notes.append(f"{where}: the external channel {name} ({base}) serves no fedora/{rel}/{arch} or fedora/{rel}/noarch: nothing it provides is known")
-        repos += found
-    return repos
-
-
-def external_deb_background(externals, suite, work, notes, where):
-    """Background Packages files of each external channel's apt index for this Debian release."""
-    files = []
-    for name, base in externals:
-        dest = os.path.join(work, f"ext-{name}-{suite}")
-        if os.path.exists(dest):
-            files.append(dest)
-            continue
-        for leaf in ("Packages.gz", "Packages"):
-            url = join(base, "deb", "debian", suite, leaf)
-            if exists(url):
-                fetch(url, dest)
-                files.append(dest)
-                break
-        else:
-            notes.append(f"{where}: the external channel {name} ({base}) serves no debian/{suite}: nothing it provides is known")
-    return files
-
-
 # ----------------------------------------------------------------------------------------------- deb arm
 
 def deb_new_stanzas(new_dir, suite, new_index):
@@ -871,7 +809,6 @@ def outside(a, release, arch, where):
 
 def deb_arm(a):
     reds, warns, notes = [], [], []
-    externals = external_channels(a.external_channels)
     work = tempfile.mkdtemp(prefix="gate-deb-")
     try:
         # every Debian release the channel serves, and any the release brings that it does not serve yet
@@ -907,8 +844,7 @@ def deb_arm(a):
                 if a.dry_run and built_arches and arch not in built_arches:
                     say(f"debian/{suite} {arch}: not built in this pass, not judged")
                     continue
-                bg = (a.bg or debian_background(suite, arch, a.mirror, a.security, work)) \
-                    + external_deb_background(externals, suite, work, notes, f"debian/{suite} {arch}")
+                bg = a.bg or debian_background(suite, arch, a.mirror, a.security, work)
                 pick = lambda ss: [s for s in ss if s[0].get("Architecture") in (arch, "all")]  # noqa: E731
                 same_pass = expand_same_pass(
                     unbuilt_pass(a, {f["Package"] for f, _ in new if f.get("Architecture") == arch},
@@ -1010,7 +946,6 @@ def served_fedora(channel):
 
 def rpm_arm(a):
     reds, warns, notes = [], [], []
-    externals = external_channels(a.external_channels)
     work = tempfile.mkdtemp(prefix="gate-rpm-")
     try:
         rpms = [f for f in glob.glob(os.path.join(a.new_dir, "**", "*.rpm"), recursive=True)
@@ -1042,8 +977,6 @@ def rpm_arm(a):
                 pub = [("omx-gate", channel_path(a.channel, rel, arch)),
                        ("omx-gate-noarch", channel_path(a.channel, rel, "noarch"))]
                 newrepo = [("omx-gate-new", newdir)]
-                # the packages of an external channel are providers the solver reads, never judged: not in ids
-                ext = external_rpm_repos(externals, rel, arch, notes, where)
                 new_pkgs = repoquery(base, newrepo, ["omx-gate-new"])
                 new_nevras = [f"{p.name}-{p.version}.{p.arch}" for p in new_pkgs]
                 excl = new_nevras + [x for x in (a.drop or [])]
@@ -1052,14 +985,14 @@ def rpm_arm(a):
                 same_pass = expand_same_pass(unbuilt, published + new_pkgs)
                 read_pkgs += published + new_pkgs
                 excl_opts = [f"--setopt={rid}.excludepkgs={','.join(excl)}" for rid in ids] if excl else []
-                before = run_repoclosure(base + excl_opts, pub + ext, ids, arch)
+                before = run_repoclosure(base + excl_opts, pub, ids, arch)
                 # repoclosure --newest takes the newest of each repository, so the published versions of what the
                 # release brings leave the published repositories for the after view: the newest of each name is
                 # then the one the release brings, as for apt
                 shadow = sorted({p.name for p in new_pkgs})
                 after_opts = [f"--setopt={rid}.excludepkgs={','.join(excl + shadow)}" for rid in ids] \
                     if excl or shadow else []
-                after = run_repoclosure(base + after_opts, pub + ext + newrepo, ids + ["omx-gate-new"], arch)
+                after = run_repoclosure(base + after_opts, pub + newrepo, ids + ["omx-gate-new"], arch)
                 new_names = {p.name for p in new_pkgs}
                 say(f"{where}: {len(new_pkgs)} new ({' '.join(sorted(new_names)) or 'none'}), "
                     f"{sum(map(len, before.values()))} unresolved before, {sum(map(len, after.values()))} after")
@@ -1071,7 +1004,7 @@ def rpm_arm(a):
                     root = os.path.join(work, f"root-{rel}-{arch}")
                     os.makedirs(root, exist_ok=True)
                     clean = [f"--installroot={root}", "--use-host-config"]
-                    vb = base + clean + excl_opts + sysrepos + [f"--repofrompath={i},{u}" for i, u in pub + ext]
+                    vb = base + clean + excl_opts + sysrepos + [f"--repofrompath={i},{u}" for i, u in pub]
                     va = vb + [f"--repofrompath={i},{u}" for i, u in newrepo]
                     nb = dnf_newest(vb, ids, published, arch)
                     na = dnf_newest(va, ids + ["omx-gate-new"], published + new_pkgs, arch)
@@ -1185,10 +1118,6 @@ def main(argv=None):
         p.add_argument("--drop", action="append", help="leave this NAME or NAME=VERSION (rpm: a NEVRA glob) out of "
                                                        "the published channel")
         p.add_argument("--keep", action="store_true", help="keep the work directory")
-        p.add_argument("--external-channels",
-                       help="the file declaring the channels this channel's packages may depend on, '<name> <base url>' per "
-                            "line (run.sh passes external-channels.txt): their packages are read as providers and never judged; "
-                            "none by default")
         p.add_argument("--no-newest", action="store_true", help="skip the arm that installs each package alone")
         p.add_argument("--cell", action="append",
                        help="judge only these cells, RELEASE/ARCH (45/x86_64, trixie/arm64); every other cell is named and "

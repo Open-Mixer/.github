@@ -84,6 +84,10 @@ runs:
         set -o pipefail
         echo "PURGE_STAGING_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
         echo "SKELETON=$SKELETON" >> "$GITHUB_ENV"
+        # the deb skeleton is the tested platforms' architectures (owner ruling 2026-11-23), as a staged publish makes it
+        SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb)
+        export SKELETON_ARCHES
+        echo "SKELETON_ARCHES=$SKELETON_ARCHES" >> "$GITHUB_ENV"
         "$GITHUB_ACTION_PATH/purge-staging.sh" "$KIND" build/channel ${OPENMIXER_GPG_KEY_ID:+"$OPENMIXER_GPG_KEY_ID"}
         git -C build/channel status --short -- "staging/$KIND" | tail -40
         # nothing outside staging/<kind> changed in the checkout: the real channel is untouched

@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Contract bootstrap
+
+# Releases ONE -contract data package of .github/contract-bootstraps.txt alone, ahead of the library that owns it: the
+# way past a real build-dependency cycle whose consumer releases first (Open-Mixer/.github#230). It is a caller of
+# build-rpm.yml and build-deb.yml and nothing more: their bootstrap input builds the package from the library's source
+# at the line's commit, and bootstrap-only makes it the release, with every gate of a release (the preflight, the
+# channel-installability check, the signed publish, the install check).
+#
+# It lives here because a release publishes only on a tag push of its caller (docs/release-operations.md, "Publish only
+# by tagging"), the library's own v<version> tag is its full release, and the consumer's release workflow is the one
+# its frozen head carries. A push of the tag bootstrap-<package>-<version> publishes the line; a run by hand is a dry
+# run of the same line and publishes nothing.
+
+on:
+  push:
+    tags: ['bootstrap-*']
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'A package of .github/contract-bootstraps.txt: a dry run of its release'
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+jobs:
+  read:
+    name: Read the bootstrap line
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      package: ${{ steps.line.outputs.package }}
+      version: ${{ steps.line.outputs.version }}
+      entry: ${{ steps.line.outputs.entry }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: line
+        env:
+          PACKAGE: ${{ inputs.package }}
+          REF_NAME: ${{ github.ref_name }}
+        run: .github/scripts/contract-bootstrap-line.sh "$GITHUB_EVENT_NAME" "$REF_NAME" "$PACKAGE" >> "$GITHUB_OUTPUT"
+
+  rpm:
+    needs: read
+    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1
+    with:
+      package-name: ${{ needs.read.outputs.package }}
+      bootstrap: ${{ needs.read.outputs.entry }}
+      bootstrap-only: true
+      source-ref: v${{ needs.read.outputs.version }}
+      publish: ${{ github.event_name == 'push' }}
+      needs-mod-host: false
+      create-github-release: false
+    secrets: inherit
+
+  deb:
+    needs: read
+    uses: Open-Mixer/.github/.github/workflows/build-deb.yml@openmixer-v1
+    with:
+      package-name: ${{ needs.read.outputs.package }}
+      bootstrap: ${{ needs.read.outputs.entry }}
+      bootstrap-only: true
+      source-ref: v${{ needs.read.outputs.version }}
+      publish: ${{ github.event_name == 'push' }}
+      create-github-release: false
+    secrets: inherit

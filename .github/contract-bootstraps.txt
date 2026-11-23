@@ -1,0 +1,9 @@
+# -contract data packages released alone, ahead of the library that owns them, for a real build-dependency cycle whose
+# consumer releases first (Open-Mixer/.github#230; workflows/contract-bootstrap.yml). One line each: package, version,
+# <owner>/<repo>@<full commit> of the library. A tag bootstrap-<package>-<version> on a commit of main releases the line,
+# at a version below the library's own release of it (actions/contract-bootstrap/bootstrap.sh), which replaces it. A
+# line goes when the library's release of its version is served.
+#
+# omx-clap-contract 0.34.0: plugin-hostd-protocol 0.8.0 builds on it (plugin-hostd-protocol#67) and omx-clap-core 0.34.0,
+# which owns it, builds on plugin-hostd-protocol 0.8.0; the commit is the sorting pass's omx-clap-core head.
+omx-clap-contract 0.34.0 Open-Mixer/omx-clap-core@8d263d3a440efd84a7e2bdede41bfe83e5d260ab
