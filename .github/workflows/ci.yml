@@ -73,6 +73,7 @@ jobs:
       - run: tests/release-package-cells.sh
       - run: tests/promote-staged.sh
       - run: tests/release-preflight-served.sh
+      - run: tests/release-floors.sh
       - run: tests/catch-up-plan.sh
       - run: tests/ci-steps.sh
       - run: tests/no-retired-debian-release.sh
