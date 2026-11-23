@@ -289,7 +289,10 @@ omx-clap-core, which builds that package, needs plugin-hostd-protocol; Open-Mixe
 stage-box chain line breaks such a cycle with `bootstrap=`. `build-rpm.yml` and `build-deb.yml` break it with the
 `bootstrap` input, the same mechanism: entries `<owner>/<repo>@<full commit>:<package>`. Each entry is one `-contract`
 data package of the later library, built alone from its source at that commit (`actions/contract-bootstrap`:
-`make install-contract`, packed as the library's packaging declares it). The build job builds it before the
+`make install-contract`, packed as the library's packaging declares it). On Debian that is the library's own snapshot
+build of the package, file for file: only the files its `debian/<package>.install` names, the directories its `.dirs`
+names, and the changelog as `build-deb.sh` renders it (`render-changelog.sh`), so the library's build of the same commit
+and the bootstrap never differ in a path or a byte (#240). The build job builds it before the
 library's own build and installs it in the container, so it meets the build's dependencies. It is never released;
 the library's own release replaces it. The entry must name the commit itself: a short sha, a ref, or an annotated
 tag's object (whose checkout is another commit) is refused before anything is built.
@@ -311,7 +314,8 @@ head carries. The caller reads one line of `.github/contract-bootstraps.txt` (`<
 - `gh workflow run contract-bootstrap.yml -f package=<package>` is a dry run of the same line and publishes nothing.
 
 A line goes when the library's own release of its version is served. `tests/contract-bootstrap.sh static|rpm|deb`
-holds the wiring, the line reader, the package, both version bounds and the commit refusals, each with its sabotage.
+holds the wiring, the line reader, the package, both version bounds and the commit refusals, each with its sabotage;
+its deb arm also builds the fixture library with `build-deb.sh` and holds the two packages equal in every path and byte.
 
 ### The purge
 
