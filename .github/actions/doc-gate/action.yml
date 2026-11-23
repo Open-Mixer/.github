@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas
+name: doc-gate
+description: The documentation gate of a C repository and its Python, doxygen's warnings held to a baseline that only shrinks
+
+# One gate for every OpenMixer repository; a repository keeps only its data (its Doxyfile, baseline, pinned doxygen
+# version, ruff configuration and Python paths) and calls this. The gate proves itself on planted trees first, then
+# reads the caller's checkout, from its root, under the pinned doxygen. The caller has checked the repository out with
+# fetch-depth 0 and installed doxygen (the pinned version) and, with Python paths, ruff. The base is resolved by
+# resolve-base: fetched, verified, refused by name; a compare that is wanted with no base is refused, never skipped.
+
+inputs:
+  doxyfile:
+    description: the Doxyfile
+    default: Doxyfile
+  baseline:
+    description: the baseline, the sorted set of rows the headers still carry
+    default: docs/doxygen-baseline.txt
+  pin:
+    description: the file pinning the doxygen version
+    default: docs/doxygen-version.txt
+  compare:
+    description: hold the baseline, the Doxyfile and the suppressions to the base (true on a pull request; a push has no base)
+    default: 'true'
+  base:
+    description: the base ref when compare is true (origin/${{ github.base_ref }}); empty is refused, never a default
+    default: ''
+  py:
+    description: the Python paths ruff checks, space-separated (none means no Python half)
+    default: ''
+  ruff-config:
+    description: ruff's configuration
+    default: ruff.toml
+  ruff-version:
+    description: the pinned ruff version, required with py (another ruff gives other findings)
+    default: ''
+  accept-config-change:
+    description: the Doxyfile or the ruff configuration changes on purpose in this pull request (red when nothing changed)
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DOXYFILE: ${{ inputs.doxyfile }}
+        BASELINE: ${{ inputs.baseline }}
+        PIN: ${{ inputs.pin }}
+        COMPARE: ${{ inputs.compare }}
+        BASE: ${{ inputs.base }}
+        PY: ${{ inputs.py }}
+        RUFF_CONFIG: ${{ inputs.ruff-config }}
+        RUFF_VERSION: ${{ inputs.ruff-version }}
+        ACCEPT: ${{ inputs.accept-config-change }}
+      working-directory: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        "$GITHUB_ACTION_PATH/doc-gate.sh" --self-test
+        args=(--doxyfile "$DOXYFILE" --baseline "$BASELINE" --pin "$PIN" --ruff-config "$RUFF_CONFIG")
+        [ "$COMPARE" != true ] || args+=(--base "$BASE")
+        for p in $PY; do args+=(--py "$p" --ruff-version "$RUFF_VERSION"); done
+        [ "$ACCEPT" != true ] || args+=(--accept-config-change)
+        "$GITHUB_ACTION_PATH/doc-gate.sh" "${args[@]}"

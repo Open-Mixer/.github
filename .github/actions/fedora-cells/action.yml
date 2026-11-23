@@ -3,7 +3,7 @@
 name: fedora-cells
 description: No Fedora release is written into a job; every job's cells come from release-matrix or check-matrix
 
-# Rule 11-10 runs fc45 beside fc44 in every check; ruling D25 takes every job's cells from release-matrix or
+# Rule 11-10 (fc45 beside fc44) ended 2026-11-19: Fedora 45 alone is built and checked, the fc44 trees stay served; ruling D25 takes every job's cells from release-matrix or
 # check-matrix, whose quick.txt carries both. check.sh says what is red and what is green. A caller's CI:
 #
 #   - uses: actions/checkout@v4

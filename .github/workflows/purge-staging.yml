@@ -16,7 +16,7 @@ name: Purge the staging channel
 #     secrets: inherit
 #
 # Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY, and
-# RPM_GPG_KEY with RPM_GPG_PASSPHRASE, which co-sign the apt index as build-deb.yml has it co-signed.
+# RPM_GPG_KEY with RPM_GPG_PASSPHRASE are no longer read (declared optional so a caller that still passes them does not fail); the index carries one signature.
 
 on:
   workflow_dispatch:
@@ -27,11 +27,11 @@ on:
         description: 'The channel repository whose staging/ is emptied'
       fedora-versions:
         type: string
-        default: '["44", "45"]'
+        default: '["45"]'
         description: 'JSON array of the Fedora releases whose empty staging index must exist'
       suite-matrix:
         type: string
-        default: '["bookworm", "trixie"]'
+        default: '["trixie"]'
         description: 'JSON array of the Debian releases whose empty staging index must exist'
       reason:
         type: string
@@ -49,11 +49,11 @@ on:
         description: 'The channel repository whose staging/ is emptied'
       fedora-versions:
         type: string
-        default: '["44", "45"]'
+        default: '["45"]'
         description: 'JSON array of the Fedora releases whose empty staging index must exist'
       suite-matrix:
         type: string
-        default: '["bookworm", "trixie"]'
+        default: '["trixie"]'
         description: 'JSON array of the Debian releases whose empty staging index must exist'
       reason:
         type: string
@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
-      image: fedora:44
+      image: fedora:45
     # the publishes of this organisation to the channel run in this group; the purge waits for them
     concurrency:
       group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}
@@ -121,9 +121,6 @@ jobs:
           kind: deb
           sign: ${{ !inputs.dry-run }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
-          # the apt index is co-signed by the original key, as publish-debs signs it
-          cosign-key: ${{ secrets.RPM_GPG_KEY }}
-          cosign-passphrase: ${{ secrets.RPM_GPG_PASSPHRASE }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}

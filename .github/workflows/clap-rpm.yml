@@ -5,17 +5,16 @@ name: CLAP RPMs
 # 1.2.10), for every Fedora release the channel serves and every architecture, proves it in a clean container (it
 # installs from a clean state, pkg-config and a compile see 1.2.10, and it upgrades the Fedora release's own older
 # clap-devel), then publishes it into rpm/ of the Pages repository. 1.2.10 is the CLAP floor of every package of the
-# channel, and Fedora 44 and 45 ship 1.2.7; clap-headers-deb.yml serves the same pin to Debian. Run by hand, once per
+# channel, and Fedora 44 and 45 ship 1.2.7; clap-headers-deb.yml serves the same pin to Debian. Released by a tag, once per
 # change of the spec (no heavy Action on a push or pull request; tags and dispatch only, plus one named lint: a dry-run dispatch is the check of a change to the spec, the pins or this file): a published NEVRA is never rebuilt with new bytes.
 #
-# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+# A push of a tag `clap-headers-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
+# artifact and signs and pushes nothing (docs/release-operations.md, "Publish only by tagging").
 on:
+  push:
+    tags: ['clap-headers-*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Sign and publish; only a run on the main branch publishes'
-        type: boolean
-        default: false
       matrix:
         description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
         type: string
@@ -24,21 +23,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Cancelling is for a pull request only: a tag push or a dispatch is a release run and is never cancelled.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   preflight:
     name: Check the release can publish
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse to publish from anywhere but main
-        if: inputs.publish && github.ref != 'refs/heads/main'
-        run: echo "::error::publish is only for a run on main"; exit 1
-
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/release-preflight
         with:
-          publish: ${{ inputs.publish || false }}
+          publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           require-tag: 'false'
           target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -63,7 +63,7 @@ jobs:
           kind: rpm
           matrix: ${{ inputs.matrix || '' }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          releases: '["44", "45"]'
+          releases: '["45"]'
           arches: '["x86_64", "aarch64"]'
 
   build:
@@ -125,20 +125,20 @@ jobs:
           name: clap-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
   publish:
     name: Sign and publish
     needs: [plan, build]
-    if: github.event_name == 'workflow_dispatch'
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     concurrency:
       group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -150,21 +150,53 @@ jobs:
 
       - name: Read the versions the packages carry
         run: |
-          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc44.x86_64.rpm)" >> "$GITHUB_ENV"
+          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc45.x86_64.rpm)" >> "$GITHUB_ENV"
 
       - uses: ./.github/actions/publish-rpms
         with:
           rpm-dir: collected
           tag: ${{ env.TAG }}
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+
+  publish-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [plan, build]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:45
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clap-rpms-*
+          merge-multiple: true
+          path: collected
+
+      - name: Read the versions the packages carry
+        run: |
+          echo "TAG=clap-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/clap-devel-*.fc45.x86_64.rpm)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: ${{ env.TAG }}
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: clap-unsigned-rpm-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}

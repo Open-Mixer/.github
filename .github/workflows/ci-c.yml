@@ -23,7 +23,7 @@ on:
         required: true
       image:
         type: string
-        default: fedora:44
+        default: fedora:45
       channel:
         description: add the OpenMixer channel before channel-packages
         type: boolean

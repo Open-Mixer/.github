@@ -30,7 +30,7 @@ the one expression form
 
 A release run keeps 30 days; every other run (pull request, lane, dry-run dispatch) keeps 2. The release condition is
 the workflow's own sign that it publishes: `inputs.publish` (and `inputs.staged` in build-rpm.yml and build-deb.yml)
-where the workflow has them, `!inputs.dry-run` in promote-staged.yml, and the tag alone in release-package.yml. A
+where the workflow has them, the tag push in promote-staged.yml, and the tag alone in release-package.yml. A
 reusable workflow reads the caller's `github.ref`, so a caller changes nothing. A repository that calls these and
 uploads its own artifacts uses the same form with its own release condition.
 
@@ -118,17 +118,41 @@ Use a throwaway Pages repository, never the live channel.
 5. Download an RPM or DEB from the GitHub release of the retried run and compare its sha256 with the file the
    channel serves.
 
-## A released version for a new Fedora release
+## Publish only by tagging
 
-The release preflight refuses a version the channel already serves, but only in the trees the release publishes
-into: build-rpm.yml checks the Fedora releases of its `fedora-versions`, build-deb.yml the suites of its
-`suite-matrix`. A version served for fc44 therefore does not block its first fc45 publish.
+Nothing reaches the channel root (the Pages repository), npm or a GitHub release except from a tag push. A run by hand
+(`workflow_dispatch`) may build and dry-run, never publish, and no workflow has a `publish` input to switch that on.
+Re-running a failed tag run keeps its event `push`, so it still publishes.
 
-To give a new Fedora release the packages the others serve, without a version bump, run `publish-fedora.yml` on
-main with the repository, its existing tag and `fedora-versions` (`["45"]`). It checks the tag is annotated and
-verified, builds that commit with the inputs the repository's own release.yml passes, and publishes the named
-releases only; the GitHub release of the tag is left as it is. Publish in dependency order (omx-contract first),
-since each build takes its BuildRequires from the channel's tree of its own Fedora release, and one run at a time.
+The rule is decided by EXACT MATCH, never by evaluating an expression (`tests/publish-only-by-tag.sh`, run by ci.yml,
+which proves itself first on planted trees: every way of publishing red, the allowed shapes green):
+
+1. A job with a publishing step carries the job-level `if:` that is exactly
+   `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')` (whitespace and the `${{ }}` aside). An extra
+   `||` or `&&`, `always()`, an input, or the condition on a step instead of the job is refused, by job name. A step
+   publishes by what it does (`gh release`, `npm publish`, an upload, `curl -T`, a POST or PUT to a releases or uploads
+   API, any `git push`, a `gh api` write, the channel push helper, or a composite action that contains one), not by its
+   name. That is why a job that must also wait on the outcome of jobs that may be skipped has a gate job beside it
+   (`publish-go`, `release-go`, `notify-go`) holding those conditions, and the publishing job needs the gate.
+2. What is not publishing, by proof: a push whose `what` is a literal path under `staging/` (no expression, no `..`,
+   no `//`): the stage builds and the purge of staging. By the owner's staged release cadence rule they feed the next
+   layer and are not the release channel consumers install from. And a call of a composite action whose publishing
+   steps carry one of the three canonical sign gates, when the caller gives it a literal `sign: 'false'` (the dry run,
+   an unsigned tree) or `staging: 'true'` with the staging gate. Any expression where a literal is needed is not a
+   proof and the job needs the exact tag condition.
+
+So `build-rpm.yml` and `build-deb.yml` have `publish-release` (the tag condition alone, sign true, staging false), and
+`publish`, which stages (`staged: true`, `staging: 'true'`) or assembles the unsigned tree (`sign: 'false'`). The package
+workflows (surge-xt, pugl-nanovg, clap, rncbc-v1, mod-host-protocol), `release-package.yml` and `promote-staged.yml` have
+a publishing job under the tag condition and a `-dry-run` job beside it under its negation. Limit: a script of the
+repository itself (not of an action directory) that does the `git push` or the upload is invisible to the gate; the
+shared workflows have none, and a caller repository's own scripts are not scanned (Open-Mixer/.github#132).
+
+`publish-fedora.yml` and `publish-freereac.yml` are removed: they republished an existing tag by hand, which this
+rule forbids. A new Fedora release gets the packages by re-running the tag run of each repository (in dependency
+order, omx-contract first, since each build takes its BuildRequires from the channel's tree of its own Fedora
+release), or by a new version tag. The preflight refuses a version the channel already serves, but only in the
+trees the release publishes into, so a version served for fc44 does not block its first fc45 publish.
 
 ## The staging channel of a release wave
 
@@ -136,6 +160,16 @@ A release wave publishes inner layers before the outer ones build on them. Insid
 for the real channel: its staged run publishes to the staging channel, and the next layer builds, verifies and
 install-tests against it. The real channel gets the whole set once, in the wave's release pass, from the `v<version>`
 tags. The staging channel is per wave and is purged after the pass.
+
+**RULED (owner, 2026-11-23, .github#233):** "the TESTING channel publishes only the
+TESTED platforms — Fedora 45 x86_64 (the stage box's platform) and Zynthian (Debian trixie arm64) — as soon as their
+tests pass; every other cell of the matrix goes to the real channel only when all tests pass (the tag release)." The
+tested platforms are the quick set (`.github/actions/release-matrix/quick.txt`, "The quick set and the full matrix"),
+written once there. So a staged run builds and publishes the quick set and nothing else: `matrix.sh` refuses a staged
+run told `matrix: full`, and one whose caller's matrix holds no quick cell, and takes the quick set whatever
+`OMX_RELEASE_MATRIX` says; the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
+package of any other cell, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
+and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
 ### Where it is
 
@@ -208,8 +242,8 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the quick set (fc44 and fc45 on x86_64, trixie on amd64 and arm64), or the whole
-  matrix when told full ("The quick set and the full matrix" below), against the staging channel,
+  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on arm64), the tested platforms and
+  never more (the ruling above), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
   a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and
@@ -233,15 +267,15 @@ staged.
 ### Promoting a staged version
 
 `promote-staged.yml` makes a staged build the release without building it again, so what the layers above were built
-and verified against is what ships. A repository calls it from a `promote.yml` of its own (dispatched by hand, with
-`contents: write`; the header of `promote-staged.yml` has the caller), with the staged `version` and, when staging
-holds builds of more than one commit of that version, the `commit`.
+and verified against is what ships. A repository calls it from a `promote.yml` of its own (triggered by the push of the tag `v<version>`, with
+`contents: write`; the header of `promote-staged.yml` has the caller). The version is the tag's and the commit is the
+one the tag is on; a dispatch of the caller is a dry run that takes `version` and `commit` as inputs.
 
 1. **Find.** The staging tree must hold the build of that one commit for every Fedora release, Debian suite and
    architecture of the matrix, with its source package, and must cover every release the channel root serves the
-   package for. The commit must be on the default branch, and `v<version>` must be free or already on that commit.
-   A staged build of the quick set does not hold every cell, so it is refused here by name: a version is promoted
-   from a staged run of the full matrix, or released from its tag.
+   package for. The commit must be on the default branch.
+   A staged build of the quick set does not hold every cell, so it is refused here by name. Since a staged run
+   holds the quick set alone (the ruling above), a version whose matrix is wider is released from its tag.
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
    the signed staging index of its suite. Nothing is signed by a promotion.
 3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
@@ -250,13 +284,44 @@ holds builds of more than one commit of that version, the `commit`.
 4. **Prove.** Every promoted file is fetched from the served channel and its SHA256 compared with the staged one
    (`same bytes <sha256> <path>` lines in the run log), then the version installs from the channel root alone in a
    clean container of every release and architecture.
-5. **Tag and release.** Only then: `v<version>` on the commit the staged build recorded, and the GitHub release with
-   the promoted files. The tag is made by the workflow's token, so it starts no tag-triggered release run.
+5. **Release.** Only then: the GitHub release of the tag that started the run, with the promoted files. The workflow
+   never creates the tag.
 
-Any refusal in 1 or 2 leaves the channel as it was. `dry-run: true` stops after assembling an unsigned tree: nothing
-is pushed, tagged or released. A promoted package keeps the version string of its staged build
+Any refusal in 1 or 2 leaves the channel as it was. A run that is not a tag push stops after assembling an unsigned tree: nothing
+is pushed or released. A promoted package keeps the version string of its staged build
 (`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
+
+### A build-dependency cycle: the bootstrap input
+
+Two libraries of a wave can need each other's packages to build (plugin-hostd-protocol needs omx-clap-contract, while
+omx-clap-core, which builds that package, needs plugin-hostd-protocol; Open-Mixer/.github#230). No order satisfies both. A
+stage-box chain line breaks such a cycle with `bootstrap=`. `build-rpm.yml` and `build-deb.yml` break it with the
+`bootstrap` input, the same mechanism: entries `<owner>/<repo>@<full commit>:<package>`. Each entry is one `-contract`
+data package of the later library, built alone from its source at that commit (`actions/contract-bootstrap`:
+`make install-contract`, packed as the library's packaging declares it). The build job builds it before the
+library's own build and installs it in the container, so it meets the build's dependencies. It is never released;
+the library's own release replaces it. The entry must name the commit itself: a short sha, a ref, or an annotated
+tag's object (whose checkout is another commit) is refused before anything is built.
+
+When the consumer has to be **released** before the library, the build container is not enough: the channel must
+serve the package. `bootstrap-only` makes the one bootstrap package the release of the run, with every gate of a
+release (the preflight and its already-served check, channel-installability, the signed publish, the install check),
+and checks out nothing of the calling repository. Its version is the house snapshot form, below the library's own
+release of the same version and above a consumer's floor: rpm `<version>-0.git<commit time>.<short sha>%{?dist}`, deb
+`<version>~git<commit time>.<short sha>`. The library's release of `<version>` supersedes it, and the channel's
+`cells.tsv` records it under `<version>` (`served.sh <package> <version>` answers for it).
+
+`contract-bootstrap.yml` is the caller, here and not in either library. A release publishes only on a tag push of its
+caller; the library's `v<version>` tag is its full release; and the consumer's release workflow is the one its own
+head carries. The caller reads one line of `.github/contract-bootstraps.txt` (`<package> <version>
+<owner>/<repo>@<full commit>`):
+
+- a push of the tag `bootstrap-<package>-<version>` on a commit of main releases that line;
+- `gh workflow run contract-bootstrap.yml -f package=<package>` is a dry run of the same line and publishes nothing.
+
+A line goes when the library's own release of its version is served. `tests/contract-bootstrap.sh static|rpm|deb`
+holds the wiring, the line reader, the package, both version bounds and the commit refusals, each with its sabotage.
 
 ### The purge
 
@@ -284,18 +349,21 @@ pulled copy and pushes nothing.
 
 ## The quick set and the full matrix
 
-A release builds eight cells: Fedora 44 and 45 on x86_64 and aarch64, Debian bookworm and trixie on amd64 and arm64.
+A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
+for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
 | kind | cells |
 |------|-------|
-| rpm  | fc44 x86_64, fc45 x86_64 |
-| deb  | trixie amd64, trixie arm64 |
+| rpm  | fc45 x86_64 |
+| deb  | trixie arm64 |
 
-trixie amd64 joined the set on 2026-11-13: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
+The quick set is the development set: two cells, fc45 x86_64 and trixie arm64 (Debian packages ship for Zynthian, the Pi, alone). The full set (fc45 x86_64 and aarch64, trixie amd64 and arm64) returns at the end of development: one switch, `OMX_RELEASE_MATRIX=full`, no edit anywhere else; the served amd64 trees stay as they are meanwhile.
+
+trixie amd64 joined the set on 2026-11-13 and left it on 2026-11-19 (Debian packages ship for Zynthian alone): the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
 from the deb channel, and with no quick amd64 cell every one of their runs failed on a version the wave had not
-built there. bookworm stays out.
+built there.
 
 The set is written once, in `.github/actions/release-matrix/quick.txt`. `build-rpm.yml` and `build-deb.yml` ask the
 `release-matrix` action in their first job, and the build jobs and the install checks both run for the cells it
@@ -307,7 +375,7 @@ names, no others. The run says which set it builds, and why, in a notice.
 |-----|----------------|----------------------------|---------|--------|
 | any | `quick` or `full` | the input | the input | the input |
 | a tag, or `source-ref` | empty | **full** | quick | full |
-| `staged: true` | empty | **quick** | quick | full |
+| `staged: true` | empty or `quick` | **quick** | quick | quick |
 | `workflow_dispatch`, not a tag | empty | **quick** | quick | full |
 | a pull request, a push to a branch | empty | full | full | full |
 
@@ -318,16 +386,20 @@ names, no others. The run says which set it builds, and why, in a notice.
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
-  `publish-fedora.yml` always passes `full`: a new Fedora release is filled whole.
-- The quick set is cut down to the caller's own matrix and never adds to it. A caller whose own matrix holds no quick
-  cell of a kind builds its full matrix of that kind and says so; a library built for x86_64 alone builds trixie amd64.
+- **A staged run is the quick set, always** (the tested platforms, "The staging channel of a release wave"): a
+  `matrix: full` input is refused, `OMX_RELEASE_MATRIX=full` does not widen it, and a caller whose releases hold no
+  quick cell of a kind is refused rather than given its full matrix.
+- The quick set wins: a caller's architectures only narrow it within the set, and when they leave no cell (an
+  amd64-only caller while the set is trixie arm64) the run builds the set's own cell, never the caller's full matrix. Only
+  a caller whose releases hold no quick cell of a kind builds its full matrix of that kind and says so (a staged run
+  is refused instead).
 
 ### Checks follow the set
 
 A check outside the release workflows (a full-stack install check after the publish, like plugin-hostd's
 `plugin-hostd-full`, or a repository's ordinary CI matrix of containers) covers the cells the set builds and no others
 (ruling D25): while `OMX_RELEASE_MATRIX` is `quick` only the quick cells, and `full` (or the variable unset) adds the
-rest. A cell the channel does not serve for the wave (bookworm) is skipped by reading the variable, never deleted from
+rest. A cell the channel does not serve for the wave is skipped by reading the variable, never deleted from
 the workflow, and comes back with `full`. Without this a check can only fail on a cell the set never built, every quick
 release ends red, and a real failure no longer stands out (Open-Mixer/.github#59).
 
@@ -345,13 +417,13 @@ The `check-matrix` action renders such a matrix. The caller writes its whole mat
         uses: Open-Mixer/.github/.github/actions/check-matrix@openmixer-v1
         with:
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          deb-releases: '["bookworm", "trixie"]'
+          deb-releases: '["trixie"]'
           deb-arches: '["amd64", "arm64"]'
 
   full-deb:
     needs: [deb, checks]
     if: needs.checks.outputs.deb-count != '0'
-    runs-on: ${{ matrix.cell.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.cell.runner }}
     container:
       image: ${{ matrix.cell.image }}
     strategy:
@@ -360,7 +432,15 @@ The `check-matrix` action renders such a matrix. The caller writes its whole mat
         mode: [default, headless]
 ```
 
-Each cell carries its container image (`{"suite": "trixie", "arch": "arm64", "image": "debian:trixie"}`); `images` is
+Each cell carries its container image and the runner of its own architecture (`{"suite": "trixie", "arch": "arm64",
+"image": "debian:trixie", "runner": "ubuntu-24.04-arm"}`). The inputs name the split: `arm-arches` (default `aarch64
+arm64`) and `arm-runner` (default `ubuntu-24.04-arm`) for a cell that needs the ARM runner, `x86-runner` (default
+`ubuntu-latest`) for every other cell; no architecture is written in the script. A caller with its own pool passes the
+expression its x86 jobs already use (`x86-runner: ${{ vars.OMX_RUNNER || 'ubuntu-latest' }}`), so `runs-on: ${{
+matrix.cell.runner }}` keeps the runner those jobs had. The development set's debs are trixie arm64 only, and an amd64
+container resolves an arm64 `-dev` package that dpkg then refuses (omx-panel ci 44563540081). `build-deb.yml` already
+sends its arm64 build and install-check cells to `ubuntu-24.04-arm`, and `build-rpm.yml` and `clap-headers-deb.yml` do
+not read check-matrix, so their runner expressions are untouched. `images` is
 the list of images alone, for a CI job that runs on the runner's own architecture. Unlike a release, a kind whose
 matrix holds no quick cell renders no cell while `quick` (count 0, the job is skipped), never its full matrix. The
 notice names the cells skipped. The cell is a matrix dimension of its own (`matrix.cell`), not an `include`: `include`
@@ -378,19 +458,19 @@ a check uses `check-matrix` (its `images`, or `cells`). Both name what they skip
 
 | Workflow | Primitive | Quick | Full |
 | --- | --- | --- | --- |
-| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie amd64, arm64 | bookworm and trixie, amd64 and arm64 |
-| `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc44 x86_64 | fc44, x86_64 and aarch64 |
-| `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc44 and fc45 x86_64 | fc44 and fc45, x86_64 and aarch64 |
-| `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | bookworm and trixie |
-| `release-package.yml` build, install check, layout | `release-matrix`, `Architecture: all` as above; the oldest release of the set builds it | trixie | bookworm and trixie |
-| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
-| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:44, fedora:45, debian:trixie | and debian:bookworm |
+| `pugl-nanovg-deb.yml`, `mod-host-protocol-deb.yml`, `surge-xt-deb.yml` | `release-matrix` (a build and a publish) | trixie arm64 | trixie, amd64 and arm64 |
+| `pugl-nanovg-rpm.yml`, `surge-xt-rpm.yml` | `release-matrix` | fc45 x86_64 | fc45, x86_64 and aarch64 |
+| `mod-host-protocol-rpm.yml`, `clap-rpm.yml` | `release-matrix` | fc45 x86_64 | fc45, x86_64 and aarch64 |
+| `clap-headers-deb.yml` | `release-matrix`, arch `amd64` standing for an `Architecture: all` package | trixie | trixie |
+| `release-package.yml` build, install check, layout | `release-matrix`, `Architecture: all` as above; the oldest release of the set builds it | trixie | trixie |
+| `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:45, debian:trixie | the same |
+| `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:45, debian:trixie | the same |
 
 A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the quick
 set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
 staging, channel installability) are toolchain arms on an image the quick set always builds, and the test holds each to
 the set. What stays literal, each with its reason, is the `ALLOW` list of the test: the whole matrices the reusable
-workflows declare as input defaults, and the tables of `publish-fedora.yml` and `publish-freereac.yml`, all handed to
+workflows declare as input defaults, all handed to
 `release-matrix`. `promote-staged.yml` is left whole on purpose: it promotes the whole matrix (its collect step refuses
 a staged tree that lacks any cell), so its install checks cover what it promotes.
 
@@ -434,12 +514,14 @@ and `quick-deps.sh` on trees of its own.
 A cell that joins the quick set (trixie amd64, 2026-11-13) has no build of the versions already tagged and served.
 `republish` cannot fill it alone: it rebuilds every cell of the run, and its rebuilt arch-independent packages
 (`all`, `noarch`) and source rpms carry other bytes under the names the channel serves. A **catch-up** fills only
-what is missing:
+what is missing.
 
-```
-gh workflow run release.yml -R Open-Mixer/<repository> --ref main \
-  -f source-ref=v<version> -f publish=true -f catch-up=true
-```
+A catch-up used to be started by hand: `gh workflow run release.yml ... -f source-ref=v<version> -f publish=true
+-f catch-up=true`. **That recipe is retired** by "Publish only by tagging": a dispatch publishes nothing, and a re-run of
+a tag run repeats the inputs of the tag push, which carry no `catch-up`. A catch-up can be a dry run by dispatch (the
+plan and the assembled tree are the proof), and the publish of a missing cell waits for a design that is a tag push
+(the open question is which tag; until then a new version tag fills the cell). The plan, the refusals and the
+publish rules below are unchanged and still tested.
 
 - **The plan.** The first job (`release-matrix`, `matrix.sh`) takes the set's cells as above, reads `<kind>/cells.tsv`
   from the channel repository (the API, not the Pages site, which lags a push), and leaves out every cell the tag's
@@ -489,6 +571,14 @@ one no served architecture's binary matches, which the release gate's newest-onl
 (deb), `tests/arch-all-served-pin.sh` (deb, served pinners) and `tests/noarch-pin.sh` (rpm) reproduce the case on a fixture channel, with the passing arms (every
 architecture built, an older package, the catch-up, a package nothing pins exactly) and a sabotage.
 
+The guard judges only the architectures the release matrix publishes (Open-Mixer/.github#135). It reads them from
+`release-matrix/matrix.sh`, the script the releases take their cells from: `MATRIX_SET` when the run has one, else the
+organisation variable `OMX_RELEASE_MATRIX` (a regeneration such as the prune of the channel repository has no
+`MATRIX_SET` and passes the variable through; without it the matrix is full and every architecture is judged). While the
+matrix is quick no aarch64 rpm is published, so a quick release's noarch packages in the x86_64 trees are not refused
+for aarch64; a skew inside a published architecture stays refused, an empty set is refused by name, and no kept package
+is relabelled in `cells.tsv`. `tests/noarch-pin-matrix-arches.sh` proves each arm, with the architecture filter as its sabotage.
+
 ### A quick release writes the quick trees alone
 
 While the set is `quick` the platforms are the quick cells and nothing else: every other tree keeps what it serves
@@ -525,7 +615,7 @@ publishes it.
 
 | | RPM | DEB |
 | --- | --- | --- |
-| repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch` | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME` |
+| repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch`; `openmixer-testing` and `openmixer-testing-noarch` (the staging channel, disabled, as Fedora's updates-testing) | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME`; `/etc/apt/sources.list.d/openmixer-testing.sources` (the staging channel, trixie, `Enabled: no`, as the RPM's `openmixer-testing`) |
 | key | `/etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer`, the channel's `rpm/RPM-GPG-KEY-openmixer` | `/usr/share/keyrings/openmixer-archive-keyring.asc`, the channel's `deb/openmixer.asc` |
 | stable name | `rpm/openmixer-release.noarch.rpm` (the oldest Fedora release's build; noarch installs on every release) | `deb/openmixer-release.deb` |
 | updates from | `fedora/<release>/noarch/` of the tree: one build per Fedora release of the set, since the dist tag `.fcNN` ties a build to its release | `debian/<suite>/all/` of the tree |
@@ -534,6 +624,38 @@ The DEB ships one source per Debian release the channel serves (bookworm, trixie
 running system at configure time: the stable `.deb` is one file for every release, and the sources stay
 package contents, so an upgrade changes them. A system whose codename the channel does not serve fails the
 install. A system upgraded to another Debian release relinks with `dpkg-reconfigure openmixer-release`.
+
+### The testing repositories
+
+openmixer-release installs the staging channel of the release wave as a testing repository, present and disabled, as
+`fedora-repos` installs updates-testing: what a wave has proved, before its release tag publishes it. Turning it on is
+the tester's whole opt-in, and turning it off returns the machine to the real channel at the next upgrade (apt and dnf do
+not downgrade what is installed).
+
+| | RPM | DEB |
+| --- | --- | --- |
+| file | `openmixer-testing`, `openmixer-testing-noarch` in `/etc/yum.repos.d/openmixer.repo` (`%config(noreplace)`) | `/etc/apt/sources.list.d/openmixer-testing.sources`, a file postinst writes from `/usr/share/openmixer-release/testing/openmixer-testing-<suite>.sources` |
+| tree | `staging/rpm/fedora/$releasever/`: fc45 x86_64 and noarch, the tested platform | `staging/deb/debian/trixie/`: arm64 and all, the tested platform (Zynthian, the Pi); an amd64 machine finds only the `all` packages there, and bookworm gets no testing source |
+| on, once | `dnf --enablerepo=openmixer-testing --enablerepo=openmixer-testing-noarch upgrade` | none: apt has no per-command switch |
+| on | `dnf config-manager setopt openmixer-testing.enabled=1 openmixer-testing-noarch.enabled=1` | `sed -i 's/^Enabled: no$/Enabled: yes/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
+| off | the same with `enabled=0` | `sed -i 's/^Enabled: yes$/Enabled: no/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
+
+An upgrade of openmixer-release keeps the choice: the RPM file is not replaced, and the DEB's postinst rewrites the
+source from the package's copy (so a new URI or key arrives with the upgrade) and keeps its `Enabled` line, `yes` only
+when it read exactly `Enabled: yes`. Removing the package removes the testing source with the real one.
+
+No priority and no apt pin: enabled, the newer build wins, as with updates-testing. The staged versions sort above the
+release of the same version (`+git<commit time>.<sha>`, `.git<commit time>.<sha>`), so a staged build is taken without
+a pin, and the released build of a later version is taken over it as soon as the real channel serves it. A pin above
+500 would hold a tester on a staged build after the real channel moved past it; a disabled deb822 source is not read at
+all, so it cannot win whatever the pins say. The `Pin-Priority: 600` of `openmixer-staging.pref` is the CI's
+(`add-staging.sh`, "The files a machine adds"), where a build must take the staged dependency even over a higher
+released one. A machine has one or the other: the testing source and `openmixer-staging.sources` name the same tree, so
+both enabled is the same source twice.
+
+`install-check.sh` refuses a machine where a testing repository is missing or enabled; on Debian it also enables the
+testing source once, requires its signed index to load with the shipped key and no warning, and requires apt to read
+nothing from it once disabled again.
 
 The key is the file the channel serves at build time, read over HTTPS from `www.openmixer.org`, never kept in
 this repository: a key added to the channel (channel-keys.sh) reaches machines by the next release of the
@@ -557,3 +679,55 @@ until 1-5, 2026-11-15; the rpm job builds one RPM per release of the set since).
 
 `add-openmixer` is the action the shared workflows use to add the channel to a build or install-check
 container: it installs the stable name from `base-url`.
+
+## A channel that is not OpenMixer's (FreeREAC)
+
+`build-rpm.yml` and `build-deb.yml` publish into the channel named by `target-repo` and `base-url`. The key and the
+repository file are inputs too, and default to OpenMixer's, so a caller that passes none changes nothing:
+
+| input | default | FreeREAC passes |
+| --- | --- | --- |
+| `target-repo`, `base-url` | `Open-Mixer/open-mixer.github.io`, `https://www.openmixer.org` | `FreeREAC/freereac.github.io`, `https://freereac.github.io` |
+| `key-file` | `RPM-GPG-KEY-openmixer` / `openmixer.asc` | `RPM-GPG-KEY-freereac` / `freereac.asc` |
+| `committed-keys` | `true` | `false`: OpenMixer's committed keys are never served by another channel |
+| `signing-fingerprint` | none | the channel's one key: a secret mapped to another key refuses the run before anything is signed |
+| `repo-file` (rpm) | `packaging/openmixer-release/openmixer.repo` | `packaging/freereac-release/freereac.repo` |
+| `label` (deb) | `OpenMixer` | `FreeREAC` |
+
+The signing key and its passphrase reach the workflow under the declared secret names; the caller maps its own secrets onto
+them (`OPENMIXER_PACKAGES_SIGNING_KEY: ${{ secrets.RPM_GPG_KEY }}`, `PACKAGES_SIGNING_PASSPHRASE: ${{ secrets.RPM_GPG_PASSPHRASE }}`).
+A channel serves exactly one key and the two channels share none. `tests/channel-profile.sh` publishes through both profiles.
+
+The two channels are independent (owner ruling 2026-11-23, .github#224): neither serves a package of the other,
+openmixer-release requires nothing FreeREAC's channel serves (1-10), `add-openmixer` installs one channel's release
+package per call, and the installability gate reads no channel but the one it judges. A job that needs both adds each;
+a REAC rig adds FreeREAC's repository (`freereac-release`) for reac-pw.
+
+The tree scripts refuse the crossing (`publish-rpms/channel-owner.sh`, `tests/channel-owner.sh`): a run of one house
+organisation publishing into the other's channel, or a package whose URL (rpm) or Homepage (deb) names one
+(`github.com/FreeREAC/`, `freereac.github.io`; `github.com/Open-Mixer/`, `openmixer.org`) going into the other's, is
+refused before anything is placed. FreeREAC's packages had reached this channel two ways: FreeREAC release.yml files that
+named no `target-repo` (libreac and reac-pw until 2026-11-18) took the default, `Open-Mixer/open-mixer.github.io`, and a
+republish workflow of this repository (publish-freereac.yml, removed) built libreac 1.11.0 and reac-stageboxes 0.1.0 for
+it; the freereac-release mirror (removed) was the third.
+
+### Taking FreeREAC's packages out of the channel
+
+The channel's prune cannot drop them: openmixer-release 1-9, still served, requires freereac-release.
+`remove-freereac-packages.yml` does, and removes nothing else: `tools/remove-freereac-packages.sh` takes out the files whose
+own header names a FreeREAC source (freereac-release, libreac, reac-pw, reac-stageboxes, a constant) and FreeREAC as home,
+and only where FreeREAC's channel serves the same package at the same version or newer for the cell; every other one is
+kept and printed as a gap. It makes the metadata again with the publish's tree scripts, signs it, and refuses any other
+change (`tests/remove-freereac-packages.sh`). Once openmixer-release 1-10 is published, the tag runs it, from main (a
+dispatch is a dry run):
+
+```
+git tag -s -m 'remove-freereac-packages-1' remove-freereac-packages-1 origin/main
+git push origin remove-freereac-packages-1
+```
+
+A dry run on 2026-11-23 removed 33 rpm and 11 deb files and kept 22 for gaps: the fc44/fc45 source rpms (FreeREAC's
+channel serves no SRPMS) and every bookworm deb (it serves no bookworm). Those stay until FreeREAC serves them or the owner
+rules them dropped; a second tag then removes them. openmixer-release 1-9 is left uninstallable from this channel alone,
+which dnf and apt never offer while 1-10 is the newest. The workflow, the script and the test are deleted once nothing is
+left to remove.

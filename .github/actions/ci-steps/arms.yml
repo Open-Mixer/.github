@@ -1,0 +1,306 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+#
+# The reader's table: one row per case, grouped by arm. arms.py reads it, and nothing else states these cases.
+#
+#   arm       the arm's number (the README names each)
+#   name      what the row shows
+#   run       the step's script; `step`, `job` and `workflow` add keys at their level, `steps` replaces the one step
+#   want      what the reader must say of the command tests/x.sh:
+#               runs: always       every green run of the step executed it
+#                     conditional  the step can go green without having executed it
+#                     never        it is written as a command and cannot execute
+#               gates: true        its failure fails the job
+#             or `absent` (the text is no command) or `unread` (the step's shell is not one the reader reads)
+#   oracle    rows that only hold a script (and a shell) are also executed by the real shell, with tests/x.sh a stub
+#             that succeeds and then one that fails, and `want` is held to what the shell did; `oracle: false` opts a row
+#             out with its reason beside it, `oracle: {env: {...}}` gives the variables that make a condition hold
+
+# ---- 1: heredoc and here-string
+- {arm: 1, name: a heredoc body is data, want: absent, run: "cat <<EOF\ntests/x.sh\nEOF\n"}
+- {arm: 1, name: the command after a heredoc runs, want: {runs: always, gates: true}, run: "cat <<EOF\ndata\nEOF\ntests/x.sh\n"}
+- {arm: 1, name: a here-string is not a heredoc, want: {runs: always, gates: true}, run: "grep -q a <<<abc\ntests/x.sh\n"}
+- {arm: 1, name: "a here-string word that looks like a delimiter opens no heredoc", want: {runs: always, gates: true}, run: "cat <<<EOF\ntests/x.sh\ntrue EOF\n"}
+- {arm: 1, name: "<<- closes on a tab-indented delimiter", want: {runs: always, gates: true}, run: "cat <<-EOF\n\tdata\n\tEOF\ntests/x.sh\n"}
+- {arm: 1, name: "the body of <<- is data", want: absent, run: "cat <<-EOF\n\ttests/x.sh\n\tEOF\n"}
+- {arm: 1, name: "<< does not close on a tab-indented delimiter", want: absent, run: "cat <<EOF\n\tEOF\ntests/x.sh\nEOF\n"}
+- {arm: 1, name: a quoted delimiter closes, want: {runs: always, gates: true}, run: "cat <<'EOF'\ndata\nEOF\ntests/x.sh\n"}
+- {arm: 1, name: a double-quoted delimiter closes, want: {runs: always, gates: true}, run: "cat <<\"EOF\"\ndata\nEOF\ntests/x.sh\n"}
+- {arm: 1, name: "a substitution in an unquoted heredoc body runs, its status dropped", want: {runs: always, gates: false}, run: "cat <<EOF\n$(tests/x.sh)\nEOF\n"}
+- {arm: 1, name: a substitution in a quoted heredoc body is data, want: absent, run: "cat <<'EOF'\n$(tests/x.sh)\nEOF\n"}
+- {arm: 1, name: two heredocs on one line are read in order, want: absent, run: "cat <<A; cat <<B\none\nA\ntests/x.sh\nB\n"}
+- {arm: 1, name: "a shift in $(( )) with spaces is no heredoc", want: {runs: always, gates: true}, run: "n=2\necho $(( 1 << n ))\ntests/x.sh\n"}
+- {arm: 1, name: "a shift in (( )) is no heredoc", want: {runs: always, gates: true}, run: "n=2\n(( m = 1 << n ))\ntests/x.sh\n"}
+- {arm: 1, name: a heredoc fed to bash is commands, want: {runs: always, gates: true}, run: "bash -e <<'EOF'\ntests/x.sh\ntrue\nEOF\n"}
+- {arm: 1, name: "a heredoc fed to bash without -e keeps only its last status", want: {runs: always, gates: false}, run: "bash <<'EOF'\ntests/x.sh\ntrue\nEOF\n"}
+- {arm: 1, name: "a heredoc fed to another program is data", want: absent, run: "python3 - <<'EOF'\ntests/x.sh\nEOF\n", oracle: false}  # python would read the body as python
+- arm: 1
+  name: a heredoc left open ends with its step
+  want: {runs: always, gates: true}
+  steps:
+    - run: "cat <<EOF\nnever closed\n"
+    - run: tests/x.sh
+- arm: 1
+  name: "a heredoc inside $( ) with a quote in its body ends the substitution at its own parenthesis"
+  want: {runs: always, gates: true}
+  run: "out=$(cat <<'EOF'\nit's (\nEOF\n)\ntests/x.sh\n"
+
+# ---- 2: continuation lines
+- {arm: 2, name: a command continued over two lines, want: {runs: always, gates: true}, run: "bash \\\n  tests/x.sh\n"}
+- {arm: 2, name: an argument on a continuation line is no command, want: absent, run: "echo hello \\\n  tests/x.sh\n"}
+- {arm: 2, name: a backslash ending a comment continues nothing, want: {runs: always, gates: true}, run: "# a note \\\ntests/x.sh\n"}
+- {arm: 2, name: "a list continued after &&", want: {runs: always, gates: true}, run: "cd . && \\\n  tests/x.sh\n"}
+- {arm: 2, name: a newline inside quotes starts no command, want: absent, run: "echo 'a\ntests/x.sh'\n"}
+- arm: 2
+  name: "a plain YAML scalar folds the next line in: the backslash then escapes a space and the word is another command"
+  want: absent
+  step:
+    run: cd . && \
+      tests/x.sh
+  oracle: false  # the table's `run` key is what the oracle executes; the reader's own row shows the folded word
+
+# ---- 3: || true
+- {arm: 3, name: "|| true takes the failure", want: {runs: always, gates: false}, run: "tests/x.sh || true\n"}
+- {arm: 3, name: "|| : takes the failure", want: {runs: always, gates: false}, run: "tests/x.sh || :\n"}
+- {arm: 3, name: "|| exit 0 takes the failure", want: {runs: always, gates: false}, run: "tests/x.sh || exit 0\n"}
+- {arm: 3, name: "|| echo takes the failure", want: {runs: always, gates: false}, run: "tests/x.sh || echo failed\n"}
+- {arm: 3, name: "|| exit 1 keeps it", want: {runs: always, gates: true}, run: "tests/x.sh || exit 1\ntrue\n"}
+- {arm: 3, name: "|| exit 2 keeps it", want: {runs: always, gates: true}, run: "tests/x.sh || exit 2\ntrue\n"}
+- {arm: 3, name: "|| false keeps it", want: {runs: always, gates: true}, run: "tests/x.sh || false\ntrue\n"}
+- {arm: 3, name: "a bare || exit leaves with the failed status", want: {runs: always, gates: true}, run: "tests/x.sh || exit\ntrue\n"}
+- {arm: 3, name: "|| true in the middle of a block", want: {runs: always, gates: false}, run: "echo before\ntests/x.sh || true\necho after\n"}
+- {arm: 3, name: "|| true after && takes both failures", want: {runs: always, gates: false}, run: "tests/x.sh && echo ok || true\n"}
+
+# ---- 4: continue-on-error
+- {arm: 4, name: a step that continues on error, want: {runs: always, gates: false}, step: {run: tests/x.sh, continue-on-error: true}}
+- {arm: 4, name: "a step that continues on error, as an expression", want: {runs: always, gates: false}, step: {run: tests/x.sh, continue-on-error: "${{ true }}"}}
+- {arm: 4, name: a job that continues on error, want: {runs: always, gates: false}, job: {continue-on-error: true}, run: tests/x.sh}
+- {arm: 4, name: "continue-on-error: false gates", want: {runs: always, gates: true}, step: {run: tests/x.sh, continue-on-error: false}}
+- {arm: 4, name: "continue-on-error from the matrix may continue", want: {runs: always, gates: false}, step: {run: tests/x.sh, continue-on-error: "${{ matrix.experimental }}"}}
+
+# ---- 5: | tee without pipefail
+- {arm: 5, name: before a pipe under the default shell, want: {runs: always, gates: false}, run: "tests/x.sh | tee log\n"}
+- {arm: 5, name: "before |& under the default shell", want: {runs: always, gates: false}, run: "tests/x.sh |& tee log\n"}
+- {arm: 5, name: "before a pipe after set -o pipefail", want: {runs: always, gates: true}, run: "set -o pipefail\ntests/x.sh | tee log\n"}
+- {arm: 5, name: "before a pipe after set -euo pipefail", want: {runs: always, gates: true}, run: "set -euo pipefail\ntests/x.sh | tee log\n"}
+- {arm: 5, name: "pipefail in the step's shell", want: {runs: always, gates: true}, step: {shell: "bash -eo pipefail {0}"}, run: "tests/x.sh | tee log\n"}
+- {arm: 5, name: "shell: sh has no pipefail", want: {runs: always, gates: false}, step: {shell: sh}, run: "tests/x.sh | tee log\n"}
+- {arm: 5, name: the last command of a pipe, want: {runs: always, gates: true}, run: "echo a | tests/x.sh\n"}
+- {arm: 5, name: "pipefail then || true", want: {runs: always, gates: false}, step: {shell: bash}, run: "tests/x.sh | tee log || true\n"}
+
+# ---- 6: bash -n
+- {arm: 6, name: "bash -n only parses", want: {runs: never, gates: false}, run: "bash -n tests/x.sh\n"}
+- {arm: 6, name: "bash -en only parses", want: {runs: never, gates: false}, run: "bash -en tests/x.sh\n"}
+- {arm: 6, name: "sh -n only parses", want: {runs: never, gates: false}, run: "sh -n tests/x.sh\n"}
+- {arm: 6, name: "bash -o noexec only parses", want: {runs: never, gates: false}, run: "bash -o noexec tests/x.sh\n"}
+- {arm: 6, name: "bash -x runs", want: {runs: always, gates: true}, run: "bash -x tests/x.sh\n"}
+- {arm: 6, name: "an -n after the script is the script's own argument", want: {runs: always, gates: true}, run: "bash tests/x.sh -n\n"}
+
+# ---- 7: a backgrounded &
+- {arm: 7, name: a backgrounded command, want: {runs: always, gates: false}, run: "tests/x.sh &\n"}
+- {arm: 7, name: "backgrounded, then a bare wait", want: {runs: always, gates: false}, run: "tests/x.sh &\nwait\n"}
+- {arm: 7, name: a backgrounded list, want: {runs: always, gates: false}, run: "tests/x.sh && true &\nwait\n"}
+- {arm: 7, name: "2>&1 is a redirection", want: {runs: always, gates: true}, run: "tests/x.sh 2>&1\ntrue\n"}
+- {arm: 7, name: "&> is a redirection", want: {runs: always, gates: true}, run: "tests/x.sh &>log\ntrue\n"}
+- {arm: 7, name: "the command after a backgrounded one", want: {runs: always, gates: true}, run: "sleep 0 & tests/x.sh\ntrue\n"}
+
+# ---- 8: || { exit 1; }
+- {arm: 8, name: "a group ending in exit 1 keeps the failure", want: {runs: always, gates: true}, run: "tests/x.sh || { echo bad; exit 1; }\ntrue\n"}
+- {arm: 8, name: a group that succeeds takes it, want: {runs: always, gates: false}, run: "tests/x.sh || { echo ok; }\ntrue\n"}
+- {arm: 8, name: "a subshell ending in exit 3 keeps it", want: {runs: always, gates: true}, run: "tests/x.sh || ( echo bad; exit 3 )\ntrue\n"}
+- {arm: 8, name: a subshell that succeeds takes it, want: {runs: always, gates: false}, run: "tests/x.sh || (echo ok)\ntrue\n"}
+- {arm: 8, name: a group spread over lines keeps it, want: {runs: always, gates: true}, run: "tests/x.sh || {\n  echo bad\n  exit 1\n}\ntrue\n"}
+- {arm: 8, name: a group spread over lines that succeeds takes it, want: {runs: always, gates: false}, run: "tests/x.sh || {\n  echo bad\n}\ntrue\n"}
+- {arm: 8, name: "a group ending in false keeps it", want: {runs: always, gates: true}, run: "tests/x.sh || { echo bad; false; }\ntrue\n"}
+- {arm: 8, name: "a group ending in exit 0 takes it", want: {runs: always, gates: false}, run: "tests/x.sh || { echo bad; exit 0; }\ntrue\n"}
+- {arm: 8, name: "a subshell's exit 3 without errexit leaves only a status", want: {runs: always, gates: false}, step: {shell: "bash {0}"}, run: "tests/x.sh || ( exit 3 )\ntrue\n"}
+- {arm: 8, name: "a group's exit 1 without errexit still leaves", want: {runs: always, gates: true}, step: {shell: "bash {0}"}, run: "tests/x.sh || { exit 1; }\ntrue\n"}
+
+# ---- 9: env, command, timeout, bash -e prefixes
+- {arm: 9, name: env with an assignment, want: {runs: always, gates: true}, run: "env X=1 tests/x.sh\n"}
+- {arm: 9, name: env with options, want: {runs: always, gates: true}, run: "env -u HOME X=1 tests/x.sh\n"}
+- {arm: 9, name: command, want: {runs: always, gates: true}, run: "command tests/x.sh\n"}
+- {arm: 9, name: "command -v asks, it does not run", want: absent, run: "command -v tests/x.sh\n"}
+- {arm: 9, name: timeout, want: {runs: always, gates: true}, run: "timeout 60 tests/x.sh\n"}
+- {arm: 9, name: timeout with options, want: {runs: always, gates: true}, run: "timeout -k 5 60 tests/x.sh\n"}
+- {arm: 9, name: "bash -e", want: {runs: always, gates: true}, run: "bash -e tests/x.sh\n"}
+- {arm: 9, name: "bash -ex -o pipefail", want: {runs: always, gates: true}, run: "bash -ex -o pipefail tests/x.sh\n"}
+- {arm: 9, name: "bash -c", want: {runs: always, gates: true}, run: "bash -c 'tests/x.sh'\n"}
+- {arm: 9, name: "bash -c without -e keeps only its last status", want: {runs: always, gates: false}, run: "bash -c 'tests/x.sh; true'\n"}
+- {arm: 9, name: "bash -ec stops at the failure", want: {runs: always, gates: true}, run: "bash -ec 'tests/x.sh; true'\n"}
+- {arm: 9, name: "bash -c with || true inside", want: {runs: always, gates: false}, run: "bash -c 'tests/x.sh || true'\n"}
+- {arm: 9, name: an assignment before the command, want: {runs: always, gates: true}, run: "X=1 tests/x.sh\n"}
+- {arm: 9, name: every prefix at once, want: {runs: always, gates: true}, run: "timeout -k 5 60 env X=1 bash -e tests/x.sh\n"}
+- {arm: 9, name: sudo, want: {runs: always, gates: true}, run: "sudo -E tests/x.sh\n", oracle: false}  # no sudo in a test
+- {arm: 9, name: "a prefix before echo runs echo", want: absent, run: "env X=1 echo tests/x.sh\n"}
+- {arm: 9, name: "a prefixed command then || true", want: {runs: always, gates: false}, run: "timeout 60 tests/x.sh || true\n"}
+
+# ---- 10: exec, source, time, ( subshell
+- {arm: 10, name: exec, want: {runs: always, gates: true}, run: "exec tests/x.sh\n"}
+- {arm: 10, name: "exec without errexit: its status is the step's", want: {runs: always, gates: true}, step: {shell: "bash {0}"}, run: "exec tests/x.sh\ntrue\n"}
+- {arm: 10, name: nothing runs after exec, want: {runs: never, gates: false}, run: "exec true\ntests/x.sh\n"}
+- {arm: 10, name: nothing runs after exit, want: {runs: never, gates: false}, run: "exit 0\ntests/x.sh\n"}
+- {arm: 10, name: source, want: {runs: always, gates: true}, run: "source tests/x.sh\n"}
+- {arm: 10, name: the dot command, want: {runs: always, gates: true}, run: ". tests/x.sh\n"}
+- {arm: 10, name: time, want: {runs: always, gates: true}, run: "time tests/x.sh\n"}
+- {arm: 10, name: "time before a pipe, no pipefail", want: {runs: always, gates: false}, run: "time tests/x.sh | tee log\n"}
+- {arm: 10, name: a subshell, want: {runs: always, gates: true}, run: "( tests/x.sh )\ntrue\n"}
+- {arm: 10, name: "a subshell with && inside, alone", want: {runs: always, gates: true}, run: "(cd . && tests/x.sh)\n"}
+- {arm: 10, name: "a subshell stops at the failure under errexit", want: {runs: always, gates: true}, run: "( tests/x.sh; true )\ntrue\n"}
+- {arm: 10, name: "a subshell without errexit keeps only its last status", want: {runs: always, gates: false}, step: {shell: "bash {0}"}, run: "( tests/x.sh; true )\n"}
+- {arm: 10, name: "|| true inside a subshell", want: {runs: always, gates: false}, run: "( tests/x.sh || true )\n"}
+- {arm: 10, name: "|| true after a subshell", want: {runs: always, gates: false}, run: "( tests/x.sh ) || true\n"}
+- {arm: 10, name: "|| true after a subshell switches errexit off inside it", want: {runs: always, gates: false}, run: "( tests/x.sh; true ) || true\n"}
+- {arm: 10, name: a brace group, want: {runs: always, gates: true}, run: "{ tests/x.sh; true; }\ntrue\n"}
+- {arm: 10, name: "a negated command never fails the step", want: {runs: always, gates: false}, run: "! tests/x.sh\ntrue\n"}
+
+# ---- 11: job- and step-level if
+- {arm: 11, name: "a step with if: false", want: {runs: never, gates: false}, step: {run: tests/x.sh, if: false}}
+- {arm: 11, name: "a step with if: ${{ false }}", want: {runs: never, gates: false}, step: {run: tests/x.sh, if: "${{ false }}"}}
+- {arm: 11, name: "a step with if: ${{false}}", want: {runs: never, gates: false}, step: {run: tests/x.sh, if: "${{false}}"}}
+- {arm: 11, name: "a step with if: 'false'", want: {runs: never, gates: false}, step: {run: tests/x.sh, if: "false"}}
+- {arm: 11, name: "a job with if: false", want: {runs: never, gates: false}, job: {if: false}, run: tests/x.sh}
+- {arm: 11, name: "a job with if: ${{ false }}", want: {runs: never, gates: false}, job: {if: "${{ false }}"}, run: tests/x.sh}
+- {arm: 11, name: a step with a real condition runs when it holds, want: {runs: always, gates: true, when: ["github.event_name == 'pull_request'"]}, step: {run: tests/x.sh, if: "github.event_name == 'pull_request'"}}
+- {arm: 11, name: a job with a real condition runs when it holds, want: {runs: always, gates: true, when: ["github.event_name != 'pull_request'"]}, job: {if: "github.event_name != 'pull_request'"}, run: tests/x.sh}
+- {arm: 11, name: the step after a disabled one runs, want: {runs: always, gates: true}, steps: [{run: "true", if: false}, {run: tests/x.sh}]}
+
+# ---- 12: a quoted ;
+- {arm: 12, name: "a ; inside double quotes", want: absent, run: "echo \"a; tests/x.sh\"\n"}
+- {arm: 12, name: "a && inside single quotes", want: absent, run: "echo 'a && tests/x.sh'\n"}
+- {arm: 12, name: "an escaped ;", want: absent, run: "echo a\\; tests/x.sh\n"}
+- {arm: 12, name: "a ; outside quotes", want: {runs: always, gates: true}, run: "echo \"a\"; tests/x.sh\n"}
+- {arm: 12, name: "a # inside quotes starts no comment", want: {runs: always, gates: true}, run: "echo \"a # b\"; tests/x.sh\n"}
+- {arm: 12, name: "a # inside a word starts no comment", want: {runs: always, gates: true}, run: "echo a#b; tests/x.sh\n"}
+- {arm: 12, name: "a quoted path is the command", want: {runs: always, gates: true}, run: "sh \"tests/x.sh\"\n"}
+- {arm: 12, name: "a ; inside $'...'", want: absent, run: "echo $'a\\'; tests/x.sh'\n"}
+
+# ---- 13: set +e
+- {arm: 13, name: "set +e before the command", want: {runs: always, gates: false}, run: "set +e\ntests/x.sh\ntrue\n"}
+- {arm: 13, name: "set +e, and the command is the step's last: its status is the step's", want: {runs: always, gates: true}, run: "set +e\ntests/x.sh\n"}
+- {arm: 13, name: "set +o errexit", want: {runs: always, gates: false}, run: "set +o errexit\ntests/x.sh\ntrue\n"}
+- {arm: 13, name: "set -e only after the command", want: {runs: always, gates: false}, run: "set +e\ntests/x.sh\nset -e\ntrue\n"}
+- {arm: 13, name: "set -e again before it", want: {runs: always, gates: true}, run: "set +e\nset -e\ntests/x.sh\ntrue\n"}
+- {arm: 13, name: "set +e in a subshell stays there", want: {runs: always, gates: true}, run: "( set +e )\ntests/x.sh\ntrue\n"}
+- {arm: 13, name: "set +e in a branch may have run", want: {runs: always, gates: false}, run: "if [ -n \"$NOPE\" ]; then set +e; fi\ntests/x.sh\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 13, name: "set +e, then || exit 1 keeps it", want: {runs: always, gates: true}, run: "set +e\ntests/x.sh || exit 1\ntrue\n"}
+- {arm: 13, name: "set +eu with other letters", want: {runs: always, gates: false}, run: "set +eu\ntests/x.sh\ntrue\n"}
+
+# ---- 14: $(x) inside a command
+- {arm: 14, name: a substitution as an argument, want: {runs: always, gates: false}, run: "echo \"$(tests/x.sh)\"\ntrue\n"}
+- {arm: 14, name: "a substitution as an argument, the step's last line", want: {runs: always, gates: false}, run: "echo $(tests/x.sh)\n"}
+- {arm: 14, name: a bare assignment keeps the status, want: {runs: always, gates: true}, run: "v=$(tests/x.sh)\ntrue\n"}
+- {arm: 14, name: export drops the status, want: {runs: always, gates: false}, run: "export v=$(tests/x.sh)\ntrue\n"}
+- {arm: 14, name: backticks, want: {runs: always, gates: false}, run: "echo `tests/x.sh`\ntrue\n"}
+- {arm: 14, name: "inside single quotes it is text", want: absent, run: "echo '$(tests/x.sh)'\n"}
+- {arm: 14, name: "bash clears errexit inside a substitution", want: {runs: always, gates: false}, run: "v=$(tests/x.sh; true)\ntrue\n"}
+- {arm: 14, name: "a pipe inside an assignment's substitution", want: {runs: always, gates: false}, run: "v=$(tests/x.sh | cat)\ntrue\n"}
+- {arm: 14, name: a process substitution, want: {runs: always, gates: false}, run: "cat <(tests/x.sh)\ntrue\n"}
+- {arm: 14, name: "an assignment before a command drops the status", want: {runs: always, gates: false}, run: "v=$(tests/x.sh) true\ntrue\n"}
+- {arm: 14, name: "of two substitutions in one assignment, the first is dropped", want: {runs: always, gates: false}, run: "v=$(tests/x.sh)$(true)\ntrue\n"}
+- {arm: 14, name: "a substitution inside ${ } runs", want: {runs: always, gates: false}, run: "echo \"${NOPE:-$(tests/x.sh)}\"\ntrue\n"}
+
+# ---- 15: cond && x
+- {arm: 15, name: "cond && x in a block: the step goes green without x", want: {runs: conditional, gates: true}, run: "[ -n \"$NOPE\" ] && tests/x.sh\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "cond && x as the step's last line: a false cond fails the step", want: {runs: always, gates: true}, run: "[ -z \"$NOPE\" ] && tests/x.sh\n"}
+- {arm: 15, name: "cd && x in a block is the same hole", want: {runs: conditional, gates: true}, run: "cd \"${NOPE:-/nonexistent}\" 2>/dev/null && tests/x.sh\ntrue\n", oracle: {gates-env: {NOPE: "."}}}
+- {arm: 15, name: "cond && x || exit 1", want: {runs: always, gates: true}, run: "[ -z \"$NOPE\" ] && tests/x.sh || exit 1\ntrue\n"}
+- {arm: 15, name: "x && echo in a block: errexit does not act before &&", want: {runs: always, gates: false}, run: "tests/x.sh && echo ok\ntrue\n"}
+- {arm: 15, name: "x && echo as the step's last line", want: {runs: always, gates: true}, run: "tests/x.sh && echo ok\n"}
+- {arm: 15, name: "cond || x", want: {runs: conditional, gates: true}, run: "[ -z \"$NOPE\" ] || tests/x.sh\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "if cond; then x", want: {runs: conditional, gates: true}, run: "if [ -n \"$NOPE\" ]; then tests/x.sh; fi\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "x as the if condition never fails the step", want: {runs: always, gates: false}, run: "if tests/x.sh; then echo ok; fi\ntrue\n"}
+- {arm: 15, name: "the else branch", want: {runs: conditional, gates: true}, run: "if [ -z \"$NOPE\" ]; then true; else tests/x.sh; fi\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "a for loop over written words runs", want: {runs: always, gates: true}, run: "for t in a b; do tests/x.sh; done\ntrue\n"}
+- {arm: 15, name: "a for loop over a variable may run nothing", want: {runs: conditional, gates: true}, run: "for t in $NOPE; do tests/x.sh; done\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "a while body may run nothing", want: {runs: conditional, gates: true}, run: "while [ -n \"$NOPE\" ]; do tests/x.sh; done\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "a case arm", want: {runs: conditional, gates: true}, run: "case \"$NOPE\" in\n  1) tests/x.sh ;;\n  *) true ;;\nesac\ntrue\n", oracle: {gates-env: {NOPE: "1"}}}
+- {arm: 15, name: "a function body runs where it is called", want: {runs: conditional, gates: true}, run: "f() { tests/x.sh; }\ntrue\n"}
+
+# ---- 16: shell: bash {0}
+- {arm: 16, name: "shell: bash {0} has no -e", want: {runs: always, gates: false}, step: {shell: "bash {0}"}, run: "tests/x.sh\ntrue\n"}
+- {arm: 16, name: "shell: bash {0}, the step's last command", want: {runs: always, gates: true}, step: {shell: "bash {0}"}, run: "true\ntests/x.sh\n"}
+- {arm: 16, name: "shell: bash --noprofile --norc {0}", want: {runs: always, gates: false}, step: {shell: "bash --noprofile --norc {0}"}, run: "tests/x.sh\ntrue\n"}
+- {arm: 16, name: "shell: bash -e {0}", want: {runs: always, gates: true}, step: {shell: "bash -e {0}"}, run: "tests/x.sh\ntrue\n"}
+- {arm: 16, name: "shell: sh is sh -e", want: {runs: always, gates: true}, step: {shell: sh}, run: "tests/x.sh\ntrue\n"}
+- {arm: 16, name: "shell: bash {0} from the job's defaults", want: {runs: always, gates: false}, job: {defaults: {run: {shell: "bash {0}"}}}, run: "tests/x.sh\ntrue\n"}
+- {arm: 16, name: "set -e under shell: bash {0}", want: {runs: always, gates: true}, step: {shell: "bash {0}"}, run: "set -e\ntests/x.sh\ntrue\n"}
+- {arm: 16, name: "|| false under shell: bash {0} leaves only a status", want: {runs: always, gates: false}, step: {shell: "bash {0}"}, run: "tests/x.sh || false\ntrue\n"}
+- {arm: 16, name: "shell: python is not read", want: unread, step: {shell: python}, run: "tests/x.sh\n"}
+- {arm: 16, name: "a shell from an expression is not read", want: unread, step: {shell: "${{ matrix.shell }}"}, run: "tests/x.sh\n"}
+- {arm: 16, name: "a Windows runner's default shell is not read", want: unread, job: {runs-on: windows-latest}, run: "tests/x.sh\n"}
+
+# ---- 17: text that is no command
+- {arm: 17, name: a step name that spells the command, want: absent, step: {name: run tests/x.sh, run: "true"}}
+- {arm: 17, name: a whole-line comment, want: absent, run: "# tests/x.sh\ntrue\n"}
+- {arm: 17, name: a trailing comment, want: absent, run: "true # tests/x.sh\n"}
+- {arm: 17, name: an echo argument, want: absent, run: "echo tests/x.sh\n"}
+- {arm: 17, name: a printf argument, want: absent, run: "printf '%s\\n' tests/x.sh\n"}
+- {arm: 17, name: "an expression with && and || and quotes is one word", want: absent, run: "echo ${{ cond && 'tests/x.sh' || 'b; tests/x.sh' }}\n", oracle: false}  # the runner fills ${{ }} before the shell
+- {arm: 17, name: "the command after an expression", want: {runs: always, gates: true}, run: "echo ${{ a || 'b' }}; tests/x.sh\n", oracle: false}  # the runner fills ${{ }} before the shell
+- {arm: 17, name: "a uses step runs no script", want: absent, steps: [{uses: actions/checkout@v4, with: {path: tests/x.sh}}]}
+- {arm: 17, name: "an env value", want: absent, step: {env: {X: tests/x.sh}, run: "true"}}
+- {arm: 17, name: "./ before the path is the same command", want: {runs: always, gates: true}, run: "./tests/x.sh\n"}
+
+# ---- 18: an explicit `shell: bash` is bash --noprofile --norc -eo pipefail {0}; only a step with no shell lacks pipefail
+- {arm: 18, name: "shell: bash carries pipefail", want: {runs: always, gates: true}, step: {shell: bash}, run: "tests/x.sh | tee log\n"}
+- {arm: 18, name: "pipefail in the job's default shell", want: {runs: always, gates: true}, job: {defaults: {run: {shell: bash}}}, run: "tests/x.sh | tee log\n"}
+- {arm: 18, name: "pipefail in the workflow's default shell", want: {runs: always, gates: true}, workflow: {defaults: {run: {shell: bash}}}, run: "tests/x.sh | tee log\n"}
+- {arm: 18, name: "the step's shell wins over the job's default", want: {runs: always, gates: false}, job: {defaults: {run: {shell: bash}}}, step: {shell: "bash -e {0}"}, run: "tests/x.sh | tee log\n"}
+- {arm: 18, name: "no shell at any level: no pipefail", want: {runs: always, gates: false}, run: "true\ntests/x.sh | tee log\n"}
+- {arm: 18, name: "the job's default shell wins over the workflow's", want: {runs: always, gates: false}, workflow: {defaults: {run: {shell: bash}}}, job: {defaults: {run: {shell: "bash -e {0}"}}}, run: "tests/x.sh | tee log\n"}
+
+# ---- 19: set +o pipefail turns pipefail off for the lines after it
+- {arm: 19, name: "set +o pipefail takes it away again", want: {runs: always, gates: false}, step: {shell: bash}, run: "set +o pipefail\ntests/x.sh | tee log\n"}
+- {arm: 19, name: "the pipe before set +o pipefail still has it", want: {runs: always, gates: true}, step: {shell: bash}, run: "tests/x.sh | tee log\nset +o pipefail\ntrue\n"}
+- {arm: 19, name: "set -o pipefail, then set +o pipefail", want: {runs: always, gates: false}, run: "set -o pipefail\nset +o pipefail\ntests/x.sh | tee log\n"}
+- {arm: 19, name: "set +o pipefail in a subshell stays there", want: {runs: always, gates: true}, step: {shell: bash}, run: "( set +o pipefail )\ntests/x.sh | tee log\n"}
+
+# ---- 20: a set -o pipefail after the pipe line, or inside quotes, does not count
+- {arm: 20, name: "set -o pipefail after the pipe line", want: {runs: always, gates: false}, run: "tests/x.sh | tee log\nset -o pipefail\ntrue\n"}
+- {arm: 20, name: "set -o pipefail inside double quotes", want: {runs: always, gates: false}, run: "echo \"set -o pipefail\"\ntests/x.sh | tee log\n"}
+- {arm: 20, name: "set -o pipefail inside single quotes", want: {runs: always, gates: false}, run: "echo 'set -euo pipefail'\ntests/x.sh | tee log\n"}
+- {arm: 20, name: "set -o pipefail in a comment", want: {runs: always, gates: false}, run: "# set -o pipefail\ntests/x.sh | tee log\n"}
+- {arm: 20, name: "set -o pipefail in a heredoc body", want: {runs: always, gates: false}, run: "cat <<EOF\nset -o pipefail\nEOF\ntests/x.sh | tee log\n"}
+- {arm: 20, name: "set -o pipefail in a branch that may not run", want: {runs: always, gates: false}, run: "if [ -n \"$NOPE\" ]; then set -o pipefail; fi\ntests/x.sh | tee log\n"}
+- {arm: 20, name: "set -o pipefail inside bash -c stays in that shell", want: {runs: always, gates: false}, run: "bash -c 'set -o pipefail'\ntests/x.sh | tee log\n"}
+
+# ---- 21: a quoted script given to bash -c is parsed and judged as a script of its own
+- {arm: 21, name: "set -n in a quoted script: what follows is only parsed", want: {runs: never, gates: false}, run: "bash -c \"set -n; tests/x.sh\"\n"}
+- {arm: 21, name: "set -o noexec in a quoted script", want: {runs: never, gates: false}, run: "bash -c 'set -o noexec; tests/x.sh'\n"}
+- {arm: 21, name: "set -n after the command in a quoted script: it ran, and the script's status is set's", want: {runs: always, gates: false}, run: "bash -c 'tests/x.sh; set -n'\n"}
+- {arm: 21, name: "set -n after the command in a quoted script under -e", want: {runs: always, gates: true}, run: "bash -ec 'tests/x.sh; set -n'\n"}
+- {arm: 21, name: "a quoted script with a pipe and its own pipefail", want: {runs: always, gates: true}, run: "bash -c 'set -o pipefail; tests/x.sh | cat'\n"}
+- {arm: 21, name: "a quoted script with a pipe does not take the step's pipefail", want: {runs: always, gates: false}, step: {shell: bash}, run: "bash -c 'tests/x.sh | cat'\n"}
+- {arm: 21, name: "a quoted script named only in an echo", want: absent, run: "echo \"bash -c 'tests/x.sh'\"\n"}
+- {arm: 21, name: "set -n in the step itself", want: {runs: never, gates: false}, run: "set -n\ntests/x.sh\n"}
+- {arm: 21, name: "sh -c", want: {runs: always, gates: true}, run: "sh -c 'tests/x.sh'\n"}
+- {arm: 21, name: "bash -c through env and timeout", want: {runs: always, gates: false}, run: "timeout 60 env X=1 bash -c 'tests/x.sh || true'\n"}
+
+# ---- 22: an `if:` on github.event_name that is false on every trigger of the workflow cannot run; one that cannot be decided is conditional
+- {arm: 22, name: "schedule-only step in an on: push workflow never runs", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n", oracle: false}
+- {arm: 22, name: "the same step with the ${{ }} wrapper", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "${{ github.event_name == 'schedule' }}"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "on: as a list", want: {runs: never, gates: false}, workflow: {on: [push, pull_request]}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "on: as a map", want: {runs: never, gates: false}, workflow: {on: {push: {branches: [main]}, pull_request: null}}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a trigger that matches the comparison keeps it conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule'"]}, workflow: {on: [push, schedule]}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "!= true on every trigger is not a condition that can fail, so it stays conditional", want: {runs: always, gates: true, when: ["github.event_name != 'schedule'"]}, workflow: {on: push}, step: {if: "github.event_name != 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "!= false on the only trigger never runs", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name != 'push'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "the literal on the left", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "'schedule' == github.event_name"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "|| of comparisons all false", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "|| with one comparison true on a trigger", want: {runs: always, gates: true, when: ["github.event_name == 'schedule' || github.event_name == 'push'"]}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' || github.event_name == 'push'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "&& with a false comparison is false whatever the other term", want: {runs: never, gates: false}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' && github.ref == 'refs/heads/main'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "|| with an undecidable term stays conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule' || github.ref == 'refs/heads/main'"]}, workflow: {on: push}, step: {if: "github.event_name == 'schedule' || github.ref == 'refs/heads/main'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a function call cannot be decided", want: {runs: always, gates: true, when: ["always() && github.event_name == 'schedule'"]}, workflow: {on: push}, step: {if: "always() && github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a negation cannot be decided", want: {runs: always, gates: true, when: ["!(github.event_name == 'push')"]}, workflow: {on: push}, step: {if: "!(github.event_name == 'push')"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "a job-level if is judged the same", want: {runs: never, gates: false}, workflow: {on: push}, job: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "workflow_call: the event is the caller's, so conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule'"]}, workflow: {on: {workflow_call: null}}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+- {arm: 22, name: "no on: at all: conditional", want: {runs: always, gates: true, when: ["github.event_name == 'schedule'"]}, step: {if: "github.event_name == 'schedule'"}, run: "tests/x.sh\n"}
+
+# ---- 23: an input too big or too deep is refused by name, within a bound of memory and time, never crashes the reader
+#   `gen: [text, times, tail]` is the script text repeated times, then tail
+- {arm: 23, name: "substitutions nested 3000 deep", want: unread, gen: ["$(", 3000, ")"], oracle: false}
+- {arm: 23, name: "groups nested 3000 deep", want: unread, gen: ["{ ", 3000, "true;}"], oracle: false}
+- {arm: 23, name: "an and-or list 3000 long", want: unread, gen: ["false || ", 3000, "true"], oracle: false}
+- {arm: 23, name: "ifs nested 1500 deep", want: unread, gen: ["if true; then ", 1500, "true; fi"], oracle: false}
+- {arm: 23, name: "a script of 400000 lines", want: unread, gen: ["echo a\n", 400000, ""], oracle: false}
+- {arm: 23, name: "a modest nesting is read", want: {runs: always, gates: true}, run: "echo $(echo $(echo $(echo a)))\ntests/x.sh\n"}
