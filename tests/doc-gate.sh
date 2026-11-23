@@ -16,3 +16,16 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 "$here/.github/actions/doc-gate/doc-gate.sh" --self-test
+# the acceptance is a key (.github#120): the reusable workflow and the action pass nothing by default, never a boolean
+# false, which the gate would read as a key given with nothing changed (red on every caller)
+python3 -I - "$here" <<'PY'
+import sys, yaml
+h = sys.argv[1]
+wf = yaml.safe_load(open(h + "/.github/workflows/doc-gate.yml"))
+on = wf.get("on", wf.get(True))
+i = on["workflow_call"]["inputs"]["accept-config-change"]
+assert i["type"] == "string" and i["default"] == "", ("doc-gate.yml accept-config-change", i)
+a = yaml.safe_load(open(h + "/.github/actions/doc-gate/action.yml"))["inputs"]["accept-config-change"]
+assert a["default"] == "", ("action accept-config-change", a)
+print("doc-gate: accept-config-change is a key, empty by default, in the workflow and the action")
+PY
