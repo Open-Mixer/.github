@@ -3,11 +3,23 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
 # commit-message-check.sh: fail when a commit message carries an attribution line, when its author or committer
-# name or email matches the identity pattern, or when a merge subject names a branch under claude/.
+# name or email matches the identity pattern, when a merge subject names a branch under claude/, or when a message of
+# more than one line has no blank line after its subject (git reads everything up to the first blank line as the
+# subject, so a body line on line 2 publishes a whole paragraph as the subject). That last rule is one function,
+# blank_hit(), read by both commit doors: the range and the commit-msg hook.
 #
-#   commit-message-check.sh <range>          every commit in the range (e.g. origin/main..HEAD)
-#   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped)
+#   commit-message-check.sh [--upstream-url U] <range>
+#                                            every commit in the range (e.g. origin/main..HEAD); with U, a fork's upstream
+#                                            commits are exempt through ../upstream-exempt/upstream-exempt.sh (the one
+#                                            source: U an exact listed URL, not rewritten, fetched, the commit its ancestor);
+#                                            our own commits and merges keep every check
+#   commit-message-check.sh --msg-file FILE  one message (the commit-msg hook; # lines are git comments, skipped), and
+#                                            before the commit exists: the attribution patterns, private-refs-check's
+#                                            message patterns beside this action, and the commit's author and
+#                                            committer against the house identity in the pattern list
 #   commit-message-check.sh --text-file FILE any text, every line judged (PR titles and bodies)
+#   commit-message-check.sh --subject-blank-file FILE  one committed message, verbatim, judged by the blank line rule
+#                                            alone, as the range reads it (the scan of open pull request commits)
 #   commit-message-check.sh --selftest       fixtures plus a sabotage run
 #
 # Exit 0 clean, 1 a hit (each commit and offending line is named), 2 a range, file or pattern list that cannot be read
@@ -18,7 +30,7 @@
 set -euo pipefail
 export COMMIT_MESSAGE_CHECK_SELF="${BASH_SOURCE[0]}"
 exec python3 -I - "$@" <<'PY'
-import json, os, re, subprocess, sys
+import json, os, re, shutil, subprocess, sys
 
 here = os.path.dirname(os.path.realpath(os.environ["COMMIT_MESSAGE_CHECK_SELF"]))
 pfile = os.environ.get("COMMIT_MESSAGE_PATTERNS") or os.path.join(here, "commit-message-patterns.json")
@@ -67,6 +79,101 @@ def report(label, text, markers):
     return len(h)
 
 
+BLANK_RULE = "the subject is not followed by a blank line"
+SCISSORS = "# ------------------------ >8 ------------------------"
+
+
+def blank_hit(text):
+    """Line 2 of a commit message when it is not blank, else None. Read as git reads a message: the blank lines above
+    the subject are not lines of it, a line of only spaces is blank, and the newline that ends the message is not a line."""
+    lines = text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    return lines[1].strip() if len(lines) > 1 and lines[1].strip() else None
+
+
+def report_blank(label, text):
+    line = blank_hit(text)
+    if line is None:
+        return 0
+    print(f"{label}: [subject-blank-line]: {BLANK_RULE} (line 2: {line})")
+    return 1
+
+
+def message_of_file(text):
+    """A message file as git will commit it: nothing from the scissors line of commit -v down, and no comment line."""
+    lines = text.splitlines()
+    if SCISSORS in lines:
+        lines = lines[:lines.index(SCISSORS)]
+    return "\n".join(l for l in lines if not l.startswith("#"))
+
+
+HOUSE_ORIGIN = re.compile(r"github\.com[:/](Open-Mixer|FreeMixer)/", re.I)
+
+
+def house_origin():
+    """True when this repository's origin names a house org: only there is the house identity the rule (D47)."""
+    p = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    return p.returncode == 0 and bool(HOUSE_ORIGIN.search(p.stdout.strip()))
+
+
+ORIGIN_REPO = re.compile(r"github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+
+
+def origin_repo():
+    """OWNER/REPO of this repository's GitHub origin, or None."""
+    p = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True)
+    m = ORIGIN_REPO.search(p.stdout.strip()) if p.returncode == 0 else None
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def house_hits():
+    """The commit about to be made: its author and committer, as git var reads them, against the list's house identity.
+    Judged only in a repository whose origin names a house org; a fixture or foreign repository is not judged, and says so."""
+    if not house_origin():
+        print("house: not judged (no house origin)", file=sys.stderr)
+        return []
+    with open(pfile, encoding="utf-8") as f:
+        house = json.load(f)["house"]
+    out = []
+    for who, var in (("author", "GIT_AUTHOR_IDENT"), ("committer", "GIT_COMMITTER_IDENT")):
+        p = subprocess.run(["git", "var", var], capture_output=True, text=True)
+        m = re.match(r"^(.*) <([^>]*)> \d+ [-+]\d{4}$", p.stdout.strip()) if p.returncode == 0 else None
+        if not m:
+            print(f"commit-message-check: git cannot say who the {who} is ({p.stderr.strip()}), so the commit is not judged", file=sys.stderr)
+            sys.exit(2)
+        if who == "author" and f"{m.group(1)} <{m.group(2)}>" != house["author"]:
+            out.append(f"the author is {m.group(1)} <{m.group(2)}>, not {house['author']}")
+        if who == "committer" and m.group(2) != house["committer-email"]:
+            out.append(f"the committer email is {m.group(2)}, not {house['committer-email']}")
+    return out
+
+
+def private_refs(msg_file):
+    """private-refs-check's message patterns over the same file: 0 clean, 1 a pointer (named on stderr), 2 not judged."""
+    chk = os.path.join(here, "..", "private-refs-check", "check.sh")
+    if not os.path.isfile(chk):
+        print(f"commit-message-check: no private-refs-check beside this action ({chk}), so the message is not judged", file=sys.stderr)
+        return 2
+    # the check is a public repository's: it reads the target's visibility, so it is told which repository this is (in
+    # CI the run's own, else the GitHub origin of the repository committing); with neither it refuses (2), by name.
+    # Its skip line for a private target is passed on; its clean line is not
+    repo = os.environ.get("GITHUB_REPOSITORY") or origin_repo()
+    # its lookup needs a token: a runner has the run's own; on a desk, with none set, gh (when it is there) lends its
+    # login's. Without either the check refuses (2), by name
+    env = dict(os.environ)
+    if not (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")) and shutil.which("gh"):
+        t = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+        if t.returncode == 0 and t.stdout.strip():
+            env["GH_TOKEN"] = t.stdout.strip()
+    p = subprocess.run(["bash", chk, *(["--repo", repo] if repo else []), "--msg-file", msg_file],
+                       stdout=subprocess.PIPE, text=True, env=env)
+    for line in p.stdout.splitlines():
+        if "does not apply" in line:
+            print(line, file=sys.stderr)
+    return p.returncode
+
+
 def git(*a):
     p = subprocess.run(["git", *a], capture_output=True, text=True)
     if p.returncode:
@@ -103,9 +210,9 @@ def selftest():
     ifx = [
         ("author", ((nm, "Pau"), (em, "x@example.invalid"), "fix x", 1), True),
         ("committer", (("Pau", nm), ("x@example.invalid", em), "fix x", 1), True),
-        ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from FreeMixer/{cl}/a", 2), True),
+        ("merge-branch", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, f"Merge pull request #1 from Open-Mixer/{cl}/a", 2), True),
         ("ordinary", (("Pau Aliagas", "Pau Aliagas"), ("linuxnow@gmail.com", "commits@openmixer.org"), "fix x", 1), False),
-        ("github-merge", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, "Merge pull request #1 from FreeMixer/fix/a", 2), False),
+        ("github-merge", (("GitHub", "GitHub"), ("noreply@github.com",) * 2, "Merge pull request #1 from Open-Mixer/fix/a", 2), False),
     ]
     def irun(i, b):
         return [k for k, a, want in ifx if bool(ident_hits(a[0], a[1], a[2], a[3], i, b)) != want]
@@ -126,7 +233,20 @@ def selftest():
     blind = [k for k in new if k not in sab2]
     print("sabotage (the assisted-by, generated and model co-author patterns removed):",
           "RED as expected" if not blind else f"still GREEN for {blind}: blind")
-    return 0 if not first and sab and not blind and not ibad and isab else 1
+    # the blank line after the subject: text -> refused
+    bfx = [
+        ("no-blank", "Fix x\nthe body starts on line 2\n", True),
+        ("blank", "Fix x\n\nthe body\n", False),
+        ("one-line", "Fix x\n", False),
+        ("one-line-bare", "Fix x", False),
+        ("github-merge", "Merge pull request #1 from Open-Mixer/fix/a\n\nthe title\n", False),
+        ("comments", message_of_file("Fix x\n# Please enter the commit message\n#\n"), False),
+        ("scissors", message_of_file("Fix x\n" + SCISSORS + "\n# Do not modify\ndiff --git a/x b/x\n"), False),
+        ("comment-between", message_of_file("Fix x\n# a comment\nthe body\n"), True),
+    ]
+    bbad = [k for k, v, want in bfx if (blank_hit(v) is not None) != want]
+    print("selftest subject-blank-line:", "GREEN" if not bbad else f"RED {bbad}")
+    return 0 if not first and sab and not blind and not ibad and isab and not bbad else 1
 
 
 def main(a):
@@ -135,13 +255,21 @@ def main(a):
     markers = load()
     if len(a) == 2 and a[0] == "--msg-file":
         try:
-            text = open(a[1], encoding="utf-8", errors="replace").read()
+            raw = text = open(a[1], encoding="utf-8", errors="replace").read()
         except OSError as e:
             print(f"commit-message-check: {e}", file=sys.stderr)
             return 2
         # lines git adds as comments are not part of the message
         text = "\n".join(l for l in text.splitlines() if not l.startswith("#"))
-        return 1 if report("commit message", text, markers) else 0
+        bad = report("commit message", text, markers)
+        bad += report_blank("commit message", message_of_file(raw))
+        refs = private_refs(a[1])
+        if refs not in (0, 1):
+            return 2
+        for line in house_hits():
+            print(f"commit message: [house] {line}", file=sys.stderr)
+            bad += 1
+        return 1 if bad or refs else 0
     if len(a) == 2 and a[0] == "--text-file":
         try:
             text = open(a[1], encoding="utf-8", errors="replace").read()
@@ -149,18 +277,45 @@ def main(a):
             print(f"commit-message-check: {e}", file=sys.stderr)
             return 2
         return 1 if report("text", text, markers) else 0
+    if len(a) == 2 and a[0] == "--subject-blank-file":
+        try:
+            text = open(a[1], encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            print(f"commit-message-check: {e}", file=sys.stderr)
+            return 2
+        return 1 if report_blank("commit message", text) else 0
+    upstream = None
+    if len(a) == 3 and a[0] == "--upstream-url":
+        upstream, a = a[1], a[2:]
     if len(a) == 1 and not a[0].startswith("-"):
         shas = git("rev-list", a[0]).split()
-        bad = 0
+        bad = exempted = 0
         ident, branch = load_ident()
+        ex = os.path.join(here, "..", "upstream-exempt", "upstream-exempt.sh")
+        ex_state = None  # lazy: a clean range fetches nothing, and with no --upstream-url there is no exemption at all
         for sha in shas:
-            bad += report(sha[:12], git("log", "-1", "--format=%B", sha), markers)
-            for _, name, line in commit_ident_hits(sha, ident, branch):
-                print(f"{sha[:12]}: [{name}]: {line}")
+            msg = git("log", "-1", "--format=%B", sha)
+            lines = [f"{sha[:12]}: [{name}]: {line}" for _, name, line in commit_ident_hits(sha, ident, branch)]
+            if not (hits(msg, markers) or blank_hit(msg) is not None or lines):
+                continue
+            if upstream:
+                if ex_state is None:
+                    p = subprocess.run([ex, "prepare", upstream], capture_output=True, text=True)
+                    ex_state = (p.returncode == 0, p.stderr.strip().removeprefix("upstream-exempt: "))
+                if ex_state[0] and subprocess.run([ex, "holds", sha], capture_output=True).returncode == 0:
+                    exempted += 1
+                    continue
+            bad += report(sha[:12], msg, markers)
+            bad += report_blank(sha[:12], msg)
+            for line in lines:
+                print(line)
                 bad += 1
-        print(f"commit-message-check: {len(shas)} commits, {bad} offending lines")
+            if upstream and not ex_state[0]:
+                print(f"{sha[:12]}: no upstream exemption: {ex_state[1]}")
+        print(f"commit-message-check: {len(shas)} commits, {bad} offending lines"
+              + (f", {exempted} upstream commits exempt" if exempted else ""))
         return 1 if bad else 0
-    print(__doc__ if False else "usage: commit-message-check.sh <range> | --msg-file FILE | --text-file FILE | --selftest", file=sys.stderr)
+    print(__doc__ if False else "usage: commit-message-check.sh [--upstream-url U] <range> | --msg-file FILE | --text-file FILE | --subject-blank-file FILE | --selftest", file=sys.stderr)
     return 2
 
 

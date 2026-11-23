@@ -1,3 +1,59 @@
+openmixer-release (1-11) unstable; urgency=medium
+
+  * The testing source, /etc/apt/sources.list.d/openmixer-testing.sources:
+    the staging channel of the release wave for trixie, installed with
+    Enabled: no, as the RPM's openmixer-testing. Enabled: yes is the whole
+    opt-in, and an upgrade of the package keeps it.
+  * Licensed GPL-3.0-or-later, as every file of the package already said;
+    debian/copyright and the RPM's License tag said MIT.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 22:00:00 +0100
+
+openmixer-release (1-10) unstable; urgency=medium
+
+  * No dependency on freereac-release: the OpenMixer and FreeREAC
+    repositories are independent, and the package installs on its own again.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 17:30:00 +0100
+
+openmixer-release (1-9) unstable; urgency=medium
+
+  * The RPM gains the testing repositories (the staging channel, disabled);
+    the DEB is unchanged and released at 1-9 so both carry one release.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 13:00:00 +0100
+
+openmixer-release (1-8) unstable; urgency=medium
+
+  * The package of 1-7, released: the 1-7 run was refused by the installability
+    gate, which read the FreeREAC channel without its noarch tree, where
+    freereac-release lives. Depends on freereac-release (>= 1-2): the floor
+    the gate asks of every dependency between our own packages, now that this
+    channel serves freereac-release (the mirror).
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 22:30:00 +0100
+
+openmixer-release (1-7) unstable; urgency=medium
+
+  * Depends on freereac-release: reac-pw comes from the FreeREAC channel,
+    whose apt source and one key that package installs.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 18:00:00 +0100
+
+openmixer-release (1-6) unstable; urgency=medium
+
+  * Ships exactly one key, the OpenMixer release signing key; the personal
+    key and the retired release key are no longer shipped.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Wed, 18 Nov 2026 17:00:00 +0100
+
+openmixer-release (1-5) unstable; urgency=medium
+
+  * Built and served for every Fedora release of the set: fc45 beside fc44
+    (the fc44 build alone was served before). The deb is unchanged.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Sun, 15 Nov 2026 15:40:00 +0000
+
 openmixer-release (1-4) unstable; urgency=medium
 
   * Ships the channel's public keys, the new release signing key beside

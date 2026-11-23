@@ -1,17 +1,17 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later
      Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
-# mod-host: one source, the FreeMixer fork
+# mod-host: one source, the OpenMixer fork
 
 plugin-hostd and omx-clap-host link `libmod-host-protocol.so.0`, the socket and protocol library of mod-host. Every
-mod-host package FreeMixer ships, and every source build of the library in CI, comes from one place: the
-[FreeMixer fork of mod-host](https://github.com/FreeMixer/mod-host), branch `freemixer`, which carries each change
+mod-host package OpenMixer ships, and every source build of the library in CI, comes from one place: the
+[OpenMixer fork of mod-host](https://github.com/Open-Mixer/mod-host), branch `openmixer`, which carries each change
 as a commit and offers each one upstream. No patch is applied here.
 
 ## The fixes, and where they live
 
 This repository used to carry the audinux spec of mod-host with one patch file per pull request
 (`packaging/mod-host`). Each of those patches is a commit of the fork; with all of them applied to upstream
-`f14a230` plus upstream's later #114, the tree equals the fork's `freemixer` branch, apart from the fork's own
+`f14a230` plus upstream's later #114, the tree equals the fork's `openmixer` branch, apart from the fork's own
 additions (packaging, CI, fuzz harnesses, a test for #116).
 
 | patch | upstream pull request | fork commit (subject) |
@@ -32,7 +32,7 @@ additions (packaging, CI, fuzz harnesses, a test for #116).
 | `mod-host-113.patch` | #113 | Split socket input into NUL-terminated commands (#113) |
 | `mod-host-113b.patch` | follow-up to #113 | End each protocol test command with its NUL (follow-up to #113) |
 | `mod-host-116.patch` | #116 | protocol: the command table holds 128 commands, and one past it is refused out loud |
-| `mod-host-bind.patch` | FreeMixer/mod-host#12 | socket: both ports listen on 127.0.0.1 unless told otherwise |
+| `mod-host-bind.patch` | Open-Mixer/mod-host#12 | socket: both ports listen on 127.0.0.1 unless told otherwise |
 
 ## What is built, and from where
 
@@ -55,8 +55,8 @@ of exactly 1024 bytes, two commands in one write and one command in two writes (
 The fork's version is one for both formats: `packaging/mod-host.spec` Version equals the upstream part of
 `debian/changelog`, and the fork's CI refuses a difference. A `v<version>` tag of the fork attaches the RPMs and DEBs
 to its GitHub release. To publish into the channel, move the `mod-host` line of `pins.txt` to the tag's commit, then
-run `mod-host-protocol-rpm.yml` and `mod-host-protocol-deb.yml` on main with `publish` set; the RPM workflow refuses
-to publish a snapshot build.
+push a tag `mod-host-protocol-<version>`, which runs `mod-host-protocol-rpm.yml` and `mod-host-protocol-deb.yml`
+and publishes; the RPM workflow refuses to publish a snapshot build.
 
 The fork's versions (0.10.8 and later) sort above everything the channel carried before: the RPMs
 `0.10.6.f14a230-11.x.omx` built from the patches here, audinux's `0.10.6.f14a230-12`, and the DEBs `0.1.0-8~omx`.

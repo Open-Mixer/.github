@@ -13,13 +13,17 @@ name: channel-installability (reusable)
 #
 #   installability:
 #     needs: [rpm-build, deb-build]
-#     uses: FreeMixer/.github/.github/workflows/channel-installability.yml@v1
+#     uses: Open-Mixer/.github/.github/workflows/channel-installability.yml@openmixer-v1
 #     with:
 #       rpm-artifacts: omx-dsp-rpms-fc*
 #       deb-artifacts: omx-dsp-debs-*-*
 on:
   workflow_call:
     inputs:
+      dry-run:
+        description: 'true when the release is a dry run (nothing is published): only the architectures built are judged'
+        type: boolean
+        default: false
       deb-artifacts:
         description: 'Pattern of the artifacts of this run holding the DEBs, each laid out <suite>/*.deb; empty checks no DEB'
         type: string
@@ -75,13 +79,16 @@ jobs:
           find collected -name '*.deb' | sort | tee collected.txt
           test -s collected.txt || { echo "::error::no DEB in the artifacts $PATTERN"; exit 1; }
 
-      - uses: FreeMixer/.github/.github/actions/channel-installability@v1
+      - uses: Open-Mixer/.github/.github/actions/channel-installability@openmixer-v1
         with:
           kind: deb
           packages: collected
           base-url: ${{ inputs.base-url }}
           suites: ${{ inputs.suites }}
           same-pass: ${{ inputs.same-pass }}
+          # while a release wave is open (quick), the quick set's cells alone: nothing reaches the other trees
+          matrix-set: ${{ vars.OMX_RELEASE_MATRIX }}
+          dry-run: ${{ inputs.dry-run }}
 
   rpm:
     name: Installability (rpm)
@@ -89,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -105,10 +112,13 @@ jobs:
           find collected -name '*.rpm' | sort | tee collected.txt
           test -s collected.txt || { echo "::error::no RPM in the artifacts $PATTERN"; exit 1; }
 
-      - uses: FreeMixer/.github/.github/actions/channel-installability@v1
+      - uses: Open-Mixer/.github/.github/actions/channel-installability@openmixer-v1
         with:
           kind: rpm
           packages: collected
           base-url: ${{ inputs.base-url }}
           fedora-versions: ${{ inputs.fedora-versions }}
           same-pass: ${{ inputs.same-pass }}
+          # while a release wave is open (quick), the quick set's cells alone: nothing reaches the other trees
+          matrix-set: ${{ vars.OMX_RELEASE_MATRIX }}
+          dry-run: ${{ inputs.dry-run }}

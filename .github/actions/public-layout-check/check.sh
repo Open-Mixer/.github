@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # public-layout-check check.sh [ROOT] | --self-test
 #
-# A public FreeMixer repository holds its code, its data and the documents a user or a developer reads: a guide, a
+# A public OpenMixer repository holds its code, its data and the documents a user or a developer reads: a guide, a
 # specification or reference, a developer document. The record of how work went (a dated note, a run's raw evidence, a
 # folder of notes) belongs in the project's records, not in a public tree. Three rules, read from every tracked path:
 #

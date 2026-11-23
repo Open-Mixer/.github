@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+Types: deb
+URIs: https://www.openmixer.org/staging/deb/debian/@SUITE@/
+Suites: ./
+Signed-By: /usr/share/keyrings/openmixer-archive-keyring.asc

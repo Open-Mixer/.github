@@ -6,9 +6,9 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        4%{?dist}
+Release:        11%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
-License:        MIT
+License:        GPL-3.0-or-later
 URL:            https://www.openmixer.org
 Source0:        openmixer.repo
 Source1:        RPM-GPG-KEY-openmixer
@@ -31,6 +31,27 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
+* Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-11
+- License GPL-3.0-or-later, as every file of the package already said (the tag said MIT); released at 1-11 with the DEB, which gains the testing source (openmixer-testing.sources, the staging channel for trixie, Enabled: no).
+
+* Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-10
+- No dependency on freereac-release: OpenMixer's repository and FreeREAC's are independent, and openmixer-release installs on its own again from its one file (1-7 to 1-9 required freereac-release and refused `dnf install openmixer-release.noarch.rpm` on a clean machine). A rig that drives a stagebox adds FreeREAC's repository itself (openmixer-full requires reac-pw).
+
+* Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-9
+- The testing repositories, openmixer-testing and openmixer-testing-noarch: the staging channel of the release wave, installed disabled, as Fedora's updates-testing; enabling them is the whole opt-in to the builds a wave proved before their release.
+
+* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-8
+- The package of 1-7, released: the 1-7 run was refused by the installability gate, which read the FreeREAC channel without its noarch tree where freereac-release lives. Requires freereac-release >= 1-2: the floor the gate asks of every dependency between our own packages, now that this channel serves freereac-release (the mirror).
+
+* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-7
+- Requires freereac-release: reac-pw comes from the FreeREAC channel, whose repository and one key that package installs.
+
+* Wed Nov 18 2026 Pau Aliagas <linuxnow@gmail.com> - 1-6
+- Ships exactly one key, the OpenMixer release signing key; the personal key and the retired release key are no longer shipped.
+
+* Sun Nov 15 2026 Pau Aliagas <linuxnow@gmail.com> - 1-5
+- Built and served for every Fedora release of the set: fc45 beside fc44 (the fc44 build alone was served before).
+
 * Sun Nov 01 2026 Pau Aliagas <linuxnow@gmail.com> - 1-4
 - Ships the channel's public keys with the new release signing key beside the old one.
 

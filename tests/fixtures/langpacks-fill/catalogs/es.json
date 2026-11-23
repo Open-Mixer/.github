@@ -1,0 +1,10 @@
+{
+  "kind": "catalog",
+  "lang": "es",
+  "owner": "omx-fixture-fill",
+  "messages": {
+    "fix.kept": { "text": "El fixture lo mantiene.", "by": "machine", "model": "draft-prose", "source": "b3f410cdca8969e8e8b829d5e76e7a2901d435fda7a0dffcb362abe656b8acd8" },
+    "fix.changed": { "text": "El fixture rechaza lo antiguo.", "by": "machine", "model": "draft-prose", "source": "cef047632a0870237fec1710c2108055a1d63e857f8cdaf14d84178ec9da0991" },
+    "fix.human": { "text": "Una persona escribió esto.", "by": "human" }
+  }
+}

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# The FreeMixer fork of mod-host at its pin in .github/pins.txt: the tests of the fixes it carries pass, and the
+# The OpenMixer fork of mod-host at its pin in .github/pins.txt: the tests of the fixes it carries pass, and the
 # installed protocol library passes actions/mod-host-protocol/checks/framing-test.sh. Then each fix is taken out
 # again and the check that guards it must fail: without the src/ part of #113 or of #116 framing-test.sh fails,
 # without the src/ part of the bind-address change its bind check fails, without the src/ part of #112 the

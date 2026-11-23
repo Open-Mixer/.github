@@ -16,4 +16,4 @@ Depends: ${misc:Depends}
 Description: CLAP audio plugin API headers
  The C headers of CLAP, the CLever Audio Plugin API, with its pkg-config and
  CMake files. Debian carries no package of them; this one is published by
- FreeMixer for the -dev packages of CLAP hosts, which Build-Depend on it.
+ OpenMixer for the -dev packages of CLAP hosts, which Build-Depend on it.

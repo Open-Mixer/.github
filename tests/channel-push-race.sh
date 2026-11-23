@@ -46,7 +46,7 @@ HOOK
     chmod +x "$dir/remote.git/hooks/pre-receive"
     mkdir -p "$dir/run/build" && git clone -q "$dir/remote.git" "$dir/run/build/channel" 2>/dev/null
     mkdir -p "$dir/run/build/channel/rpm" && echo "package one" > "$dir/run/build/channel/rpm/one.txt"
-    (cd "$dir/run" && env PATH="$work/bin:$PATH" RUNNER_TEMP="$dir/tmp" GITHUB_OUTPUT="$dir/gh-output" GITHUB_REPOSITORY=FreeMixer/t \
+    (cd "$dir/run" && env PATH="$work/bin:$PATH" RUNNER_TEMP="$dir/tmp" GITHUB_OUTPUT="$dir/gh-output" GITHUB_REPOSITORY=Open-Mixer/t \
         PUBLISH_TOKEN=x SITE_GPG_KEY="$SITE_GPG_KEY" BRANCH=main CHANNEL="$dir/remote.git" TAG=v1 WHAT=rpm \
         REBUILD="$rebuild" ATTEMPTS=3 bash "$work/step.sh" > "$dir/out.log" 2>&1) || rc=$?
     echo "$rc" > "$dir/rc"

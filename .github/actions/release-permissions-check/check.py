@@ -34,7 +34,7 @@ def check(path, shared):
     bad = []
     for name, job in (d.get("jobs") or {}).items():
         uses = str(job.get("uses", ""))
-        if not uses.startswith("FreeMixer/.github/.github/workflows/"):
+        if not uses.startswith("Open-Mixer/.github/.github/workflows/"):
             continue
         callee = uses.split("/workflows/")[1].split("@")[0]
         want = needs(yaml.safe_load(open(os.path.join(shared, callee))))

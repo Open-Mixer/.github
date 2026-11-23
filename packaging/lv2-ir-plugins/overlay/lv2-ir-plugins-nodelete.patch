@@ -1,0 +1,22 @@
+ir.lv2: keep ir.so loaded once a host unloads it, as ir_gui.so already is
+
+ir.so builds a GtkListStore in its load-time constructor. A host that frees
+its last instance unloads ir.so and GTK2 with it while libgobject keeps
+GTK2's types registered; the next load cannot register them again and
+gtk_list_store_new segfaults. -z nodelete keeps ir.so, and the GTK2 it
+loaded, mapped, so the constructor runs once per process.
+https://github.com/Open-Mixer/plugin-qualify/issues/16
+
+diff --git a/Makefile b/Makefile
+index 6d43cbf..52740cf 100644
+--- a/Makefile
++++ b/Makefile
+@@ -55,7 +55,7 @@ ir_wavedisplay.o: ir_wavedisplay.cc ir_wavedisplay.h ir.h ir_utils.h
+ 	$(CXX) ir_wavedisplay.cc $(CPPFLAGS) -c -fPIC -o ir_wavedisplay.o
+ 
+ ir.so: ir.o ir_utils.o
+-	$(CXX) $(LDFLAGS) ir.o ir_utils.o $(LIBS) -shared -o ir.so
++	$(CXX) $(LDFLAGS) ir.o ir_utils.o $(LIBS) -shared -z nodelete -o ir.so
+ 
+ ir_gui.so: ir_gui.o ir_utils.o ir_meter.o ir_modeind.o ir_wavedisplay.o
+ 	$(CXX) $(LDFLAGS) ir_gui.o ir_utils.o ir_meter.o ir_modeind.o ir_wavedisplay.o $(LIBS) -shared -z nodelete -o ir_gui.so

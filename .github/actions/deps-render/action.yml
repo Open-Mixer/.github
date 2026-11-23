@@ -3,9 +3,12 @@
 name: deps-render
 description: Hold a repository's dependency floors and ceilings to its one packaging/deps.txt
 
-# packaging/deps.txt is the only place a floor and a ceiling are written by hand; the RPM spec, debian/control and the
+# packaging/deps.txt is the only place a floor (and, for a third-party package, a ceiling) is written by hand; a row
+# with no ceiling (our own packages, .github#102) renders '>= floor' and no upper bound; the RPM spec, debian/control and the
 # workflows' release-tag variables are rendered from it (render.sh --write) and refused when they differ
 # (render.sh --check, which this action runs). The caller has checked the repository out.
+# A repository with no packaging/deps.txt is not rendered, but this action still refuses every ceiling in its spec,
+# debian/control and workflow install lines (.github#146): call it whether or not deps.txt exists.
 
 runs:
   using: composite

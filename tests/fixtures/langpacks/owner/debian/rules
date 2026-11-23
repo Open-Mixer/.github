@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+%:
+	dh $@
+
+override_dh_auto_install:
+	install -Dpm 0644 README debian/tmp/usr/share/omx-fixture-owner/README
+	set -e; for f in catalogs/*.json; do \
+	    install -Dpm 0644 "$$f" debian/tmp/usr/share/omx-fixture-owner/catalogs/$$(basename "$$f"); \
+	done

@@ -5,23 +5,20 @@ name: Surge XT RPMs
 # Builds Surge XT (surge-xt, surge-xt-data, surge-xt-clap, surge-xt-lv2) from packaging/surge-xt at the commit of
 # .github/pins.txt, for every architecture, installs the result in a clean container with omx-clap-host from the
 # channel and loads it there (packaging/surge-xt/load-check.sh), then publishes it into rpm/ of the Pages
-# repository. Run by hand, once per change of the spec: a published NEVRA is never rebuilt with new bytes.
+# repository. Released by a tag, once per change of the spec: a published NEVRA is never rebuilt with new bytes.
 #
-# publish=false, the default, is a dry run: it builds and assembles an unsigned tree as an artifact.
+# A push of a tag `surge-xt-*` publishes; a run by hand is a dry run: it builds and assembles an unsigned tree as an
+# artifact and signs and pushes nothing (docs/release-operations.md, "Publish only by tagging").
 
 on:
+  push:
+    tags: ['surge-xt-*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Sign and publish; only a run on the main branch publishes'
-        type: boolean
-        default: false
-  pull_request:
-    paths:
-      - 'packaging/surge-xt/**'
-      - '.github/actions/pinned-rpms/**'
-      - '.github/pins.txt'
-      - '.github/workflows/surge-xt-rpm.yml'
+      matrix:
+        description: "'quick' builds the quick set alone, 'full' the whole matrix; empty: what the organisation variable OMX_RELEASE_MATRIX says, and the quick set without it (.github/actions/release-matrix/quick.txt)"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -32,23 +29,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Refuse to publish from anywhere but main
-        if: inputs.publish && github.ref != 'refs/heads/main'
-        run: echo "::error::publish is only for a run on main"; exit 1
-
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/release-preflight
         with:
-          publish: ${{ inputs.publish || false }}
+          publish: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           require-tag: 'false'
-          target: FreeMixer/freemixer.github.io
+          target: Open-Mixer/open-mixer.github.io
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           pages-token: ${{ secrets.PAGES_TOKEN }}
 
+  # The cells this run builds, and what it skips: the quick set while OMX_RELEASE_MATRIX is quick, the whole matrix with
+  # full (ruling D25, docs/release-operations.md). The build set, so release-matrix; the whole matrix, written once here; quick.txt cuts it while a wave is quick.
+  plan:
+    name: Plan the cells
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.matrix.outputs.cells }}
+      releases: ${{ steps.matrix.outputs.releases }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: matrix
+        uses: ./.github/actions/release-matrix
+        with:
+          kind: rpm
+          matrix: ${{ inputs.matrix }}
+          wave: ${{ vars.OMX_RELEASE_MATRIX }}
+          releases: '["45"]'
+          arches: '["x86_64", "aarch64"]'
+
   build:
     name: Build (fc${{ matrix.fedora }}, ${{ matrix.arch }})
-    needs: preflight
+    needs: [preflight, plan]
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || github.event.pull_request.head.repo.fork && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || vars.OMX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
     container:
@@ -56,8 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ['44']
-        arch: [x86_64, aarch64]
+        include: ${{ fromJSON(needs.plan.outputs.cells) }}
     defaults:
       run:
         shell: bash
@@ -106,21 +120,21 @@ jobs:
           name: surge-xt-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}
 
   publish:
     name: Sign and publish
-    needs: build
-    if: github.event_name == 'workflow_dispatch'
+    needs: [plan, build]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:44
+      image: fedora:45
     concurrency:
-      group: publish-FreeMixer/freemixer.github.io
+      group: publish-Open-Mixer/open-mixer.github.io
       cancel-in-progress: false
     env:
-      DO_PUBLISH: ${{ inputs.publish && github.ref == 'refs/heads/main' }}
+      DO_PUBLISH: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -138,15 +152,47 @@ jobs:
         with:
           rpm-dir: collected
           tag: ${{ env.TAG }}
-          sign: ${{ env.DO_PUBLISH }}
+          sign: 'true'
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+
+
+  publish-dry-run:
+    name: Assemble the unsigned tree, nothing is published
+    needs: [plan, build]
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:45
+    env:
+      DO_PUBLISH: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: surge-xt-rpms-*
+          merge-multiple: true
+          path: collected
+
+      - name: Read the versions the packages carry
+        run: |
+          echo "TAG=surge-xt-$(rpm -qp --qf '%{VERSION}-%{RELEASE}' collected/surge-xt-clap-*.x86_64.rpm)" | tr '^' '_' >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/publish-rpms
+        with:
+          rpm-dir: collected
+          tag: ${{ env.TAG }}
+          sign: 'false'
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
           publish-token: ${{ secrets.PAGES_TOKEN }}
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
 
       - uses: actions/upload-artifact@v4
-        if: env.DO_PUBLISH != 'true'
         with:
           name: surge-xt-unsigned-rpm-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/')) && 30 || 2 }}

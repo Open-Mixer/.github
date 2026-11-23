@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The staging channel's index carries Label: OpenMixer-Staging; 600 is above the real channel (500).
+Package: *
+Pin: release l=OpenMixer-Staging
+Pin-Priority: 600

@@ -1,15 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 name: publish-debs
-description: Sign DEBs and publish them into the deb/ tree of a FreeMixer Pages repository
+description: Sign DEBs and publish them into the deb/ tree of an Open-Mixer Pages repository
 
 # The DEB half of a release, run in a Debian container by the reusable build-deb workflow on a release tag
 # only. The tree is one flat apt repository per Debian release, deb/debian/<suite>/, holding <arch>/*.deb,
 # Packages, Release, InRelease and Release.gpg; users point apt at it with `deb [signed-by=...] <url> ./`.
-# The key is the one that signs the RPMs. cosign-key, when set, also signs Release.gpg and InRelease: a key
-# change for apt users, whose signed-by file holds the key they saved at install time (publish-tree.sh).
+# The key is the one that signs the RPMs, the dnf metadata and the apt index: Release.gpg and InRelease carry
+# that one signature and no other.
 # sign=false assembles an unsigned tree in build/repo and pushes nothing. The shared-tree race is described
 # in channel-pull.
+#
+# staging: true publishes into staging/deb of the same channel instead (the staging channel of a release wave,
+# docs/release-operations.md): the same tree script, keys and channel-push, the index labelled OpenMixer-Staging (the
+# label the staging pin names), every Debian release of `suites` indexed even with nothing staged for it, and a
+# `requires` package may be one the real deb/ tree serves. deb/ is never written.
 
 inputs:
   deb-dir:
@@ -25,10 +30,17 @@ inputs:
     default: ''
   gpg-passphrase:
     default: ''
-  cosign-key:
-    description: a second key that also signs the apt index, armored; empty for none
+  key-file:
+    description: "the name of the public key file the channel serves in its deb/ tree; empty means openmixer.asc, OpenMixer's. Another project's channel names its own"
     default: ''
-  cosign-passphrase:
+  committed-keys:
+    description: "'false' keeps the public keys committed in this repository, which are OpenMixer's, out of the key file: the channel of another project serves exactly the key it signs with"
+    default: 'true'
+  signing-fingerprint:
+    description: "the primary fingerprint the signing key must have; empty checks none. A channel that is not OpenMixer's names its own, so a secret mapped to the wrong key refuses the run before anything is signed"
+    default: ''
+  label:
+    description: "the Origin and Label of the Release files of the real channel; empty means OpenMixer (the staging channel always labels OpenMixer-Staging)"
     default: ''
   publish-token:
     default: ''
@@ -36,7 +48,7 @@ inputs:
     description: the SITE_GPG_KEY secret, armored; signs the channel commit
     default: ''
   channel:
-    default: FreeMixer/freemixer.github.io
+    default: Open-Mixer/open-mixer.github.io
   branch:
     default: main
   requires:
@@ -57,11 +69,23 @@ inputs:
   signed-dir:
     description: directory receiving the published copies, laid out <suite>/*.deb
     default: signed
+  staging:
+    description: "'true' publishes into the staging channel, staging/deb of the channel, and never touches deb/"
+    default: 'false'
+  suites:
+    description: with staging, the Debian releases (space separated) whose staging index exists even when empty
+    default: ''
+  catch-up:
+    description: "'true' for a catch-up run: arch-independent packages the channel serves are dropped from the publish, any other file it serves refuses the run before anything is signed, and only what received a package is indexed again (publish-tree.sh CATCH_UP)"
+    default: 'false'
+  matrix-set:
+    description: "'quick' or 'full': the set of the release matrix this run built, recorded for its packages in cells.tsv of the tree; empty records none"
+    default: ''
 
 outputs:
   commit:
     description: the commit pushed to the channel; empty when nothing was pushed (a dry run, or the channel already carried the tree)
-    value: ${{ steps.push.outputs.commit }}
+    value: ${{ steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
 
 runs:
   using: composite
@@ -74,26 +98,61 @@ runs:
       shell: bash
       env:
         DEB_DIR: ${{ inputs.deb-dir }}
+        STAGING: ${{ inputs.staging }}
+        MATRIX_SET: ${{ inputs.matrix-set }}
+        CATCH_UP: ${{ inputs.catch-up }}
+        SUITES: ${{ inputs.suites }}
+        KEY_FILE_IN: ${{ inputs.key-file }}
+        COMMITTED_KEYS: ${{ inputs.committed-keys }}
+        SIGNING_FPR: ${{ inputs.signing-fingerprint }}
+        LABEL_IN: ${{ inputs.label }}
+        CHANNEL_IN: ${{ inputs.channel }}
       run: |
         set -o pipefail
+        # the channel, for the tree script's organisation guard (publish-rpms/channel-owner.sh) and the lost-race rebuild alike
+        echo "CHANNEL_REPO=$CHANNEL_IN" >> "$GITHUB_ENV"
+        # the channel profile: another project's key file, label and committed keys, for the tree script and the lost-race rebuild alike
+        [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" want "$COMMITTED_KEYS" "$SIGNING_FPR"
+        if [ "$COMMITTED_KEYS" = false ]; then
+          # the trust root of another project's channel is the one fingerprint its caller names, not OpenMixer's pinned list
+          pins=$(mktemp -d)/pinned.txt; printf '%s packages the channel key named by the caller\n' "${SIGNING_FPR^^}" > "$pins"
+          { echo "SERVED_KEYS_DIR=none"; echo "PINNED_FINGERPRINTS=$pins"; } >> "$GITHUB_ENV"
+        fi
+        [ -z "$LABEL_IN" ] || [ "$STAGING" = true ] || echo "LABEL=$LABEL_IN" >> "$GITHUB_ENV"
+        # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
+        echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
+        # a catch-up, for the tree script and the lost-race rebuild alike
+        echo "CATCH_UP=$CATCH_UP" >> "$GITHUB_ENV"
+        # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/
+        if [ "$STAGING" = true ]; then
+          { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
+            echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"
+            echo "SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb)"; } >> "$GITHUB_ENV"
+        else
+          echo "DEB_TREE=deb" >> "$GITHUB_ENV"
+        fi
         find "$DEB_DIR" -name '*.deb' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no DEB under $DEB_DIR"; exit 1; }
+        # the testing channel carries the tested platforms alone (owner ruling 2026-11-23): nothing of another cell is staged
+        [ "$STAGING" != true ] || "$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" check deb "$DEB_DIR"
 
-    - uses: FreeMixer/.github/.github/actions/import-gpg-key@v1
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true'
       with:
         gpg-key: ${{ inputs.gpg-key }}
         gpg-passphrase: ${{ inputs.gpg-passphrase }}
         id-variable: OPENMIXER_GPG_KEY_ID
 
-    - uses: FreeMixer/.github/.github/actions/import-gpg-key@v1
-      if: inputs.sign == 'true' && inputs.cosign-key != ''
-      with:
-        gpg-key: ${{ inputs.cosign-key }}
-        gpg-passphrase: ${{ inputs.cosign-passphrase }}
-        id-variable: OPENMIXER_GPG_COSIGN_KEY_ID
+    - name: Check the fingerprint of the signing key is the one named
+      if: inputs.sign == 'true' && inputs.signing-fingerprint != ''
+      shell: bash
+      env:
+        WANT: ${{ inputs.signing-fingerprint }}
+      run: |
+        "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" key "$OPENMIXER_GPG_KEY_ID" "$WANT"
 
-    - uses: FreeMixer/.github/.github/actions/channel-pull@v1
+    - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
       if: inputs.sign == 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
@@ -105,15 +164,16 @@ runs:
       shell: bash
       run: |
         set -o pipefail
-        # shellcheck disable=SC2086 # the co-signer is one fingerprint or empty
-        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check build/channel/deb/openmixer.asc \
-          "$OPENMIXER_GPG_KEY_ID" ${OPENMIXER_GPG_COSIGN_KEY_ID:-}
+        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "build/channel/deb/${KEY_FILE:-openmixer.asc}" \
+          "$OPENMIXER_GPG_KEY_ID"
 
     # Before the tree is assembled and signed: the channel with this release in it still installs everything that
     # installed before, and no published consumer is left outside its ceiling (channel-installability). A publish
     # reads the tree it pulled, a dry run the served channel.
     - name: Check no package of the channel becomes uninstallable
-      if: inputs.installability != 'false'
+      # a staged run publishes to the staging channel, which no client installs from by default: the check judges the
+      # channel a release lands in, so it runs for a release and a dry run, not for a staged publish
+      if: inputs.installability != 'false' && inputs.staging != 'true'
       shell: bash
       env:
         PKG_DIR: ${{ inputs.deb-dir }}
@@ -122,7 +182,11 @@ runs:
         SERVED: ${{ inputs.served-url }}
       run: |
         set -o pipefail
-        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/deb; else channel=$SERVED; fi
+        # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
+        # release builds every architecture), and every architecture is still checked. A release of the quick set is
+        # the same on the cells it does not build: the wave's full release builds them (tests/quick-unbuilt-pass.sh)
+        if [ "$SIGN" = true ]; then channel=$PWD/build/channel/$DEB_TREE; else channel=$SERVED; export UNBUILT_ARCH_PASS=true DRY_RUN=true; fi
+        if [ "${MATRIX_SET:-}" = quick ]; then export UNBUILT_ARCH_PASS=true; fi
         "$GITHUB_ACTION_PATH/../channel-installability/run.sh" deb "$PKG_DIR" "$channel"
 
     - name: Assemble the tree
@@ -136,9 +200,9 @@ runs:
       run: |
         set -o pipefail
         if [ "$SIGN" = true ]; then
-          COSIGN=${OPENMIXER_GPG_COSIGN_KEY_ID:-} "$GITHUB_ACTION_PATH/publish-tree.sh" build/channel/deb "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/channel/$DEB_TREE" "$DEB_DIR" "$OPENMIXER_GPG_KEY_ID"
         else
-          "$GITHUB_ACTION_PATH/publish-tree.sh" build/repo/deb "$DEB_DIR"
+          "$GITHUB_ACTION_PATH/publish-tree.sh" "build/repo/$DEB_TREE" "$DEB_DIR"
         fi
 
     - name: Prove the tree holds packages and an index
@@ -147,13 +211,13 @@ runs:
         SIGN: ${{ inputs.sign }}
       run: |
         set -o pipefail
-        if [ "$SIGN" = true ]; then tree=build/channel/deb; else tree=build/repo/deb; fi
+        if [ "$SIGN" = true ]; then tree=build/channel/$DEB_TREE; else tree=build/repo/$DEB_TREE; fi
         find "$tree" -name '*.deb' | sort
         test -n "$(find "$tree" -name '*.deb' -print -quit)" || { echo "::error::the tree holds no package"; exit 1; }
         test -n "$(find "$tree" -name Packages -print -quit)" || { echo "::error::no index in the tree"; exit 1; }
         if [ "$SIGN" = true ]; then
           test -n "$(find "$tree" -name InRelease -print -quit)" || { echo "::error::the index is not signed"; exit 1; }
-          test -s "$tree/openmixer.asc" || { echo "::error::no public key in the tree"; exit 1; }
+          test -s "$tree/${KEY_FILE:-openmixer.asc}" || { echo "::error::no public key in the tree"; exit 1; }
         fi
 
     # The rebuild command runs inside the job's container, where the action lives under a different path than
@@ -163,9 +227,22 @@ runs:
       shell: bash
       run: echo "PUBLISH_DEBS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
-    - id: push
-      uses: FreeMixer/.github/.github/actions/channel-push@v1
-      if: inputs.sign == 'true'
+    - id: push-staging
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.staging == 'true'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.tag }}
+        what: staging/deb
+        # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+
+    - id: push-real
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.staging != 'true'
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}
@@ -173,7 +250,8 @@ runs:
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.tag }}
         what: deb
-        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" COSIGN="${OPENMIXER_GPG_COSIGN_KEY_ID:-}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" build/channel/deb "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+        # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step), unset for the real tree
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
 
     # After the push: a push that lost a race rebuilds and re-signs the tree, and the copies must be the bytes
     # the channel serves, not those of the first attempt.
@@ -187,7 +265,7 @@ runs:
         set -euo pipefail
         mkdir -p "$SIGNED_DIR"
         while IFS= read -r f; do
-          found=$(find build/channel/deb -name "$(basename "$f")" -print -quit)
+          found=$(find "build/channel/$DEB_TREE" -name "$(basename "$f")" -print -quit)
           test -n "$found" || { echo "::error::$(basename "$f") is not in the tree"; exit 1; }
           cp "$found" "$SIGNED_DIR/"
         done < <(find "$DEB_DIR" -name '*.deb' | sort)

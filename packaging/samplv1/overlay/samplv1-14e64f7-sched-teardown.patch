@@ -1,0 +1,153 @@
+From f09942133502100f1f94e1902ba83babc8a7e332 Mon Sep 17 00:00:00 2001
+From: Pau Aliagas <linuxnow@gmail.com>
+Date: Sat, 7 Nov 2026 15:24:46 +0100
+Subject: [PATCH] - Fixed a crash on plug-in instance cleanup, racing the
+ shared worker/schedule thread.
+
+---
+ ChangeLog             |  6 ++++++
+ src/samplv1.cpp       |  3 +++
+ src/samplv1_sched.cpp | 45 +++++++++++++++++++++++++++++++++++++++++--
+ src/samplv1_sched.h   |  7 +++++--
+ 4 files changed, 57 insertions(+), 4 deletions(-)
+
+diff --git a/ChangeLog b/ChangeLog
+index 081c099..901f6d5 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -4,6 +4,12 @@ samplv1 - an old-school polyphonic sampler
+ ChangeLog
+ 
+ 
++GIT HEAD
++
++- Fixed a crash on plug-in instance cleanup, racing the shared worker/schedule thread.
++
++
++
+ 1.5.1  2026-10-29  An Autumn'26 Release.
+ 
+ - Introducing Crop / Uncrop View feature.
+diff --git a/src/samplv1.cpp b/src/samplv1.cpp
+index f8275c4..3361edd 100644
+--- a/src/samplv1.cpp
++++ b/src/samplv1.cpp
+@@ -2602,6 +2602,9 @@ samplv1::samplv1 ( uint16_t nchannels, float srate, uint32_t nsize )
+ 
+ samplv1::~samplv1 (void)
+ {
++	// no scheduled run may reach a half-destroyed instance.
++	samplv1_sched::sync_cancel(this);
++
+ 	delete m_pImpl;
+ }
+ 
+diff --git a/src/samplv1_sched.cpp b/src/samplv1_sched.cpp
+index 4ecf1c8..88285e5 100644
+--- a/src/samplv1_sched.cpp
++++ b/src/samplv1_sched.cpp
+@@ -51,6 +51,10 @@ class samplv1_sched_thread : public QThread
+ 	// clear all pending runs immediately.
+ 	void sync_reset();
+ 
++	// cancel pending runs of an instance or a schedule, immediately.
++	void sync_cancel(samplv1 *pSampl);
++	void sync_cancel(samplv1_sched *sched);
++
+ protected:
+ 
+ 	// main thread executive.
+@@ -111,8 +115,8 @@ samplv1_sched_thread::samplv1_sched_thread ( uint32_t nsize ) : QThread()
+ // dtor.
+ samplv1_sched_thread::~samplv1_sched_thread (void)
+ {
+-	// fake sync and wait
+-	if (m_running && isRunning()) do {
++	// fake sync and wait (even if not yet running)
++	if (isRunning()) do {
+ 		if (m_mutex.tryLock()) {
+ 			m_running = false;
+ 			m_cond.wakeAll();
+@@ -160,6 +164,32 @@ void samplv1_sched_thread::sync_reset (void)
+ }
+ 
+ 
++// cancel pending runs of an instance, immediately;
++// waits for the one in progress, as run_process() holds the lock.
++void samplv1_sched_thread::sync_cancel ( samplv1 *pSampl )
++{
++	QMutexLocker locker(&m_mutex);
++
++	for (uint32_t i = 0; i < m_nsize; ++i) {
++		samplv1_sched *sched = m_items[i];
++		if (sched && sched->instance() == pSampl)
++			m_items[i] = nullptr;
++	}
++}
++
++
++// cancel pending runs of a schedule, immediately.
++void samplv1_sched_thread::sync_cancel ( samplv1_sched *sched )
++{
++	QMutexLocker locker(&m_mutex);
++
++	for (uint32_t i = 0; i < m_nsize; ++i) {
++		if (m_items[i] == sched)
++			m_items[i] = nullptr;
++	}
++}
++
++
+ void samplv1_sched_thread::clear (void)
+ {
+ 	m_iread  = 0;
+@@ -231,6 +261,9 @@ samplv1_sched::samplv1_sched ( samplv1 *pSampl, Type stype, uint32_t nsize )
+ // dtor (virtual).
+ samplv1_sched::~samplv1_sched (void)
+ {
++	if (g_sched_thread)
++		g_sched_thread->sync_cancel(this);
++
+ 	delete [] m_items;
+ 
+ 	if (--g_sched_refcount == 0) {
+@@ -314,6 +347,14 @@ void samplv1_sched::sync_pending (void)
+ }
+ 
+ 
++// cancel pending schedules of an instance, immediately. (static)
++void samplv1_sched::sync_cancel ( samplv1 *pSampl )
++{
++	if (g_sched_thread)
++		g_sched_thread->sync_cancel(pSampl);
++}
++
++
+ void samplv1_sched::sync_reset (void)
+ {
+ 	if (g_sched_thread)
+diff --git a/src/samplv1_sched.h b/src/samplv1_sched.h
+index 484c161..8b9d55f 100644
+--- a/src/samplv1_sched.h
++++ b/src/samplv1_sched.h
+@@ -58,8 +58,8 @@ class samplv1_sched
+ 	// scheduled processor.
+ 	void sync_process();
+ 
+-	// (pure) virtual processor.
+-	virtual void process(int sid) = 0;
++	// virtual processor.
++	virtual void process(int /*sid*/) {}
+ 
+ 	// signal broadcast (static).
+ 	static void sync_notify(samplv1 *pSampl, Type stype, int sid);
+@@ -89,6 +89,9 @@ class samplv1_sched
+ 	static void sync_pending();
+ 	static void sync_reset();
+ 
++	// cancel pending schedules of an instance, immediately. (static)
++	static void sync_cancel(samplv1 *pSampl);
++
+ private:
+ 
+ 	// instance variables.

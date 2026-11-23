@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# Lay out mod-host's source at the commit of the FreeMixer fork that .github/pins.txt names: the one source of the
+# Lay out mod-host's source at the commit of the OpenMixer fork that .github/pins.txt names: the one source of the
 # mod-host packages and of the protocol library the source builds in CI use. The fork carries the upstream pull
 # requests as commits, so nothing is applied here.
 #

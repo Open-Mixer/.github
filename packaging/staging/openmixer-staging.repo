@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The staging channel of a release wave, beside the real one (docs/release-operations.md). Needs openmixer-release
+# installed first: the key is the one it installs. priority=10 is above the real repositories (no priority, dnf's
+# default 99), so a package the staging channel holds is taken from it.
+[openmixer-staging]
+name=OpenMixer staging
+baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=10
+
+[openmixer-staging-noarch]
+name=OpenMixer staging (noarch)
+baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/noarch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=10

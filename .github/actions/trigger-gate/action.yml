@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: trigger-gate
+description: Fail when a workflow other than the repository's one lint workflow runs on push, pull_request, pull_request_target or merge_group
+
+# The delivery rule: no heavy Action runs on a push or a pull request. Actions keep tags,
+# workflow_dispatch, workflow_call, schedule, repository_dispatch and release, plus at most ONE cheap lint workflow
+# per repository. The exception is named by the `lint-workflow` input (the file name under .github/workflows/): the
+# calling repository's one lint workflow calls this action with its own name, and that is the only file allowed the
+# four refused triggers. A push limited to tags (`push: {tags: [...]}`, no branches or paths) is the release and passes.
+# The caller has checked the repository out. The action first proves the check goes red on each planted failure.
+
+inputs:
+  lint-workflow:
+    description: File name (under .github/workflows/) of the repository's one lint workflow, the only one allowed push/pull_request triggers
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        LINT_WORKFLOW: ${{ inputs.lint-workflow }}
+      run: |
+        "$GITHUB_ACTION_PATH/check.sh" --self-test
+        "$GITHUB_ACTION_PATH/check.sh" --lint "$LINT_WORKFLOW" "$GITHUB_WORKSPACE"

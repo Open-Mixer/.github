@@ -39,6 +39,12 @@ inputs:
   republish:
     description: "'true' lets a release go out again over a version the channel already serves (a rerun that must finish a partial publish)"
     default: 'false'
+  catch-up:
+    description: >-
+      'true' for a catch-up run (release-matrix): the already-served check does not run, because the plan holds only
+      cells the channel lacks for this version and the publish refuses to write any file the channel holds. With
+      republish it is refused: a catch-up never rewrites a served file, and republish does.
+    default: 'false'
   gpg-key:
     default: ''
   gpg-passphrase:
@@ -63,6 +69,7 @@ runs:
         REPUBLISH: ${{ inputs.republish }}
         KIND: ${{ inputs.kind }}
         RELEASES: ${{ inputs.releases }}
+        CATCH_UP: ${{ inputs.catch-up }}
       run: |
         set -euo pipefail
         if [ "$PUBLISH" != true ] || { [ "$REQUIRE_TAG" = true ] && [ "$REF_TYPE" != tag ]; }; then
@@ -70,6 +77,10 @@ runs:
           exit 0
         fi
         echo "::notice::release of $TAG: sign and publish to $TARGET"
+        if [ "${CATCH_UP:-false}" = true ] && [ "$REPUBLISH" = true ]; then
+          echo "::error::catch-up and republish together: a catch-up never rewrites a served file, and republish does. Pick one."
+          exit 1
+        fi
 
         # a work marker becoming the published version cannot be undone: rpm and dpkg have no downgrade
         if [ "$REQUIRE_TAG" = true ]; then
@@ -84,7 +95,7 @@ runs:
         [ -n "$GPG_KEY" ] || missing="$missing signing-key"
         [ -n "$PAGES_TOKEN" ] || missing="$missing PAGES_TOKEN"
         if [ -n "$missing" ]; then
-          echo "::error::missing secrets:$missing -- create them as FreeMixer organisation secrets shared with this repository"
+          echo "::error::missing secrets:$missing -- create them as Open-Mixer organisation secrets shared with this repository"
           exit 1
         fi
 
@@ -101,7 +112,9 @@ runs:
 
         # Moving old tags (a history rewrite) re-runs their release workflows. A version the channel already serves
         # is never published again: the same NEVRA / deb version would be refused by dnf and apt, or worse, replaced.
-        if [ "$REQUIRE_TAG" = true ] && [ -n "$PACKAGES" ] && [ "$REPUBLISH" != true ]; then
+        if [ "${CATCH_UP:-false}" = true ]; then
+          echo "::notice::catch-up of $TAG: the version is served, so the already-served check does not run; the plan holds only the cells the channel lacks, and the publish refuses to write any file the channel holds"
+        elif [ "$REQUIRE_TAG" = true ] && [ -n "$PACKAGES" ] && [ "$REPUBLISH" != true ]; then
           code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/tree.json -w '%{http_code}' \
             -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")

@@ -9,8 +9,33 @@
 # scope, are not pointers and are not matched.
 #
 #   check.sh [ROOT]               the check, over every file ROOT (default: the current directory) tracks
-#   check.sh --messages RANGE     the same patterns, over the message of every commit in RANGE
+#   check.sh [--upstream-url U] --messages RANGE
+#                                 the same patterns, over the message of every commit in RANGE
+#                                 (less the paths of git's own conflict block that name files of that commit); with U, a
+#                                 fork's upstream commits are exempt through ../upstream-exempt/upstream-exempt.sh (the one
+#                                 source: U an exact listed URL, not rewritten, fetched, the commit its ancestor); our own
+#                                 commits and merges keep the check
+#   check.sh --msg-file FILE [--msg-file FILE ...]
+#                                 the same patterns, over messages before their commits exist (the commit-msg hook,
+#                                 through commit-message-check; the host pre-push, every message a push sends, in ONE run
+#                                 and so ONE lookup of the target); git's comment lines are not part of one. Every line a
+#                                 message's judgement prints is prefixed "FILE: ", its verdict line included, so a caller
+#                                 names each message by its file. Exit 2 when any file is unreadable, else 1 when any
+#                                 message points into a private repository, else 0
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
+#
+#   check.sh --applies [ROOT]     the opt-out alone, for a public repository's other checks: the skip line and
+#                                 "applies: no", or "applies: yes"; refused (2) like every other mode
+#
+# The check runs on every repository; a repository opts out only by being private AND carrying the topic stays-private.
+# Every mode but --self-test first reads the TARGET repository's visibility and topics from GitHub, live, in one lookup:
+# GET repos/OWNER/REPO at GITHUB_API_URL (default https://api.github.com), through python3's urllib with GH_TOKEN, else
+# GITHUB_TOKEN, so a runner needs no gh and no jq. private with stays-private: skipped, with a line naming the
+# repository. Any other answer, public, internal or private, with the topic or without it: checked, since a topic never
+# exempts a public repository. No token, an unknown visibility, topics that are not a list, an answer that is not that
+# JSON, or a lookup that fails: REFUSED, exit 2, never a silent skip. The target is --repo OWNER/REPO (any position),
+# else GITHUB_REPOSITORY, else, for the tree, range and --applies modes, the GitHub origin of the repository read.
+# --msg-file has no repository of its own to read, so without --repo or GITHUB_REPOSITORY it is refused.
 #
 # Nothing is exempt, this script included: it builds every shape it looks for and plants from parts, so that no line
 # of it spells one.
@@ -18,12 +43,13 @@ set -euo pipefail
 
 # Extended regexps, matched case-insensitively. A new kind of pointer is one line here.
 PATTERNS=(
-  'FreeMixer/''openmixer([^A-Za-z0-9_-]|$)'             # the private repository
+  '(FreeMixer|Open-Mixer)/''openmixer([^A-Za-z0-9_-]|$)' # the private repository, under either organisation
   'openmixer''-ops'                                     # the private operations repository
   'openmixer ?#[0-9]'                                 # one of its issues or pull requests
   '[A-Za-z0-9_.]-dev#[0-9]'                           # an issue of a private *-dev repository
   'integration/[A-Za-z0-9]'                           # a private integration branch
-  'packages/[a-z][a-z0-9-]+'                          # a path into the private repository's packages
+  '(^|[^A-Za-z0-9_-])packages/[a-z][a-z0-9-]+'        # a path into the private repository's packages: the segment
+                                                      # itself, never the tail of dist-packages or site-packages
   '\.''vue([^A-Za-z0-9_]|$)'                            # its web UI components
   "openmixer's"" spec"                                  # its specification files
   'docs/''design/'                                      # its design documents
@@ -66,8 +92,39 @@ check() { # <root>
   echo "private-refs-check: no tracked file points into a private repository"
 }
 
+without_conflict_block() { # <sha>: its message on stdin, less the paths of git's own conflict block
+  # git writes a line "# Conflicts:" and then one "#<TAB><path>" line per file it could not merge. Such a line is
+  # skipped only when <path> is a file in this commit's own tree; any other line of the block, and every line after
+  # it (the block ends at the first line that is not "#<TAB>..."), is read like the rest of the message.
+  local sha="$1" line p in=0 tab=$'\t'
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = '# Conflicts:' ]; then in=1; printf '%s\n' "$line"; continue; fi
+    if [ "$in" = 1 ] && [ "${line:0:2}" = "#$tab" ]; then
+      p="${line:2}"
+      # git names it from the top of the tree: never empty, absolute, dotted or doubled, so <sha>:<path> reads only it
+      if [ -n "$p" ] && [[ "$p" != /* && "$p" != */ && "$p" != ./* && "$p" != ../* && "$p" != *//* && "$p" != */./* && "$p" != */../* ]] &&
+        [ "$(git -c safe.directory="$PWD" cat-file -t "$sha:$p" 2>/dev/null)" = blob ]; then continue; fi
+    else
+      in=0
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+UXS=$(dirname "${BASH_SOURCE[0]}")/../upstream-exempt/upstream-exempt.sh
+ux_state=; ux_reason=
+# exempt <sha>: the upstream exemption (upstream-exempt.sh, the one source) for a commit whose message has a hit; lazy, so a
+# clean range fetches nothing, and with no --upstream-url there is no exemption at all
+exempt() {
+  [ -n "$UPSTREAM_URL" ] || return 1
+  if [ -z "$ux_state" ]; then
+    if ux_reason=$("$UXS" prepare "$UPSTREAM_URL" 2>&1); then ux_state=ok; else ux_state=no; fi
+  fi
+  [ "$ux_state" = ok ] && "$UXS" holds "$1"
+}
+
 messages() { # <range>, in the current directory
-  local range="$1" args=() hargs=() p shas sha bad=0 n=0 text
+  local range="$1" args=() hargs=() p shas sha bad=0 n=0 text exempted=0 out
   for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
   for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
   shas=$(git -c safe.directory="$PWD" rev-list "$range") || { echo "private-refs-check: git cannot read $range" >&2; return 1; }
@@ -80,16 +137,122 @@ messages() { # <range>, in the current directory
   while IFS= read -r sha; do
     n=$((n + 1))
     text=$(git -c safe.directory="$PWD" log -1 --format=%B "$sha") || { echo "private-refs-check: git cannot read $sha" >&2; return 1; }
-    if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
+    text=$(without_conflict_block "$sha" <<<"$text")
+    out=$(grep -iE "${args[@]}" <<<"$text"; grep -E "${hargs[@]}" <<<"$text" || :)
+    if [ -n "$out" ]; then
+      if exempt "$sha"; then exempted=$((exempted + 1)); continue; fi
+      printf '%s\n' "$out" >&2
       echo "private-refs-check: commit ${sha:0:12} points into a private repository; the lines above" >&2; bad=1
+      [ -z "$UPSTREAM_URL" ] || [ "$ux_state" != no ] || echo "private-refs-check: ${sha:0:12}: no upstream exemption: ${ux_reason#upstream-exempt: }" >&2
     fi
   done <<<"$shas"
   [ "$bad" = 0 ] || return 1
-  echo "private-refs-check: $n commit messages read, none points into a private repository"
+  echo "private-refs-check: $n commit messages read, none points into a private repository$([ "$exempted" = 0 ] || echo ", $exempted upstream commits exempt")"
+}
+
+msg_file() { # <file>: one commit message as the commit-msg hook hands it over
+  local f="$1" args=() hargs=() p text
+  [ -f "$f" ] && [ -r "$f" ] || { echo "private-refs-check: cannot read the message $f, so nothing was judged" >&2; return 2; }
+  for p in "${PATTERNS[@]}"; do args+=(-e "$p"); done
+  for p in "${HOSTS[@]}"; do hargs+=(-e "$p"); done
+  text=$(grep -vE '^#( |	|$)' "$f" || true)   # git's comment lines only: a hash and a space or tab, or a bare hash
+  if grep -iE "${args[@]}" <<<"$text" >&2 || grep -E "${hargs[@]}" <<<"$text" >&2; then
+    echo "private-refs-check: the commit message points into a private repository; the lines above. State the fact instead." >&2
+    return 1
+  fi
+  echo "private-refs-check: the commit message points into no private repository"
+}
+
+refuse() { echo "private-refs-check: REFUSED: $*" >&2; exit 2; }
+by_file() { local l; while IFS= read -r l; do printf '%s: %s\n' "$1" "$l"; done; } # <file>: each line read, named by its file
+
+REPO=
+REPO_SET=0
+UPSTREAM_URL=
+rest=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) [ $# -ge 2 ] && [ -n "$2" ] || refuse "--repo needs OWNER/REPO"; REPO=$2; REPO_SET=1; shift 2 ;;
+    --repo=*) REPO=${1#--repo=}; [ -n "$REPO" ] || refuse "--repo needs OWNER/REPO"; REPO_SET=1; shift ;;
+    --upstream-url) [ $# -ge 2 ] && [ -n "$2" ] || refuse "--upstream-url needs a URL"; UPSTREAM_URL=$2; shift 2 ;;
+    *) rest+=("$1"); shift ;;
+  esac
+done
+set -- "${rest[@]+"${rest[@]}"}"
+
+origin_repo() { # <dir>: OWNER/REPO of the GitHub origin of the repository at <dir>, or nothing
+  local url re='github\.com[:/]+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/?$' r
+  url=$(git -c safe.directory="$1" -C "$1" remote get-url origin 2>/dev/null) || return 0
+  [[ $url =~ $re ]] || return 0
+  r=${BASH_REMATCH[2]}; r=${r%.git}
+  printf '%s/%s\n' "${BASH_REMATCH[1]}" "$r"
+}
+
+APPLIES_MODE=0
+# the one lookup, standard library only: prints check or skip, or names what it could not read on stderr and exits 2
+LOOKUP_PY='
+import json, os, sys, urllib.request
+repo = sys.argv[1]
+tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")  # from the environment, never the command line
+api = (os.environ.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
+url = "%s/repos/%s" % (api, repo)
+req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer " + tok,
+                                           "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "private-refs-check"})
+def no(why):
+    print("%s, so the visibility and topics of %s are not known" % (why, repo), file=sys.stderr)
+    sys.exit(2)
+try:
+    with urllib.request.urlopen(req, timeout=30) as r:
+        raw = r.read()
+except Exception as e:
+    no("GET %s failed (%s)" % (url, str(e)[:160]))
+try:
+    d = json.loads(raw)
+except ValueError:
+    no("GitHub answered no JSON (%r)" % raw[:80])
+if not isinstance(d, dict):
+    no("GitHub answered no object")
+v, t = d.get("visibility"), d.get("topics")
+if v not in ("public", "internal", "private"):
+    no("GitHub gave no known visibility (%r)" % (v,))
+if not isinstance(t, list) or not all(isinstance(x, str) for x in t):
+    no("GitHub gave no list of topics (%r)" % (t,))
+print("skip" if v == "private" and "stays-private" in t else "check")
+'
+
+applies() { # <dir to read the origin of, or ''>: returns when the check runs; prints the skip and exits 0 when the
+  # target is private and carries the topic stays-private; refuses (exit 2) when the target, its visibility or its
+  # topics are not known
+  local dir=$1 repo=$REPO tok verdict rc=0
+  if [ "$REPO_SET" = 0 ]; then
+    repo=${GITHUB_REPOSITORY:-}
+    [ -n "$repo" ] || [ -z "$dir" ] || repo=$(origin_repo "$dir")
+  fi
+  [ -n "$repo" ] || refuse "no target repository: pass --repo OWNER/REPO (in CI, GITHUB_REPOSITORY)${dir:+, or read a repository whose origin is on GitHub}; only a private repository with the topic stays-private is skipped, and which this is cannot be read"
+  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || refuse "the target '$repo' is not owner/repo"
+  tok=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  [ -n "$tok" ] || refuse "no token: set GH_TOKEN (or GITHUB_TOKEN; in CI the run's github.token) so the visibility and topics of $repo can be read"
+  command -v python3 >/dev/null || refuse "python3 is not on PATH, so the visibility and topics of $repo cannot be read"
+  verdict=$(python3 -I -c "$LOOKUP_PY" "$repo" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || refuse "${verdict:0:300}"
+  case "$verdict" in
+    check) [ "$APPLIES_MODE" = 0 ] || { echo "applies: yes"; exit 0; }; return 0 ;;
+    skip) echo "private-refs-check: $repo is private and carries the topic stays-private: the public-repo check does not apply, skipped"
+      [ "$APPLIES_MODE" = 0 ] || echo "applies: no"; exit 0 ;;
+    *) refuse "the lookup gave no answer for $repo" ;;
+  esac
 }
 
 if [ "${1:-}" = --self-test ]; then
   scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
+  # the fixture repositories read none of the host's git config and never run an editor: on omx and omx2 (2026-11-23)
+  # tag.gpgsign made the plain `tag base` below an annotated tag that asked EDITOR=/usr/bin/nano for a message, with no
+  # terminal, and the self-test failed there (rc 1) whatever the checker's version
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_EDITOR=true
+  # the message mode reads its target's visibility and topics first; here a file:// API answers public, so the patterns
+  # alone are judged, whatever repository (an opted-out one too) the self-test runs in, and with no token of its own
+  mkdir -p "$scratch/api/repos/Open-Mixer"; printf '{"visibility":"public","topics":[]}\n' > "$scratch/api/repos/Open-Mixer/self-test"
+  msgf() { env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY GH_TOKEN=self-test GITHUB_API_URL="file://$scratch/api" bash "$0" --repo Open-Mixer/self-test --msg-file "$@"; }
   fail=0
   # a clean tree with one file of each kind a repository tracks; every sabotage writes one private pointer into one
   mk() { rm -rf "$scratch/t"; mkdir -p "$scratch/t/src" "$scratch/t/tools" "$scratch/t/docs"
@@ -103,7 +266,8 @@ if [ "${1:-}" = --self-test ]; then
     if check "$scratch/t" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
   mk; git -C "$scratch/t" add -A
   check "$scratch/t" >/dev/null || { echo "self-test: the clean tree is not green" >&2; exit 1; }
-  sab repo-in-header src/x.h                         '/* as FreeMixer/''openmixer draws it */'
+  sab repo-in-header src/x.h                         '/* as Open-Mixer/''openmixer draws it */'
+  sab repo-old-org   src/y.h                         '/* as FreeMixer/''openmixer drew it */'
   sab branch-in-sh   tools/x.sh                      '# drawn on integration''/lean-engine'
   sab issue-in-md    docs/a.md                       'see openmixer''#1580'
   sab path-in-md     docs/a.md                       'packages''/web-ui/Foo.v''ue'
@@ -113,8 +277,10 @@ if [ "${1:-}" = --self-test ]; then
   sab spec-in-mjs    tools/gen.mjs                   "// openmixer's"" sp""ec 20""26-10-09-plugin-from-contract"".md"
   sab dated-filename tools/gen.mjs                   '// the layout in 2026-10-09-plugin-from-contract''.md'
   sab dated-citation tools/gen.mjs                   '// as laid out in spec ''2026-10-09'
-  sab ttl            src/x.ttl       'rdfs:comment "see FreeMixer/''openmixer''#12" ;'
+  sab ttl            src/x.ttl       'rdfs:comment "see Open-Mixer/''openmixer''#12" ;'
   sab header         src/x.h         '/* packages''/core/src/x.ts */'
+  sab path-quoted    docs/a.md                       'the server in `packages''/server/src/x`'
+  sab path-in-path   tools/x.sh                      'ls ../packages''/server/src/x'
   sab design-dir     docs/a.md                       'the notes in docs/''design/specs'
   sab harness-dir    tools/gen.mjs                   '// harness''/dsp-check.sh'
   sab other-project  docs/a.md                       'see zero''signage/platform'
@@ -133,7 +299,8 @@ if [ "${1:-}" = --self-test ]; then
   # what the patterns leave alone, each a line a public repository really carries
   mk; { printf '%s\n' 'R1 and R14 are open questions' 'double r1 = 0.5, h2 = x;' '<h2 class="omx-section-title">Comp</h2>' \
         'at $r1, the rate' 'const f = { r1: rot(3, 1024) };' '"id": "ms''i-20261017"' '/home/u/.clap' '/home/user/.lv2/a.ttl' \
-        '/home/u/.local/share/omx/qualified' >> "$scratch/t/docs/a.md"; }; git -C "$scratch/t" add -A
+        '/home/u/.local/share/omx/qualified' 'usr/lib/python3/dist-packages/plugin_hostd' 'lib/python3.14/site-packages/plugin_hostd/client.py' \
+        >> "$scratch/t/docs/a.md"; }; git -C "$scratch/t" add -A
   if check "$scratch/t" >/dev/null 2>&1; then echo "LEGAL lines: green"; else echo "LEGAL lines: RED"; check "$scratch/t" 2>&1 | sed 's/^/  /'; fail=1; fi
   # the same patterns over commit messages
   mk; git -C "$scratch/t" add -A; g() { git -C "$scratch/t" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
@@ -153,6 +320,38 @@ if [ "${1:-}" = --self-test ]; then
     if ( cd "$scratch/t" && messages base..HEAD >/dev/null 2>&1 ); then echo "SABOTAGE message [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE message: red"; fi
     g reset -q --hard HEAD~1
   done
+  # git's own conflict block names files of the commit's own tree: those lines are skipped, and nothing else is
+  cp='packages''/server/src/x.test.ts' LF=$'\n' T=$'\t'
+  mkdir -p "$scratch/t/${cp%/*}"; printf 'x\n' > "$scratch/t/$cp"; g add -A; g commit -q -m 'a file'
+  cmsg() { # <name> <green|red> <message>: one commit with that message, read with the file in the commit's tree
+    local out rc=0
+    printf '%s\n' "$3" > "$scratch/cmsg"; g commit -q --allow-empty --cleanup=verbatim -F "$scratch/cmsg"
+    out=$(cd "$scratch/t" && messages HEAD~1..HEAD 2>&1) || rc=$?
+    g reset -q --hard HEAD~1
+    if [ "$2" = green ]; then
+      if [ "$rc" = 0 ]; then echo "MESSAGES $1: green"; else echo "MESSAGES $1: RED"; printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+    elif [ "$rc" = 0 ]; then echo "SABOTAGE $1: STAYED GREEN"; fail=1
+    elif grep -q 'points into a private repository' <<<"$out"; then echo "SABOTAGE $1: red"
+    else echo "SABOTAGE $1: red for another reason: $out"; fail=1; fi; }
+  cmsg conflict-block           green "Merge main into the branch${LF}${LF}# Conflicts:${LF}#${T}$cp"
+  cmsg conflict-path-not-in-tree red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}#${T}${cp%.test.ts}.gone.ts"
+  cmsg conflict-host            red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}#${T}ms""i.example.lan"
+  cmsg conflict-absolute-path   red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}/var/tmp/w/$cp"
+  cmsg conflict-dot-path        red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}./$cp"
+  cmsg conflict-line-after      red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}see openmixer""-ops"
+  cmsg conflict-other-spelling  red   "Merge main${LF}${LF}# conflicts:${LF}#${T}$cp"
+  cmsg conflict-block-ended     red   "Merge main${LF}${LF}# Conflicts:${LF}#${T}$cp${LF}${LF}#${T}$cp"
+  g reset -q --hard HEAD~1
+  # one message, as the commit-msg hook hands it over: git's comment lines are not part of it
+  printf 'a change\n\nclean, R1 and R14 stay legal\n# a comment git drops: see openmixer''#1580\n# On branch integration''/x\n#\tmodified:   harness''/a.sh\n#\n' > "$scratch/msg-clean"
+  if ( msgf "$scratch/msg-clean" >/dev/null 2>&1 ); then echo "MSG-FILE clean: green"; else echo "MSG-FILE clean: RED"; fail=1; fi
+  # a line that starts with an issue number is the message's own, not a git comment: it is judged
+  for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on r''1 overnight' '#345 regenerated packages''/pipewire-native/src/x.h'; do
+    printf 'a change\n\n%s\n' "$line" > "$scratch/msg-bad"
+    if ( msgf "$scratch/msg-bad" >/dev/null 2>&1 ); then echo "SABOTAGE msg-file [$line]: STAYED GREEN"; fail=1; else echo "SABOTAGE msg-file: red"; fi
+  done
+  rc=0; msgf "$scratch/no-such-file" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" = 2 ]; then echo "SABOTAGE msg-file unreadable: red (2)"; else echo "SABOTAGE msg-file unreadable: exit $rc, not 2"; fail=1; fi
   mk; git -C "$scratch/t" add -A
   if ( EXTRA_PATHSPEC=(":(bogus)x"); check "$scratch/t" >/dev/null 2>&1 ); then echo "SABOTAGE git-grep-error: STAYED GREEN"; fail=1; else echo "SABOTAGE git-grep-error: red"; fi
   # nothing is exempt: a file that lists exemptions exempts nothing, and is itself no reason to look away
@@ -172,10 +371,29 @@ if [ "${1:-}" = --self-test ]; then
   echo "private-refs-check self-test: every sabotage red"
   exit 0
 fi
+if [ "${1:-}" = --msg-file ]; then
+  files=()
+  while [ $# -gt 0 ]; do
+    [ "$1" = --msg-file ] && [ -n "${2:-}" ] || { echo "usage: check.sh --repo OWNER/REPO --msg-file FILE [--msg-file FILE ...]" >&2; exit 2; }
+    files+=("$2"); shift 2
+  done
+  applies ''                      # the one lookup, whatever the number of messages; a skip exits here, judging none
+  worst=0
+  for f in "${files[@]}"; do
+    rc=0; out=$(msg_file "$f" 2>&1) || rc=$?
+    if [ "$rc" = 0 ]; then by_file "$f" <<<"$out"; else by_file "$f" <<<"$out" >&2; fi
+    if [ "$rc" = 2 ]; then worst=2; elif [ "$rc" != 0 ] && [ "$worst" = 0 ]; then worst=1; fi
+  done
+  exit "$worst"
+fi
 if [ "${1:-}" = --messages ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh --messages RANGE" >&2; exit 2; }
+  [ -n "${2:-}" ] || { echo "usage: check.sh [--repo OWNER/REPO] [--upstream-url U] --messages RANGE" >&2; exit 2; }
+  applies "$PWD"
   messages "$2"
   exit
 fi
-root="${1:-.}"
-check "$(cd "$root" && pwd)"
+if [ "${1:-}" = --applies ]; then APPLIES_MODE=1; shift; fi
+case "${1:-}" in -*) echo "usage: check.sh [--repo OWNER/REPO] [ROOT | --applies [ROOT] | --messages RANGE | --msg-file FILE] | --self-test" >&2; exit 2 ;; esac
+root=$(cd "${1:-.}" && pwd) || { echo "private-refs-check: cannot enter ${1:-.}, so nothing was read" >&2; exit 2; }
+applies "$root"
+check "$root"

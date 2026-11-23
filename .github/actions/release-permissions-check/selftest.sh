@@ -6,7 +6,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
-mk() { printf 'on: push\n%sjobs:\n  release:\n%s    uses: FreeMixer/.github/.github/workflows/release-c-lib.yml@v1\n' "$1" "$2" > "$t/$3"; }
+mk() { printf 'on: push\n%sjobs:\n  release:\n%s    uses: Open-Mixer/.github/.github/workflows/release-c-lib.yml@main\n' "$1" "$2" > "$t/$3"; }
 mk $'permissions: {contents: write, issues: write, actions: read}\n' '' ok.yml
 mk $'permissions: {contents: write, actions: read}\n' '' no-issues.yml
 mk $'permissions: {contents: write, issues: write, actions: read}\n' $'    permissions: {contents: read}\n' job-narrows.yml

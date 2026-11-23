@@ -9,6 +9,15 @@ act=$here/.github/actions/commit-message-check
 chk=$act/commit-message-check.sh
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
+# the message mode hands its target repository to private-refs-check, which reads that repository's visibility and
+# topics from GitHub through python3's urllib: a file:// API stands in (repos/OWNER/REPO holds the answer), with a token
+API=$tmp/api; mkdir -p "$API/repos/Open-Mixer"
+ans() { printf '%s\n' "$2" > "$API/repos/Open-Mixer/$1"; }
+PUB='{"visibility":"public","topics":[]}'; STAYS='{"visibility":"private","topics":["stays-private"]}'
+ans commit-message-fixture "$PUB"; ans house-fixture "$PUB"
+export GITHUB_API_URL="file://$API" GH_TOKEN=fixture-token GITHUB_REPOSITORY=Open-Mixer/commit-message-fixture; unset GITHUB_ACTIONS GITHUB_TOKEN
+# a PATH with no gh, for the arms that must see no token anywhere
+mkdir -p "$tmp/nogh"; for f in /usr/local/bin/* /usr/bin/* /bin/*; do n=${f##*/}; [ "$n" = gh ] || [ -e "$tmp/nogh/$n" ] || ln -s "$f" "$tmp/nogh/$n" 2>/dev/null || true; done
 
 "$chk" --selftest | grep -q '^selftest: GREEN' || fail "selftest not green"
 
@@ -30,7 +39,7 @@ ident() { # name email subject: one empty commit on a fresh topic branch, author
 ident "Pau Aliagas" linuxnow@gmail.com "ordinary change"
 CE=commits@openmixer.org ident "Pau Aliagas" linuxnow@gmail.com "ordinary change"
 "$chk" main..HEAD >/dev/null || fail "ordinary author and committer were refused"
-ident GitHub noreply@github.com "Merge pull request #393 from FreeMixer/hostd-385-fix"
+ident GitHub noreply@github.com "Merge pull request #393 from Open-Mixer/hostd-385-fix"
 "$chk" main..HEAD >/dev/null || fail "a GitHub merge was refused"
 ident "$cn" "$ae" "ordinary change"
 if "$chk" main..HEAD >/dev/null; then fail "a commit authored by $cn passed"; fi
@@ -38,11 +47,11 @@ CN=$cn CE=$ae ident "Pau Aliagas" linuxnow@gmail.com "ordinary change"
 if "$chk" main..HEAD >/dev/null; then fail "a commit committed by $cn passed"; fi
 ident "Pau Aliagas" "bot@$an.com" "ordinary change"
 if "$chk" main..HEAD >/dev/null; then fail "a commit with an $an.com address passed"; fi
-ident GitHub noreply@github.com "Merge pull request #393 from FreeMixer/${cl}/hostd-385-fix"
+ident GitHub noreply@github.com "Merge pull request #393 from Open-Mixer/${cl}/hostd-385-fix"
 if "$chk" main..HEAD >/dev/null; then fail "a merge of a ${cl}/ branch passed"; fi
 ident GitHub noreply@github.com "Merge branch '${cl}/x' into main"
 if "$chk" main..HEAD >/dev/null; then fail "a local merge of a ${cl}/ branch passed"; fi
-ident GitHub noreply@github.com "Merge pull request #5 from FreeMixer/fix/.${cl}-dir-note"
+ident GitHub noreply@github.com "Merge pull request #5 from Open-Mixer/fix/.${cl}-dir-note"
 "$chk" main..HEAD >/dev/null || fail "a branch that only mentions .${cl} was refused"
 git checkout -q main
 
@@ -63,25 +72,228 @@ head -4 "$act/commit-msg" | grep -q '^# Copyright (C) ' || fail "the stub has no
 stub=$act/commit-msg
 git init -q "$tmp/o"; cp -r "$here/.github" "$tmp/o/"
 G="git -C $tmp/o -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false -c tag.gpgsign=false"
-$G add -A; $G commit -qm one; $G tag v1
+# the tag v1 the old stubs read stays on a frozen commit; the release line openmixer-v1 is a branch that moves ahead of it
+$G add -A; $G commit -qm frozen; $G tag v1; $G commit -q --allow-empty -m one; $G branch -f openmixer-v1
 git clone -q --bare "$tmp/o" "$tmp/o.git"
 mkdir -p "$tmp/home" "$tmp/s/r"; git -C "$tmp/s/r" init -q
 echo "clean change" > "$tmp/msg"; printf 'change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/bad"
-hook() { (cd "$tmp/s/r" && env -u FREEMIXER_DOTGITHUB HOME=$tmp/home FREEMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
+# the house identity: the commit-msg mode judges who commits as well as what the message says
+HOUSE=(GIT_AUTHOR_NAME="Pau Aliagas" GIT_AUTHOR_EMAIL=linuxnow@gmail.com GIT_COMMITTER_NAME="Pau Aliagas" GIT_COMMITTER_EMAIL=commits@openmixer.org)
+hook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
 rc=0; out=$(hook "$tmp/none.git" "$tmp/msg" 2>&1) || rc=$?
 [ "$rc" = 1 ] || fail "with no checker anywhere the stub gave $rc, not 1"
 grep -q 'no commit-message checker at' <<<"$out" || fail "with no checker anywhere the stub did not say why: $out"
-[ ! -e "$tmp/home/.cache/omx/freemixer-dotgithub" ] || fail "a failed clone left a cache behind"
-hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the stub did not clone v1 and pass a clean message"
-cache=$tmp/home/.cache/omx/freemixer-dotgithub
-[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse v1)" ] || fail "the first use did not clone v1"
+[ ! -e "$tmp/home/.cache/omx/openmixer-dotgithub" ] || fail "a failed clone left a cache behind"
+hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the stub did not clone openmixer-v1 and pass a clean message"
+cache=$tmp/home/.cache/omx/openmixer-dotgithub
+[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "the first use did not clone openmixer-v1 (it read the frozen tag v1?)"
 if hook "$tmp/o.git" "$tmp/bad" >/dev/null 2>&1; then fail "the stub passed an attributed message"; fi
-touch "$tmp/o/moved"; $G add -A; $G commit -qm two; $G tag -f v1 >/dev/null; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/tags/v1
+
+# the subject is followed by a blank line: git reads everything up to the first blank line as the subject, so a body
+# line directly under the subject publishes a whole paragraph as the subject. Refused by name in both doors (a range, and
+# the hook on a message file) through the one checker; a one-line message, git's own trailing newline, the comment lines
+# git adds to a message file and the diff below the scissors line of commit -v are not a second line
+rule='the subject is not followed by a blank line'
+msgcommit() { # file: one empty commit on a fresh topic branch whose message is the file, as git cleans it
+  git checkout -q main; git branch -q -D t 2>/dev/null || true; git checkout -q -b t; git commit -q --allow-empty -F "$1"
+}
+printf 'a change\nits body starts here with no blank line\n' > "$tmp/b-none"
+printf 'a change\n\nits body starts after a blank line\n' > "$tmp/b-blank"
+printf 'a change\n' > "$tmp/b-one"
+printf 'a change' > "$tmp/b-bare"
+printf 'Merge pull request #393 from Open-Mixer/hostd-385-fix\n\nthe title of the pull request\n' > "$tmp/b-merge"
+printf 'a change\n# Please enter the commit message for your changes.\n#\n# On branch t\n' > "$tmp/b-comments"
+printf 'a change\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+x\n' > "$tmp/b-scissors"
+printf 'a change\n# a comment line\nits body starts here with no blank line\n' > "$tmp/b-comment-between"
+miss=()
+msgcommit "$tmp/b-none"; sha=$(git rev-parse --short=12 HEAD)
+rc=0; out=$("$chk" main..HEAD 2>&1) || rc=$?
+[ "$rc" = 1 ] && grep -q "^$sha: .*$rule" <<<"$out" || miss+=("(a) a range: a body line directly under the subject was not refused by name (rc $rc)")
+for f in b-blank b-one b-bare b-merge; do
+  msgcommit "$tmp/$f"; "$chk" main..HEAD >/dev/null 2>&1 || miss+=("a range: $f was refused")
+done
+git checkout -q main
+rc=0; out=$(hook "$tmp/o.git" "$tmp/b-none" 2>&1) || rc=$?
+[ "$rc" = 1 ] && grep -q "^commit message: .*$rule" <<<"$out" || miss+=("(d) the hook: a body line directly under the subject was not refused by name (rc $rc)")
+rc=0; out=$(hook "$tmp/o.git" "$tmp/b-comment-between" 2>&1) || rc=$?
+[ "$rc" = 1 ] && grep -q "$rule" <<<"$out" || miss+=("the hook: a body line under the subject and a comment line was not refused by name (rc $rc)")
+for f in b-blank b-one b-bare b-merge b-comments b-scissors; do
+  hook "$tmp/o.git" "$tmp/$f" >/dev/null 2>&1 || miss+=("the hook: $f was refused")
+done
+[ "${#miss[@]}" = 0 ] || fail "the blank line after the subject: $(printf '%s; ' "${miss[@]}")"
+touch "$tmp/o/moved"; $G add -A; $G commit -qm two; $G branch -f openmixer-v1; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/heads/openmixer-v1
 touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
 hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>&1 || fail "the refreshed stub refused a clean message"
-[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse v1)" ] || fail "a stale cache was not fetched at the moved v1"
+[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "a stale cache was not fetched at the moved openmixer-v1"
 mv "$tmp/o.git" "$tmp/o.away"; touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
 rc=0; hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>"$tmp/err" || rc=$?
-[ "$rc" = 0 ] && grep -q 'could not fetch v1' "$tmp/err" || fail "an unreachable remote did not fall back to the cached checker and say so (rc $rc)"
+[ "$rc" = 0 ] && grep -q 'could not fetch openmixer-v1' "$tmp/err" || fail "an unreachable remote did not fall back to the cached checker and say so (rc $rc)"
+
+# the env var moved to the openmixer name; for one transitional pass the stub also reads the old FREEMIXER_ names, the
+# new name winning, the old one read with a one-line notice (the old names are removed in a later pass)
+mv "$tmp/o.away" "$tmp/o.git"
+for w in new old; do mkdir -p "$tmp/dg$w/.github/actions/commit-message-check"
+  printf '#!/bin/sh\necho "checker=%s"\n' "$w" > "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"
+  chmod +x "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"; done
+envhook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u OPENMIXER_DOTGITHUB_URL -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home "$@" sh "$stub" "$tmp/msg" 2>"$tmp/err"); }
+out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew") || fail "the new OPENMIXER_DOTGITHUB was not read"
+[ "$out" = "checker=new" ] && [ ! -s "$tmp/err" ] || fail "the new name gave '$out' / '$(cat "$tmp/err")'"
+out=$(envhook FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "the old FREEMIXER_DOTGITHUB was not read"
+[ "$out" = "checker=old" ] || fail "the old name gave '$out'"
+grep -q 'FREEMIXER_DOTGITHUB is deprecated, use OPENMIXER_DOTGITHUB' "$tmp/err" || fail "the old name was read without a notice"
+out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew" FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "both names set: stub failed"
+[ "$out" = "checker=new" ] || fail "both names set: the new did not win ('$out')"
+rm -rf "$tmp/home/.cache"
+envhook FREEMIXER_DOTGITHUB_URL="$tmp/o.git" >/dev/null || fail "the old FREEMIXER_DOTGITHUB_URL was not read"
+grep -q 'FREEMIXER_DOTGITHUB_URL is deprecated, use OPENMIXER_DOTGITHUB_URL' "$tmp/err" || fail "the old URL name was read without a notice"
+rm -rf "$tmp/home/.cache"
+envhook OPENMIXER_DOTGITHUB_URL="$tmp/o.git" FREEMIXER_DOTGITHUB_URL="$tmp/none.git" >/dev/null || fail "both URL names set: the new did not win"
+
+# the stub as git runs it: a real commit in a throwaway repository whose core.hooksPath holds the stub. git exports GIT_DIR
+# and GIT_INDEX_FILE to a hook, and the stub's cache commands must not read them as the cache's: before, every fetch ran
+# against the committing repository, failed, and every repository kept the checker its cache first cloned
+rm -rf "$tmp/home/.cache" "$tmp/w" "$tmp/hooks"; mkdir -p "$tmp/hooks"; cp "$stub" "$tmp/hooks/commit-msg"; chmod +x "$tmp/hooks/commit-msg"
+# a linked worktree, as every working branch is: there git exports an ABSOLUTE GIT_DIR (.git/worktrees/<name>); in a plain
+# checkout it is a relative .git, which after git -C <cache> happens to name the cache's own
+git init -q "$tmp/w"; git -C "$tmp/w" -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m base
+git -C "$tmp/w" worktree add -q --detach "$tmp/wt"
+realcommit() { (cd "$tmp/wt" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" \
+  HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$tmp/o.git git -c core.hooksPath="$tmp/hooks" -c commit.gpgsign=false commit -q --allow-empty "$@") 2>"$tmp/rerr"; }
+realcommit -m "clean change" || fail "a real commit through the stub refused a clean message: $(cat "$tmp/rerr")"
+[ "$(git -C "$cache" rev-parse HEAD 2>/dev/null)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "the first real commit did not clone openmixer-v1 into the cache"
+touch "$tmp/o/moved2"; $G add -A; $G commit -qm three; $G branch -f openmixer-v1; git -C "$tmp/o" push -q --force "$tmp/o.git" refs/heads/openmixer-v1
+touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD"
+realcommit -m "another clean change" || fail "a real commit after the line moved was refused: $(cat "$tmp/rerr")"
+! grep -q 'could not fetch' "$tmp/rerr" || fail "inside a real hook the stub could not fetch: $(cat "$tmp/rerr")"
+[ "$(git -C "$cache" rev-parse HEAD)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "inside a real hook a stale cache was not fetched at the moved openmixer-v1"
+[ "$(git -C "$tmp/wt" rev-list --count HEAD)" = 3 ] || fail "the committing worktree is not where the two commits are"
+if realcommit -m "change" -m "Co-Authored""-By: Claude <noreply@anthro""pic.com>"; then fail "a real commit with an attributed message passed"; fi
+if realcommit -F "$tmp/b-none"; then fail "a real commit whose subject has no blank line after it passed"; fi
+grep -q "$rule" "$tmp/rerr" || fail "a real commit refused for its missing blank line did not say so: $(cat "$tmp/rerr")"
+realcommit -F "$tmp/b-blank" || fail "a real commit with a blank line after its subject was refused: $(cat "$tmp/rerr")"
+
+# the commit-msg mode judges a message before the commit exists, so a repository whose lanes push from post-commit never
+# publishes one it refuses: the message is also read by private-refs-check (no private repository, issue, machine or path),
+# and the commit's author and committer must be the house's (author Pau Aliagas <linuxnow@gmail.com>, committer email
+# commits@openmixer.org), the rule each repository's own author hook used to carry
+cd "$tmp/r"
+printf 'a change\n\nthe pins check: every declared pin still resolves\n' > "$tmp/m-clean"
+# the house identity is judged only in a repository whose origin names a house org (Open-Mixer or FreeMixer): a fixture
+# repository with no origin, or a foreign one, commits as anyone and the hook says so; message patterns still apply
+NOTHOUSE=(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid)
+rc=0; env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/h-err" || rc=$?
+[ "$rc" = 0 ] && grep -q 'house: not judged (no house origin)' "$tmp/h-err" || fail "a repository with no origin judged the house identity (rc $rc): $(cat "$tmp/h-err")"
+git remote add origin https://github.com/someone/elsewhere.git
+rc=0; env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/h-err" || rc=$?
+[ "$rc" = 0 ] && grep -q 'house: not judged (no house origin)' "$tmp/h-err" || fail "a repository with a foreign origin judged the house identity (rc $rc): $(cat "$tmp/h-err")"
+git remote set-url origin git@github.com:FreeMixer/house-fixture.git
+if env "${NOTHOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then fail "a FreeMixer origin let a foreign identity commit"; fi
+git remote set-url origin https://github.com/Open-Mixer/house-fixture.git
+env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null || fail "a clean message from the house identity was refused"
+for line in 'the check in harness''/pins-check.sh' 'see openmixer''#1580' 'built on ms''i overnight'; do
+  printf 'a change\n\n%s\n' "$line" > "$tmp/m-bad"
+  if env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>&1; then fail "a message naming [$line] passed the commit-msg mode"; fi
+done
+if env "${HOUSE[@]}" GIT_AUTHOR_NAME=Someone GIT_AUTHOR_EMAIL=someone@example.invalid "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then
+  fail "a commit authored by someone other than the house's passed the commit-msg mode"; fi
+if env "${HOUSE[@]}" GIT_COMMITTER_EMAIL=linuxnow@gmail.com "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>&1; then
+  fail "a committer email other than commits@openmixer.org passed the commit-msg mode"; fi
+rc=0; env "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 1 ] && grep -q 'private' "$tmp/m-err" || fail "a refused message did not say why on stderr (rc $rc): $(cat "$tmp/m-err")"
+
+# the target is the run's repository in CI, else this repository's GitHub origin (a target the API does not know is
+# refused, so a pass proves which one was read); private with the topic stays-private skips the private-refs part by
+# name, private without it does not (the attribution and house rules still apply); with no target, or no token, the
+# message is not judged (2), never passed
+rm -f "$API/repos/Open-Mixer/commit-message-fixture"
+env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || fail "a clean message read through the origin was refused: $(cat "$tmp/m-err")"
+ans house-fixture "$STAYS"
+rc=0; env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 0 ] && grep -q 'Open-Mixer/house-fixture is private and carries the topic stays-private: the public-repo check does not apply' "$tmp/m-err" ||
+  fail "an opted-out target did not skip the private-refs part by name (rc $rc): $(cat "$tmp/m-err")"
+printf 'a change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/m-attr"
+if env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-attr" >/dev/null 2>&1; then
+  fail "an opted-out target let an attributed message pass"; fi
+ans house-fixture '{"visibility":"private","topics":[]}'
+if env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-bad" >/dev/null 2>&1; then
+  fail "a private target without the topic skipped the private-refs part"; fi
+ans house-fixture "$PUB"
+rc=0; env -u GITHUB_REPOSITORY -u GH_TOKEN PATH="$tmp/nogh" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 2 ] && grep -q 'REFUSED.*GH_TOKEN' "$tmp/m-err" || fail "no token was not refused by name (rc $rc): $(cat "$tmp/m-err")"
+# on a desk gh, when present, is where a token comes from (never on a runner, where the run's token is set)
+mkdir -p "$tmp/ghtok"; printf '#!/bin/sh\n[ "$*" = "auth token" ] && echo desk-token\n' > "$tmp/ghtok/gh"; chmod +x "$tmp/ghtok/gh"
+env -u GITHUB_REPOSITORY -u GH_TOKEN PATH="$tmp/ghtok:$tmp/nogh" "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" ||
+  fail "a desk token from gh auth token was not used: $(cat "$tmp/m-err")"
+git remote remove origin
+rc=0; env -u GITHUB_REPOSITORY "${HOUSE[@]}" "$chk" --msg-file "$tmp/m-clean" >/dev/null 2>"$tmp/m-err" || rc=$?
+[ "$rc" = 2 ] && grep -q 'REFUSED' "$tmp/m-err" || fail "no target repository was not refused by name (rc $rc): $(cat "$tmp/m-err")"
+
+# ---- the UPSTREAM EXEMPTION (../upstream-exempt, the one source) over messages: a fork's range can hold its upstream's own
+# commits, whose messages nobody here can reword (zynthian's carry an AI co-author trailer). Both message checkers, the
+# attribution one and private-refs-check --messages, pass them ONLY under --upstream-url with an exact listed URL that git
+# does not rewrite, fetched, the commit an ancestor of the fetched ref; our own commits and merges keep every check. The
+# test fetches file:// URLs of its own bare repositories, from a COPY of the actions whose list names them.
+mkdir -p "$tmp/act"; cp -r "$here/.github/actions/commit-message-check" "$here/.github/actions/private-refs-check" "$here/.github/actions/upstream-exempt" "$tmp/act/"
+UPU=file://$tmp/up.git; TRAILER="Co-Authored""-By: Claude <noreply@anthro""pic.com>"
+printf '%s\n' "$UPU" > "$tmp/act/upstream-exempt/upstream-allowed.txt"
+ans commit-message-fixture "$PUB"   # an arm above took the answer away
+mkdir -p "$API/repos/Open-Mixer"; ans commit-message-fixture "$PUB"
+rm -rf "$tmp/up-w"; git init -q -b main "$tmp/up-w"
+for i in 1 2; do git -C "$tmp/up-w" -c user.name=third -c user.email=third@example.org -c commit.gpgsign=false commit -q --allow-empty -m "upstream $i" -m "$TRAILER"; done
+git clone -q --bare "$tmp/up-w" "$tmp/up.git"; git clone -q --bare "$tmp/up-w" "$tmp/up3.git"; rm -rf "$tmp/up-w"   # up3: same commits, URL not listed
+fork() { # <dir>: a house base, one own clean commit, and our merge of the upstream history
+  rm -rf "${tmp:?}/${1:?}"; git init -q -b main "$tmp/$1"; cd "$tmp/$1" || exit 1
+  git config user.name t; git config user.email t@example.invalid; git config commit.gpgsign false
+  git commit -q --allow-empty -m "fork base"; git checkout -q -b topic; git commit -q --allow-empty -m "own one"
+  git fetch -q "$tmp/up.git" main:upmain; git merge -q --allow-unrelated-histories --no-ff upmain -m "own merge of upstream"
+}
+both() { # <expected rc> <label> [--upstream-url U]: the attribution checker and private-refs-check, each over main..HEAD
+  local want=$1 label=$2 rc; shift 2
+  rc=0; "${CMC:-$tmp/act/commit-message-check/commit-message-check.sh}" "$@" main..HEAD >"$tmp/o-cmc" 2>&1 || rc=$?
+  [ "$rc" = "$want" ] || fail "attribution check, $label: rc $rc, want $want: $(cat "$tmp/o-cmc")"
+  rc=0; "${PRC:-$tmp/act/private-refs-check/check.sh}" "$@" --messages main..HEAD >"$tmp/o-prc" 2>&1 || rc=$?
+  [ "$rc" = "$want" ] || fail "private-refs --messages, $label: rc $rc, want $want: $(cat "$tmp/o-prc")"
+}
+fork f1
+both 0 "the listed upstream's commits" --upstream-url "$UPU"
+grep -q '2 upstream commits exempt' "$tmp/o-cmc" && grep -q '2 upstream commits exempt' "$tmp/o-prc" || fail "the exempt count is not said: $(cat "$tmp/o-cmc" "$tmp/o-prc")"
+both 1 "no --upstream-url: no exemption"
+# our own commit carrying the trailer, on top of the upstream history: named, and nothing else is
+git commit -q --allow-empty -m "own attributed" -m "$TRAILER"; own=$(git rev-parse HEAD)
+both 1 "our own attributed commit above upstream" --upstream-url "$UPU"
+[ "$(grep -o '^[0-9a-f]\{12\}: ' "$tmp/o-cmc" | sort -u)" = "${own:0:12}: " ] || fail "attribution: our commit is not the only one named: $(cat "$tmp/o-cmc")"
+grep -q "commit ${own:0:12} points" "$tmp/o-prc" && [ "$(grep -c 'points into' "$tmp/o-prc")" = 1 ] || fail "private-refs: our commit is not the only one named: $(cat "$tmp/o-prc")"
+# our own merge with the trailer in its message: a merge is ours, never upstream's
+git reset -q --hard HEAD~1; git checkout -q -b side main; git commit -q --allow-empty -m side; git checkout -q topic
+git merge -q --no-ff side -m "own merge" -m "$TRAILER"
+both 1 "our own attributed merge" --upstream-url "$UPU"
+# an unlisted URL and look-alikes: no exemption, and the refusal says why
+for bad in "file://$tmp/up3.git" "$UPU/" "${UPU%.git}" "$tmp/up.git"; do
+  fork f2; both 1 "URL $bad" --upstream-url "$bad"
+  grep -q 'no upstream exemption' "$tmp/o-cmc" && grep -q 'no upstream exemption' "$tmp/o-prc" || fail "URL $bad: the refusal does not say why"
+done
+# a listed URL that url.*.insteadOf rewrites: refused
+fork f3; git config "url.$tmp/up3.git.insteadOf" "$UPU"; both 1 "a rewritten URL" --upstream-url "$UPU"
+# SABOTAGE: the ancestor test neutered in a copy lets our own attributed commit pass both checkers (the arm above goes red)
+rm -rf "$tmp/sab"; cp -r "$tmp/act" "$tmp/sab"; sed -i 's/^\(.*\)# UPANC$/    exit 0   # UPANC/' "$tmp/sab/upstream-exempt/upstream-exempt.sh"
+fork f4; git commit -q --allow-empty -m "own attributed" -m "$TRAILER"
+CMC=$tmp/sab/commit-message-check/commit-message-check.sh PRC=$tmp/sab/private-refs-check/check.sh both 0 "sabotage: no ancestor test" --upstream-url "$UPU"
+echo "upstream exemption: the listed upstream's messages pass both checkers; ours (commit, merge), unlisted, look-alike and rewritten URLs are refused; the ancestor test removed lets ours through"
+
+# the workflow's upstream-url reaches both message checkers through the action, as env, never spliced into the script
+python3 -I - "$here" <<'WIRE' || fail "upstream-url wiring"
+import sys, yaml
+h = sys.argv[1]
+w = yaml.safe_load(open(h + "/.github/workflows/public-sources-check.yml"))
+st = [s for s in w["jobs"]["commit-messages"]["steps"] if "commit-message-check" in s.get("uses", "")][0]["with"]
+assert st.get("upstream-url") == "${{ inputs.upstream-url }}", st
+a = yaml.safe_load(open(h + "/.github/actions/commit-message-check/action.yml"))
+assert a["inputs"]["upstream-url"]["default"] == "", "no exemption by default"
+runs = [s for s in a["runs"]["steps"] if "run" in s and "--selftest" not in s["run"]]
+assert len(runs) == 2, runs
+for s in runs:
+    assert s["env"].get("UPSTREAM_URL") == "${{ inputs.upstream-url }}", s
+    assert "inputs.upstream-url" not in s["run"] and '--upstream-url "$UPSTREAM_URL"' in s["run"], s["run"]
+WIRE
 
 echo "commit-message-check: ok"

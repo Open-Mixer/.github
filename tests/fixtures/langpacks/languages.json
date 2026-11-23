@@ -1,0 +1,5 @@
+{
+  "kind": "languages",
+  "languages": ["ca", "es"],
+  "test": ["ja"]
+}

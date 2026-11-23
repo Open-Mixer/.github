@@ -1,0 +1,10 @@
+# The owners of codes whose catalogs the openmixer meta packs pull, one per line: the rpm pack prefix (the owner's
+# spec Name) and the deb pack prefix (its debian/control Source). openmixer-langpack-<lang> requires
+# <rpm prefix>-langpack-<lang> of each, openmixer-l10n-<lang> depends on <deb prefix>-l10n-<lang> of each: an owner
+# whose pack the channel does not serve leaves the meta pack uninstallable, and the channel check is red.
+omx-contract            omx-contract
+plugin-hostd-protocol   plugin-hostd-protocol
+omx-clap-host           omx-clap-host
+omx-panel               omx-panel
+plugin-db               plugin-db
+plugin-qualify          plugin-qualify

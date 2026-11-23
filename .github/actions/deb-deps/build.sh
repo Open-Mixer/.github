@@ -1,13 +1,14 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# Build the Debian build dependencies of the FreeMixer packages.
+# Build the Debian build dependencies of the OpenMixer packages.
 #
 #   build.sh <output dir> <name>...      name: a directory here holding its debian/ files
 #
-# mod-host-protocol is the FreeMixer fork of mod-host at its commit in .github/pins.txt, built by the fork's own
+# mod-host-protocol is the OpenMixer fork of mod-host at its commit in .github/pins.txt, built by the fork's own
 # debian/ (mod-host, libmod-host-protocol0, libmod-host-protocol-dev), the source the RPMs come from too; the
-# installed library is checked by actions/mod-host-protocol/checks/framing-test.sh. The others are fetched at their
+# installed library is checked by actions/mod-host-protocol/checks/framing-test.sh. jackd2 is Debian's own source and
+# debian/ with a carried patch, laid out by packaging/jackd2/make-source.sh. The others are fetched at their
 # commit in .github/pins.txt and given the debian/ directory of their name here. Each is built binary-only, linted
 # and installed, so the next one and the packages that Build-Depend on it find it. Runs as root in a Debian
 # container with dpkg-dev, debhelper, build-essential, git and lintian.
@@ -33,8 +34,13 @@ for name in "$@"; do
         source=mod-host
         fail_on=error
     elif [ -x "$carried/$name/make-source.sh" ]; then
-        # a source with submodules (Surge XT): the package lays out its own checkout
+        # a source with submodules (Surge XT), or Debian's own source with a carried patch (jackd2): the package lays
+        # out its own checkout
         "$carried/$name/make-source.sh" "$src"
+        if [ ! -d "$here/$name" ]; then
+            # Debian's packaging, not ours: its own lintian warnings are Debian's to fix, an error still fails
+            fail_on=error
+        fi
     else
         [ -d "$here/$name" ] || { echo "no debian directory for $name" >&2; exit 1; }
         read -r _ url ref < <(grep "^$name " "$pins") || { echo "$name has no line in pins.txt" >&2; exit 1; }
@@ -47,7 +53,8 @@ for name in "$@"; do
     # the files the packaging lays on the upstream source (a build system upstream does not ship), as the RPM does
     if [ "$name" != mod-host-protocol ]; then
         [ -d "$carried/$name/overlay" ] && cp -r "$carried/$name/overlay/." "$src/"
-        cp -r "$here/$name" "$src/debian"
+        # a source that brings its own debian/ (jackd2) keeps it
+        [ -d "$here/$name" ] && cp -r "$here/$name" "$src/debian"
     fi
     (cd "$src" && apt-get build-dep -y --no-install-recommends ./ >/dev/null && dpkg-buildpackage -b -uc -us && lintian --fail-on "$fail_on" ../"${source}"_*.changes)
     find "$work" -maxdepth 1 -name '*-dbgsym_*.deb' -delete

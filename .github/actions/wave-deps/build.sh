@@ -12,7 +12,7 @@
 #
 # <prefix> holds rpm/ (a dnf repository) or deb/ (a flat apt repository) and a stamp naming what built it. Each sibling
 # is cloned from https://github.com/<owner>/<repo> at <branch>, given the version the wave releases it as (below), built
-# with the build-rpm or build-deb script of this checkout of FreeMixer/.github with its tests skipped (its own CI runs
+# with the build-rpm or build-deb script of this checkout of Open-Mixer/.github with its tests skipped (its own CI runs
 # them) and put in the repository before the next one builds, so a sibling builds on the ones listed before it.
 #
 # The version: a wave branch holds the next release's code at the last release's version, and the repositories that
@@ -21,8 +21,8 @@
 # whose branch is ahead of that tag is built as the next minor, <major>.<minor+1>.0; one already moved past its tag
 # keeps its own. The version is rewritten where these repositories write it (the spec, debian/changelog, VERSION, the
 # top-level "version" of a tracked JSON file, a Makefile's VERSION, a C header's *_VERSION_MAJOR/MINOR/PATCH) and
-# committed in the clone alone; nothing is pushed. A DEB snapshot is <version>+git<sha> (sorts above <version>), an RPM
-# one <version>-<release>.git<sha>.
+# committed in the clone alone; nothing is pushed. A DEB snapshot is <version>+git<commit time>.<sha> (sorts above <version>),
+# an RPM one <version>-<release>.git<commit time>.<sha>.
 #
 # The local repository is preferred over the channel: dnf priority=1, an apt pin of 600 on the local origin.
 # Runs as root in a Fedora or Debian container.

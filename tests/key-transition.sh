@@ -90,19 +90,22 @@ deb)
     if "$keys" check "$file" "$NEW_ID"; then fail "check accepted $NEW_ID, which the channel does not serve"; fi
     "$keys" serve "$file" "$NEW_ID"
     mkpkg pkg-new
-    COSIGN=$OLD_ID "$actions/publish-debs/publish-tree.sh" "$tree" "$work/src-pkg-new" "$NEW_ID"
+    "$actions/publish-debs/publish-tree.sh" "$tree" "$work/src-pkg-new" "$NEW_ID"
     want=$(printf '%s\n' "$OLD_ID" "$NEW_ID" | sort | tr '\n' ' ')
     [ "$(served "$file")" = "$want" ] || fail "after the switch the file serves $(served "$file"), want $want"
     # gpgv exits non-zero when any signature's key is missing, so read its status lines: each key alone
     # gives one good signature and no bad one (apt, below, is the client's own verdict)
     goodsig() { { gpgv --status-fd 1 --keyring "$@" 2>/dev/null || true; } | awk '/BADSIG/ {b = 1} /VALIDSIG/ {g++} END {exit !(g == 1 && !b)}'; }
-    for ring in old new; do
-        goodsig "$work/$ring.gpg" "$tree/debian/trixie/InRelease" || fail "InRelease has no good signature by the $ring key"
-        goodsig "$work/$ring.gpg" "$tree/debian/trixie/Release.gpg" "$tree/debian/trixie/Release" ||
-            fail "Release.gpg has no good signature by the $ring key"
-    done
-    # a client installed before the switch: its signed-by file holds only the old key
-    for ring in old new; do
+    # ONE signature, the new key's: the index is no longer co-signed by the old key
+    goodsig "$work/new.gpg" "$tree/debian/trixie/InRelease" || fail "InRelease has no good signature by the new key"
+    goodsig "$work/new.gpg" "$tree/debian/trixie/Release.gpg" "$tree/debian/trixie/Release" ||
+        fail "Release.gpg has no good signature by the new key"
+    if goodsig "$work/old.gpg" "$tree/debian/trixie/InRelease"; then fail "InRelease is still signed by the old key"; fi
+    [ "$(gpg --list-packets "$tree/debian/trixie/Release.gpg" 2>/dev/null | grep -c '^:signature')" = 1 ] ||
+        fail "Release.gpg does not carry exactly one signature"
+    # a client that saved the new key verifies (a client holding only the old key is not served: no compatibility
+    # machinery while developing, owner 2026-11-18)
+    for ring in new; do
         echo "deb [signed-by=$work/$ring.asc] file:$tree/debian/trixie ./" > /etc/apt/sources.list.d/t.list
         apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/t.list -o Dir::Etc::sourceparts=- 2>&1 | tee "$work/apt.log"
         ! grep -qE '^(W|E):' "$work/apt.log" || fail "apt update with the $ring key alone warned or failed"
@@ -120,11 +123,9 @@ deb)
     cp "$work/new.asc" "$work/committed/new.asc"
     export SERVED_KEYS_DIR=$work/committed
     "$keys" check "$file" "$NEW_ID" || fail "check refused $NEW_ID, which is committed"
-    COSIGN=$OLD_ID "$actions/publish-debs/publish-tree.sh" "$tree" "$work/src-pkg-new" "$NEW_ID"
+    "$actions/publish-debs/publish-tree.sh" "$tree" "$work/src-pkg-new" "$NEW_ID"
     [ "$(served "$file")" = "$want" ] || fail "the committed key was not served: $(served "$file"), want $want"
-    for ring in old new; do
-        goodsig "$work/$ring.gpg" "$tree/debian/trixie/InRelease" || fail "InRelease (committed) has no good signature by the $ring key"
-    done
+    goodsig "$work/new.gpg" "$tree/debian/trixie/InRelease" || fail "InRelease (committed) has no good signature by the new key"
     ;;
 *) fail "unknown kind $1" ;;
 esac
