@@ -77,6 +77,52 @@ run 0 "--repo after the file is read (the old check ignored it there)" "$skip" -
 run 0 "in CI the target is GITHUB_REPOSITORY"                "$skip" -- $T ANSWER="$STAYS" GITHUB_ACTIONS=true GITHUB_REPOSITORY=Open-Mixer/fixture -- --msg-file "$tmp/bad"
 run 2 "in CI too, a failing lookup is refused"               'REFUSED' -- $T ANSWER=ABSENT GITHUB_ACTIONS=true GITHUB_REPOSITORY=Open-Mixer/fixture -- --msg-file "$tmp/bad"
 
+# SEVERAL MESSAGES, ONE LOOKUP: a push hands every message it sends to one run, and the run asks GitHub once, however
+# many messages it judges (a push of 175 commits once cost 175 calls against the account's shared hourly quota). A local
+# HTTP stand-in for GitHub counts the GETs; every message is still judged and named by its file.
+cat > "$tmp/api.py" <<'PY'
+import http.server, sys
+log, answer, portf = sys.argv[1], sys.argv[2], sys.argv[3]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with open(log, "a") as f: f.write(self.path + "\n")
+        body = open(answer, "rb").read()
+        self.send_response(500 if body == b"FAIL\n" else 200); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(portf, "w").write(str(s.server_address[1]))
+s.serve_forever()
+PY
+python3 -I "$tmp/api.py" "$tmp/gets" "$tmp/answer" "$tmp/port" & api_pid=$!
+trap 'kill "$api_pid" 2>/dev/null; rm -rf "$tmp"' EXIT
+for _ in $(seq 50); do [ -s "$tmp/port" ] && break; sleep 0.1; done
+[ -s "$tmp/port" ] || { echo "FAIL the counting API stand-in did not start"; exit 1; }
+HTTPAPI=http://127.0.0.1:$(cat "$tmp/port")
+many() { # <expected exit> <expected GETs> <name> <answer> <output must match, or ''> -- <args...>
+  local want=$1 gets=$2 name=$3 out rc=0 n pat=$5; OUT=; printf '%s\n' "$4" > "$tmp/answer"; shift 6; : > "$tmp/gets"
+  out=$(env -u GITHUB_ACTIONS -u GITHUB_REPOSITORY -u GITHUB_TOKEN PATH="$NOGH" GITHUB_API_URL="$HTTPAPI" GH_TOKEN=fixture-token \
+    bash "$chk" "${R[@]}" "$@" 2>&1) || rc=$?
+  n=$(wc -l < "$tmp/gets")
+  if [ "$rc" != "$want" ] || [ "$n" != "$gets" ]; then echo "FAIL $name: exit $rc and $n GETs, wanted $want and $gets"; printf '%s\n' "$out" | sed 's/^/  /'; fails=1; return; fi
+  if [ -n "$pat" ] && ! grep -qE "$pat" <<<"$out"; then echo "FAIL $name: no line matching [$pat]"; printf '%s\n' "$out" | sed 's/^/  /'; fails=1; return; fi
+  OUT=$out; echo "ok $name (exit $rc, $n GET)"
+}
+M=(); for i in 1 2 3 4 5 6 7 8; do cp "$tmp/clean" "$tmp/m$i"; M+=(--msg-file "$tmp/m$i"); done; cp "$tmp/bad" "$tmp/m5"
+many 1 1 "eight messages, one bad: ONE lookup" "$PUB" '' -- "${M[@]}"
+ok_lines=$(grep -c ': private-refs-check: the commit message points into no private repository$' <<<"$OUT" || true)
+if [ "$ok_lines" = 7 ] && ! grep -q "^$tmp/m5: private-refs-check: the commit message points into no" <<<"$OUT" \
+  && grep -q "^$tmp/m5: private-refs-check: the commit message points into a private repository" <<<"$OUT" \
+  && grep -q "^$tmp/m5: see openmixer""-ops for the plan$" <<<"$OUT"; then echo "ok each of the eight is judged and named by its file"
+else echo "FAIL the eight are not each named by a verdict ($ok_lines clean verdicts)"; printf '%s\n' "$OUT" | sed 's/^/  /'; fails=1; fi
+many 0 1 "eight clean messages: ONE lookup, green" "$PUB" '' -- --msg-file "$tmp/m1" --msg-file "$tmp/m2" --msg-file "$tmp/m3" --msg-file "$tmp/m4" --msg-file "$tmp/m6" --msg-file "$tmp/m7" --msg-file "$tmp/m8" --msg-file "$tmp/m1"
+many 0 1 "eight messages to a stays-private target: ONE lookup, the skip, nothing judged" "$STAYS" "$skip" -- "${M[@]}"
+if grep -q "^$tmp/m" <<<"$OUT"; then echo "FAIL a skipped run judged a message"; fails=1; else echo "ok a skipped run judges no message"; fi
+many 2 1 "eight messages, the lookup fails: ONE lookup, refused by name" FAIL 'REFUSED.*Open-Mixer/fixture' -- "${M[@]}"
+many 2 1 "an unreadable file among several: refused (2), the others still judged" "$PUB" "^$tmp/m1: private-refs-check: the commit message points into no" -- --msg-file "$tmp/m1" --msg-file "$tmp/no-such" --msg-file "$tmp/m2"
+if grep -q "^$tmp/no-such: private-refs-check: cannot read" <<<"$OUT"; then echo "ok the unreadable file is named"; else echo "FAIL the unreadable file is not named"; fails=1; fi
+many 2 0 "a stray argument after a file is refused, never ignored" "$PUB" 'usage' -- --msg-file "$tmp/m1" "$tmp/m2"
+kill "$api_pid" 2>/dev/null; trap 'rm -rf "$tmp"' EXIT
+
 # the tree mode and the commit range mode; with no --repo and no CI repository the target is the tree's origin
 git init -q "$tmp/t"; g() { git -C "$tmp/t" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
 printf '# x\n\nsee openmixer''-ops\n' > "$tmp/t/a.md"; g add -A; g commit -q -m base; g tag base

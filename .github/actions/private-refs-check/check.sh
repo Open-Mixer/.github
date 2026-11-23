@@ -11,8 +11,13 @@
 #   check.sh [ROOT]               the check, over every file ROOT (default: the current directory) tracks
 #   check.sh --messages RANGE     the same patterns, over the message of every commit in RANGE
 #                                 (less the paths of git's own conflict block that name files of that commit)
-#   check.sh --msg-file FILE      the same patterns, over one message before its commit exists (the commit-msg hook,
-#                                 through commit-message-check); git's comment lines are not part of it. Exit 2 unreadable
+#   check.sh --msg-file FILE [--msg-file FILE ...]
+#                                 the same patterns, over messages before their commits exist (the commit-msg hook,
+#                                 through commit-message-check; the host pre-push, every message a push sends, in ONE run
+#                                 and so ONE lookup of the target); git's comment lines are not part of one. Every line a
+#                                 message's judgement prints is prefixed "FILE: ", its verdict line included, so a caller
+#                                 names each message by its file. Exit 2 when any file is unreadable, else 1 when any
+#                                 message points into a private repository, else 0
 #   check.sh --self-test          each sabotage, in every kind of file, must go red
 #
 #   check.sh --applies [ROOT]     the opt-out alone, for a public repository's other checks: the skip line and
@@ -139,6 +144,7 @@ msg_file() { # <file>: one commit message as the commit-msg hook hands it over
 }
 
 refuse() { echo "private-refs-check: REFUSED: $*" >&2; exit 2; }
+by_file() { local l; while IFS= read -r l; do printf '%s: %s\n' "$1" "$l"; done; } # <file>: each line read, named by its file
 
 REPO=
 REPO_SET=0
@@ -340,10 +346,19 @@ if [ "${1:-}" = --self-test ]; then
   exit 0
 fi
 if [ "${1:-}" = --msg-file ]; then
-  [ -n "${2:-}" ] || { echo "usage: check.sh --repo OWNER/REPO --msg-file FILE" >&2; exit 2; }
-  applies ''
-  rc=0; msg_file "$2" || rc=$?
-  exit "$rc"
+  files=()
+  while [ $# -gt 0 ]; do
+    [ "$1" = --msg-file ] && [ -n "${2:-}" ] || { echo "usage: check.sh --repo OWNER/REPO --msg-file FILE [--msg-file FILE ...]" >&2; exit 2; }
+    files+=("$2"); shift 2
+  done
+  applies ''                      # the one lookup, whatever the number of messages; a skip exits here, judging none
+  worst=0
+  for f in "${files[@]}"; do
+    rc=0; out=$(msg_file "$f" 2>&1) || rc=$?
+    if [ "$rc" = 0 ]; then by_file "$f" <<<"$out"; else by_file "$f" <<<"$out" >&2; fi
+    if [ "$rc" = 2 ]; then worst=2; elif [ "$rc" != 0 ] && [ "$worst" = 0 ]; then worst=1; fi
+  done
+  exit "$worst"
 fi
 if [ "${1:-}" = --messages ]; then
   [ -n "${2:-}" ] || { echo "usage: check.sh [--repo OWNER/REPO] --messages RANGE" >&2; exit 2; }
