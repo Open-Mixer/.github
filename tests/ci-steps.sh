@@ -30,3 +30,20 @@ case "$out" in
   *"step 1"*"github.event_name == 'schedule'"*"false on every trigger"*) ;;
   *) echo "the refusal does not name the step and its condition: $out" >&2; exit 1 ;;
 esac
+
+# --on (.github#124): a workflow none of the named events can start runs nothing on them; a command there is refused by
+# name, with the workflow's own on:. Without --on nothing changes; a workflow that an asked event starts passes.
+req_on() { # req_on <want exit> <what> <on:> [--on EVENT...]: tests/x.sh, written in a workflow with that on:
+  local want=$1 what=$2 on=$3 st=0; shift 3
+  printf 'on: %s\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: tests/x.sh\n' "$on" > "$work/o.yml"
+  out=$(python3 -I "$dir/ci_steps.py" "$@" --require tests/x.sh "$work/o.yml") || st=$?
+  [ "$st" = "$want" ] || { echo "--on: $what: exit $st, want $want: $out" >&2; exit 1; }
+}
+req_on 1 "a dispatch-only workflow, --on pull_request" workflow_dispatch --on pull_request
+case "$out" in *"step 1"*"on: workflow_dispatch"*) ;; *) echo "--on: the refusal does not name the step and the workflow's on: $out" >&2; exit 1 ;; esac
+req_on 1 "a schedule-only workflow, --on push --on pull_request" "{schedule: [{cron: '0 3 * * *'}]}" --on push --on pull_request
+case "$out" in *"on: schedule"*) ;; *) echo "--on: the schedule refusal does not show the on: $out" >&2; exit 1 ;; esac
+req_on 0 "a dispatch-only workflow, no --on (nothing changes)" workflow_dispatch
+req_on 0 "a push and pull_request workflow, --on pull_request" "[push, pull_request]" --on pull_request
+req_on 0 "a reusable workflow (its events are the caller's), --on pull_request" "{workflow_call: {}}" --on pull_request
+echo "ci-steps --on: a workflow no named event starts is refused by name; without --on, or started by one, it passes"
