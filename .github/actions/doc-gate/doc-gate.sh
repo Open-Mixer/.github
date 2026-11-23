@@ -14,8 +14,10 @@
 #                         the base's files are read at the merge-base with HEAD); without it only the tree is judged
 #   --py <path>           a Python path ruff checks (repeatable)    --ruff-config <file>  ruff's configuration (ruff.toml)
 #   --ruff-version <v>    the pinned ruff version, required with --py (another ruff gives other findings)
-#   --accept-config-change  the Doxyfile or the ruff configuration differs from the base's on purpose (this change);
-#                         the flag is itself a finding when nothing differs, so it never stays in a workflow
+#   --accept-config-change <key>  the Doxyfile or the ruff configuration differs from the base's on purpose: <key> is
+#                         the change's key, which the red names (a hash of the watched settings and the ruff
+#                         configuration at the merge-base and here), so a later change is red again; a finding when
+#                         nothing differs, so it never stays in a workflow
 #   --list                print the tree's rows and stop           --update  rewrite the baseline, only ever lower
 #   DOXYGEN, RUFF         the binaries (doxygen, ruff)
 #
@@ -36,7 +38,8 @@
 # not sorted and unique is red; --update rewrites the baseline from the tree only when that lowers it, and refuses by
 # name otherwise. With --base: a baseline row the base's baseline does not carry is red (the list only shrinks); a
 # watched Doxyfile setting that differs from the base's, each read through `doxygen -x` in its own tree, is red by
-# key with both values unless --accept-config-change (the accepted change is then logged, key and both values); a
+# key with both values unless --accept-config-change names this change's key (the accepted change is then logged,
+# key and both values, and the change's key); a
 # setting read through doxygen -x_noenv, so an environment variable in it ($(VAR), which would read equal on both
 # sides and differ at run time) is refused by key; a base
 # without the gate's files is the change that brings it, and has nothing to compare. Watched means every setting but
@@ -44,7 +47,7 @@
 #
 # The Python half counts what ruff honours, with ruff itself: `ruff check` must be clean, and the suppressed findings
 # (the count under --ignore-noqa minus the count without it: every form of noqa, file-level ones included) may not grow
-# against the base, nor may the ruff configuration change without --accept-config-change.
+# against the base, nor may the ruff configuration change without --accept-config-change <its key>.
 #
 # Exit 0 at the baseline; 1 a finding (the rows, the setting, the header, the suppression, an --update that would
 # raise); 2 the gate cannot run (no doxygen, another version, a missing file, no log, a header not read, a base
@@ -158,7 +161,7 @@ suppressed() {
 
 gate() {
   local doxyfile=Doxyfile baseline=docs/doxygen-baseline.txt pin=docs/doxygen-version.txt base='' ruff_config=ruff.toml ruff_version=''
-  local mode=check accept=0 base_given=0 root want have h page nofile hidden new stale grown changed mb key now_v base_v py_now py_base
+  local mode=check accept_key='' took=0 base_given=0 root want have h page nofile hidden new stale grown changed mb key now_v base_v py_now py_base ckey
   local -a py=()
   while [ $# -gt 0 ]; do
     case $1 in
@@ -169,7 +172,9 @@ gate() {
       --py) py+=("$2"); shift 2 ;;
       --ruff-config) ruff_config=$2; shift 2 ;;
       --ruff-version) ruff_version=$2; shift 2 ;;
-      --accept-config-change) accept=1; shift ;;
+      --accept-config-change)
+        { [ $# -ge 2 ] && [ -n "$2" ] && [[ $2 != --* ]]; } || cannot "--accept-config-change needs the change's key, which a red against the base names"
+        accept_key=$2; shift 2 ;;
       --list) mode=list; shift ;;
       --update) mode=update; shift ;;
       *) cannot "unknown argument $1" ;;
@@ -285,14 +290,21 @@ gate() {
     else
       echo "doc-gate: $base has no $baseline at the merge-base (this change brings the gate): nothing to compare"
     fi
+    # the change's key (.github#120): the watched Doxyfile settings and the ruff configuration, at the merge-base and
+    # here. An acceptance names it, so it accepts this change alone: a later configuration change is red again
+    [ ! -f "$tmp/base/$doxyfile" ] || (cd "$tmp/base" && settings "$doxyfile" "$tmp/cfg.base")
+    ckey=$({ for f in "$tmp/cfg.base" "$tmp/cfg"; do
+               if [ -f "$f" ]; then awk -F'\t' -v re="$UNWATCHED" '$1 !~ re' "$f" | sort | sha256sum; else echo -; fi; done
+             for f in "$tmp/base/$ruff_config" "$ruff_config"; do
+               if [ "${#py[@]}" -gt 0 ] && [ -f "$f" ]; then sha256sum < "$f"; else echo -; fi; done; } | sha256sum | cut -c1-16)
+    [ "$accept_key" != "$ckey" ] || took=1
     if [ -f "$tmp/base/$doxyfile" ]; then
-      (cd "$tmp/base" && settings "$doxyfile" "$tmp/cfg.base")
       for key in $(cut -f1 "$tmp/cfg" "$tmp/cfg.base" | sort -u | grep -Ev "$UNWATCHED" || true); do
         now_v=$(setting "$key" "$tmp/cfg"); base_v=$(setting "$key" "$tmp/cfg.base")
         if [ "$now_v" != "$base_v" ]; then
           changed=1
-          if [ "$accept" = 1 ]; then echo "doc-gate: accepted: $doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here"
-          else finding "$doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here (a narrowed reference is no lower baseline; --accept-config-change when it is meant)"; fi
+          if [ "$took" = 1 ]; then echo "doc-gate: accepted: $doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here"
+          else finding "$doxyfile changes $key against $base: '${base_v:-(default)}' there, '${now_v:-(default)}' here (a narrowed reference is no lower baseline; --accept-config-change $ckey when it is meant)"; fi
         fi
       done
     else
@@ -302,8 +314,8 @@ gate() {
       if [ -f "$tmp/base/$ruff_config" ]; then
         if ! cmp -s "$ruff_config" "$tmp/base/$ruff_config"; then
           changed=1
-          if [ "$accept" = 1 ]; then echo "doc-gate: accepted: $ruff_config differs from the base's at $base"; diff -u "$tmp/base/$ruff_config" "$ruff_config" | sed 's/^/  /' || true
-          else finding "$ruff_config differs from the base's at $base: a changed configuration is no fewer findings (--accept-config-change when it is meant)"; fi
+          if [ "$took" = 1 ]; then echo "doc-gate: accepted: $ruff_config differs from the base's at $base"; diff -u "$tmp/base/$ruff_config" "$ruff_config" | sed 's/^/  /' || true
+          else finding "$ruff_config differs from the base's at $base: a changed configuration is no fewer findings (--accept-config-change $ckey when it is meant)"; fi
         fi
         py_base=$(suppressed "$tmp/base" "$ruff_config" "${py[@]}")
         if [ "${py_now#* }" -gt "${py_base#* }" ]; then
@@ -313,7 +325,9 @@ gate() {
         echo "doc-gate: $base has no $ruff_config at the merge-base (this change brings the gate): nothing to compare"
       fi
     fi
-    if [ "$accept" = 1 ] && [ "$changed" = 0 ]; then finding "--accept-config-change given, but neither $doxyfile nor $ruff_config differs from the base's: drop the flag"; fi
+    if [ -n "$accept_key" ] && [ "$changed" = 0 ]; then finding "--accept-config-change given, but neither $doxyfile nor $ruff_config differs from the base's: drop the flag"
+    elif [ -n "$accept_key" ] && [ "$took" = 0 ]; then finding "the key $accept_key is not this change's: $ckey (the configuration is not the one the key was given for: read the change, then name $ckey)"
+    elif [ "$took" = 1 ]; then echo "doc-gate: accepted change $ckey (the Doxyfile settings and the ruff configuration, at the merge-base and here)"; fi
   fi
 
   [ "$RED" = 0 ] || exit 1
@@ -321,7 +335,7 @@ gate() {
 }
 
 self_test() {
-  local fail=0 script t main_c
+  local fail=0 script t main_c ckey rkey
   script=$HERE/${BASH_SOURCE[0]##*/}
   work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t GIT_CONFIG_GLOBAL=/dev/null
@@ -350,7 +364,8 @@ for h in $(get INPUT); do
 done
 SH
   chmod +x "$work/doxygen"
-  export STANDIN=$standin DOXYGEN=$work/doxygen RESOLVE_BASE=$HERE/../resolve-base/resolve-base.sh
+  # the fixtures' bases are local branches with no upstream, and the fixture is their authority (resolve-base, .github#121)
+  export STANDIN=$standin DOXYGEN=$work/doxygen RESOLVE_BASE=$HERE/../resolve-base/resolve-base.sh RESOLVE_BASE_LOCAL_AUTHORITY=1
 
   # the scratch repository: `before` has no gate; `main` brings it; `topic` is one commit on, the tree the arms edit
   t=$work/tree; mkdir -p "$t/src" "$t/docs" "$t/py"
@@ -446,9 +461,18 @@ SH
   # against the base
   echo 'EXCLUDE = src/b.h' >> "$t/Doxyfile"
   red "a watched Doxyfile setting changed against the base is red, by key, both values" 1 "Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "${G[@]}" "${B[@]}"
-  green "the same change, accepted" "${G[@]}" "${B[@]}" --accept-config-change
-  if grep -q "accepted: Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "$work/out"; then ok "and the accepted change is logged, key and both values"; else no "the accepted change is not logged"; fi
-  reset; red "the accept flag with nothing changed is itself red: it never stays" 1 "drop the flag" "${G[@]}" "${B[@]}" --accept-config-change
+  # the acceptance is bound to the change (.github#120): the red names the change's key, and only that key accepts it
+  ckey=$(sed -n 's/.*--accept-config-change \([0-9a-f]\{16\}\).*/\1/p' "$work/out" | head -n 1)
+  if [ -n "$ckey" ]; then ok "and names the change's key ($ckey)"; else no "the red does not name the change's key"; fi
+  green "the same change, accepted by its key" "${G[@]}" "${B[@]}" --accept-config-change "$ckey"
+  if grep -q "accepted: Doxyfile changes EXCLUDE against main: '(default)' there, 'src/b.h' here" "$work/out" && grep -q "accepted change $ckey" "$work/out"; then ok "and the accepted change is logged, key and both values, and the change's key"; else no "the accepted change is not logged"; fi
+  red "a key that is not this change's (true) is red, naming the change's key" 1 "the key true is not this change's: $ckey" "${G[@]}" "${B[@]}" --accept-config-change true
+  if grep -q "Doxyfile changes EXCLUDE against main" "$work/out"; then ok "and every changed setting is red again, by key"; else no "a wrong key does not name the changed setting"; fi
+  echo 'ALIASES = "x=y"' >> "$t/Doxyfile"
+  red "a later configuration change under the same key is red again, by key" 1 "Doxyfile changes ALIASES against main" "${G[@]}" "${B[@]}" --accept-config-change "$ckey"
+  if grep -q "the key $ckey is not this change's" "$work/out"; then ok "and the key is named as another change's"; else no "the stale key is not named"; fi
+  red "a bare --accept-config-change (no key) is refused by name" 2 "--accept-config-change needs the change's key" "${G[@]}" "${B[@]}" --accept-config-change
+  reset; red "the accept flag with nothing changed is itself red: it never stays" 1 "drop the flag" "${G[@]}" "${B[@]}" --accept-config-change "$ckey"
   sed -i 's/^PREDEFINED = X=$/PREDEFINED = X= Y=/' "$t/Doxyfile"
   red "PREDEFINED changed against the base is red, by key" 1 "Doxyfile changes PREDEFINED against main" "${G[@]}" "${B[@]}"; reset
   echo 'ALIASES = "x=y"' >> "$t/Doxyfile"
@@ -483,7 +507,9 @@ SH
   green "a suppression removed with the function documented" "${G[@]}" "${B[@]}"; reset
   printf '\n[lint.per-file-ignores]\n"py/*" = ["D103"]\n' >> "$t/ruff.toml"
   red "a changed ruff configuration against the base is red, by name" 1 "ruff.toml differs from the base's" "${G[@]}" "${B[@]}"
-  green "the same change, accepted" "${G[@]}" "${B[@]}" --accept-config-change
+  rkey=$(sed -n 's/.*--accept-config-change \([0-9a-f]\{16\}\).*/\1/p' "$work/out" | head -n 1)
+  [ "$rkey" != "$ckey" ] && [ -n "$rkey" ] && ok "the ruff change has its own key ($rkey)" || no "the ruff change's key ($rkey)"
+  green "the same change, accepted by its key" "${G[@]}" "${B[@]}" --accept-config-change "$rkey"
   if grep -q "accepted: ruff.toml differs from the base's at main" "$work/out" && grep -q '^  +\[lint.per-file-ignores\]' "$work/out"; then ok "and the accepted change is logged, with its diff"; else no "the accepted ruff change is not logged"; fi
   reset
   red "a ruff of another version than the pin is refused, both named" 2 "ruff is $ruff_real, the pin is 0.0.1" "${G[@]}" --base main --py py --ruff-config ruff.toml --ruff-version 0.0.1

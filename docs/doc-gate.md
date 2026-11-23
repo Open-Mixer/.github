@@ -21,6 +21,10 @@ in one day:
 - an empty base, no base, and a remote with no branch (`origin/`) are refused by name, never a default and never a
   skipped compare;
 - `HEAD` is no base, and neither is a ref at HEAD's own commit: a compare of HEAD with HEAD finds nothing;
+- a plain local branch (`main`, not `origin/main`) is a copy too: one with an upstream is held to it (the upstream is
+  fetched, and a branch that lacks any of its commits is refused by name, with the count); one with no upstream, or a
+  local one, is refused by name unless the caller names it the authority (`--local-authority`, the action's
+  `local-authority: true`, or `RESOLVE_BASE_LOCAL_AUTHORITY=1`: a fixture, a release branch built locally);
 - a remote that is this repository itself (its URL `.`, `..`, or a path or `file://` URL whose git directory is ours)
   or any plain local path is no remote: a fetch from it refreshes the copy from a local branch that is itself stale;
 - the base resolves with `git rev-parse -q --verify <base>^{commit}`; a name the clone does not hold (a depth-1
@@ -39,7 +43,9 @@ workflow got wrong, 2 a checkout that cannot give it, never a pass. The action:
 
 | Arm | Wanted |
 |---|---|
-| a local branch, `origin/main`, a sha | `commit=` the base's commit, `merge-base=` the fork point |
+| a local branch at its upstream, `origin/main`, a sha | `commit=` the base's commit, `merge-base=` the fork point |
+| a local branch behind its upstream; its upstream unreachable | exit 1 `main is behind its upstream origin/main by 1 commit`; exit 2 `could not fetch main's upstream` |
+| a local branch with no upstream; the same with `--local-authority` | exit 1 `lonely is a local branch with no upstream`; resolves |
 | `origin/main` stale, the upstream moved on | the upstream's commit, the remote-tracking ref refreshed |
 | `origin/main` stale, the remote unreachable | exit 2, `could not fetch origin/main from origin`, no `commit=` |
 | the same spelled `refs/remotes/origin/main`, `remotes/origin/main`, `@{u}`, `topic@{upstream}` | the same refusal; `@{u}` with no upstream exit 1 |
@@ -95,9 +101,12 @@ does not carry is red (the list only shrinks); a Doxyfile setting that differs f
 `doxygen -x` in its own tree, is red by key with both values. Every setting is compared but the ones that only shape
 the rendered output (`PROJECT_*`, `OUTPUT_DIRECTORY`, `GENERATE_*`, `HTML_*`, `LATEX_*`, the graphs, the search): a
 list of the keys that silence rows would always be one key short (`EXTRACT_ALL`, `RECURSIVE` and `WARN_FORMAT` were
-each found after such a list was written). `accept-config-change: true` lets a meant change through, logged in the
-run's output with the key and both values (the ruff configuration with its diff), and is itself red when nothing
-differs, so it never stays in a workflow. The limit that stays: a declaration under a preprocessor condition that is
+each found after such a list was written). `accept-config-change: <key>` lets a meant change through: the red names
+the change's key (a hash of the watched settings and the ruff configuration, at the merge-base and here), and only
+that key accepts it, so a configuration change pushed after the reviewer read the first is red again, by setting,
+naming the old key as another change's. The accepted change is logged in the run's output with the key and both values
+(the ruff configuration with its diff) and the change's key, and the input is itself red when nothing differs, so it
+never stays in a workflow. The limit that stays: a declaration under a preprocessor condition that is
 false with only the Doxyfile's `PREDEFINED` (an `#ifdef X` block) is not read, as a C compiler would not read it
 either; its rows are neither warned nor missed. A base without the gate's files is the change that brings it,
 and has nothing to compare. The reusable workflow compares on a pull request (`origin/${{ github.base_ref }}`) and

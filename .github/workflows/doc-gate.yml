@@ -46,9 +46,9 @@ on:
         type: string
         default: '0.17.5'
       accept-config-change:
-        description: the Doxyfile or the ruff configuration changes on purpose in this pull request (red when nothing changed)
-        type: boolean
-        default: false
+        description: the key of a Doxyfile or ruff configuration change made on purpose in this pull request, as the red names it; it accepts that change alone and is red when nothing changed. Empty, none
+        type: string
+        default: ''
       runner:
         description: runner label (a private repository passes its own runners; a pull request from a fork always runs on GitHub-hosted runners)
         type: string
