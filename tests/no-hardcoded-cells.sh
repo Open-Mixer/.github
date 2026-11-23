@@ -58,7 +58,7 @@ ALLOW_MATRIX = [
     ("ci.yml", "key-transition", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
     ("ci.yml", "staging-publish", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
     ("ci.yml", "staging-bootstrap", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
-    ("ci.yml", "channel-installability", "three arms, each its own toolchain, on an image of the quick set"),
+    ("ci.yml", "channel-installability", "five arms, each its own toolchain, on an image of the quick set"),
 ]
 used = set()
 
