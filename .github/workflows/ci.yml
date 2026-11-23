@@ -181,6 +181,10 @@ jobs:
         shell: bash
         run: tests/remove-freereac-release.sh ${{ matrix.kind }}
 
+      - name: A package of one organisation never goes into the other organisation's channel
+        shell: bash
+        run: tests/channel-owner.sh ${{ matrix.kind }}
+
       - name: A package planted in the channel is refused, never signed
         shell: bash
         run: tests/sign-only-placed.sh ${{ matrix.kind }}

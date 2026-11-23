@@ -106,8 +106,11 @@ runs:
         COMMITTED_KEYS: ${{ inputs.committed-keys }}
         SIGNING_FPR: ${{ inputs.signing-fingerprint }}
         LABEL_IN: ${{ inputs.label }}
+        CHANNEL_IN: ${{ inputs.channel }}
       run: |
         set -o pipefail
+        # the channel, for the tree script's organisation guard (publish-rpms/channel-owner.sh) and the lost-race rebuild alike
+        echo "CHANNEL_REPO=$CHANNEL_IN" >> "$GITHUB_ENV"
         # the channel profile: another project's key file, label and committed keys, for the tree script and the lost-race rebuild alike
         [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
         "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" want "$COMMITTED_KEYS" "$SIGNING_FPR"
