@@ -4,6 +4,8 @@ openmixer-release (1-11) unstable; urgency=medium
     the staging channel of the release wave for trixie, installed with
     Enabled: no, as the RPM's openmixer-testing. Enabled: yes is the whole
     opt-in, and an upgrade of the package keeps it.
+  * Licensed GPL-3.0-or-later, as every file of the package already said;
+    debian/copyright and the RPM's License tag said MIT.
 
  -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 22:00:00 +0100
 
