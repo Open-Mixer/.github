@@ -13,6 +13,14 @@ if [ "${1:-}" = --self-test ]; then
   [ -n "$(scan "$t")" ] || { echo "no-host-nproc: FAIL the scan does not see a planted make -j\"\$(nproc)\"" >&2; exit 1; }
   printf 'jobs:\n  a:\n    steps:\n      - run: make -j"$OMX_JOBS" test\n' > "$t/bad.yml"
   [ -z "$(scan "$t")" ] || { echo "no-host-nproc: FAIL the scan refuses a clean make -j\"\$OMX_JOBS\"" >&2; exit 1; }
+  # the word in a name is not the command: this check's own job and action (public-sources-check.yml) name it
+  printf 'jobs:\n  no-host-nproc:\n    steps:\n      - uses: Open-Mixer/.github/.github/actions/no-host-nproc@openmixer-v1\n' > "$t/bad.yml"
+  [ -z "$(scan "$t")" ] || { echo "no-host-nproc: FAIL the scan refuses the word nproc in a name" >&2; exit 1; }
+  # each command form is seen: backquotes, getconf, a bare $(nproc) in an argument
+  for l in 'make -j`nproc`' 'make -j"$(getconf _NPROCESSORS_ONLN)"' 'xargs -P "$( nproc )" true'; do
+    printf 'jobs:\n  a:\n    steps:\n      - run: %s\n' "$l" > "$t/bad.yml"
+    [ -n "$(scan "$t")" ] || { echo "no-host-nproc: FAIL the scan does not see: $l" >&2; exit 1; }
+  done
   echo "no-host-nproc: self-test ok"; exit 0
 fi
 dir=${1:-.github/workflows}
