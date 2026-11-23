@@ -467,6 +467,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: tests/surge-xt-package.sh
 
+  jackd2-package:
+    name: the jackd2 package, its pins, its patch header and its release workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/jackd2-package.sh
+
   rncbc-v1-package:
     name: the synthv1 and samplv1 packages, their pins, their patch and where they sort
     runs-on: ubuntu-latest
