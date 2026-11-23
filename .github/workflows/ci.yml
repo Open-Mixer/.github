@@ -73,6 +73,7 @@ jobs:
       - run: tests/no-hardcoded-cells.sh
       - run: tests/release-package-cells.sh
       - run: tests/promote-staged.sh
+      - run: tests/promote-built-cells.sh
       - run: tests/release-preflight-served.sh
       - run: tests/catch-up-plan.sh
       - run: tests/ci-steps.sh
