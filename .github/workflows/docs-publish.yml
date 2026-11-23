@@ -21,7 +21,7 @@ name: docs-publish
 # The make target writes into $DOCS_OUT (an absolute, empty directory) and only what its generators produce from this
 # checkout: doxygen's html, Markdown its tools render, its man pages; a doc check that needs no base runs first in the
 # same target, so nothing is published past it. actions/docs-site renders the Markdown and man pages with
-# pandoc, refuses a tree with no index page or a symbolic link, and places it. The publish is a signed commit into the
+# pandoc, writes the entry page when the tree has none, refuses a tree with no page or a symbolic link, and places it. The publish is a signed commit into the
 # Pages channel by channel-pull and channel-push, the paths reference/ alone; openmixer-www owns the site's other
 # top-level paths (its deploy/site-owns.txt) and never reference/.
 on:
