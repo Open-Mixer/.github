@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: docs-site
+description: Render a repository's generated reference into a static tree, or place it in the Pages channel under reference/
+
+# The one renderer and placer of docs-publish.yml (docs/docs-publish.md). The script proves itself on a planted tree
+# first, then reads the caller's. pandoc must be on the runner (docs-publish.yml installs it from apt).
+
+inputs:
+  command:
+    description: assemble (render *.md and man pages in place) or place (copy into <channel>/reference/<repo>/<version>/)
+    required: true
+  site:
+    description: the tree the repository's docs-site target wrote
+    required: true
+  channel:
+    description: place only, the checkout of the Pages channel (build/channel after channel-pull)
+    default: ''
+  repo:
+    description: place only, the repository name the reference is published under
+    default: ''
+  version:
+    description: place only, the release number (x.y.z, then an optional suffix)
+    default: ''
+
+outputs:
+  rebuild:
+    description: place only, the command that places the same tree again on a newer channel tip (channel-push's rebuild)
+    value: ${{ steps.run.outputs.rebuild }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+        SITE: ${{ inputs.site }}
+        CHANNEL: ${{ inputs.channel }}
+        REPO: ${{ inputs.repo }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        bash "$GITHUB_ACTION_PATH/docs-site.sh" --self-test
+        case $COMMAND in
+          assemble) bash "$GITHUB_ACTION_PATH/docs-site.sh" assemble "$SITE" ;;
+          place)
+            bash "$GITHUB_ACTION_PATH/docs-site.sh" place "$SITE" "$CHANNEL" "$REPO" "$VERSION"
+            printf 'rebuild=bash %q place %q %q %q %q\n' "$GITHUB_ACTION_PATH/docs-site.sh" "$SITE" "$CHANNEL" "$REPO" "$VERSION" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::docs-site: command is assemble or place, not '$COMMAND'"; exit 1 ;;
+        esac

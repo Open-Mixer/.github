@@ -609,6 +609,17 @@ jobs:
       - run: tests/resolve-base.sh
       - run: tests/doc-gate.sh
 
+  # The renderer and placer of every repository's generated reference (actions/docs-site, docs/docs-publish.md): its
+  # arms on planted trees under the runner's pandoc, then each guard taken out again.
+  docs-site:
+    name: docs-site renders, places and moves latest only upward, sabotaged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends pandoc
+      - run: tests/docs-site.sh
+
   # The checks repositories run from here: dependency floors from one packaging/deps.txt, no tracked file pointing
   # into a private repository, and a licence header wherever a format can hold one. Each engine proves itself red on
   # every planted drift. The private-refs and spdx-check actions then read this tree, which is their clean control;
