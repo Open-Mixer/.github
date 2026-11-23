@@ -67,6 +67,7 @@ jobs:
       - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
       - run: tests/release-matrix.sh
+      - run: tests/staged-cells.sh
       - run: tests/check-matrix.sh
       - run: tests/build-deb-install-cells.sh
       - run: tests/no-hardcoded-cells.sh
