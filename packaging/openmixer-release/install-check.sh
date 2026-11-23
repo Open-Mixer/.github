@@ -7,7 +7,7 @@
 #
 #   install-check.sh <openmixer-release .rpm or .deb, a file or a URL> <package of the channel>
 #
-# openmixer-release requires freereac-release: FREEREAC_RELEASE_URL (the FreeREAC channel's stable file, rpm or deb) is installed
+# openmixer-release recommends freereac-release (1-10; required 1-7 to 1-9): FREEREAC_RELEASE_URL (the FreeREAC channel's stable file, rpm or deb) is installed
 # in the same transaction, since neither repository exists on the clean machine yet. Unset, the package is installed alone.
 #
 # SIGNED=0 skips the signature check of the RPM itself, for a dry run's unsigned build; the repository's

@@ -1,3 +1,10 @@
+openmixer-release (1-10) unstable; urgency=medium
+
+  * freereac-release is recommended, no longer a dependency: the package
+    installs on its own again, from its one file.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Mon, 23 Nov 2026 17:30:00 +0100
+
 openmixer-release (1-9) unstable; urgency=medium
 
   * The RPM gains the testing repositories (the staging channel, disabled);
