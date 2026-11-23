@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com> -->
+
 # jackd2 with the jack2 metadata fix
 
 Debian's jackd2 (1.9.22 in trixie) stores JACK metadata in a Berkeley DB environment
