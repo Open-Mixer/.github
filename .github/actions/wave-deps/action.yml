@@ -123,7 +123,7 @@ runs:
         echo "repos=${kept% }" >> "$GITHUB_OUTPUT"
         . /etc/os-release
         scripts=$(cat "$GITHUB_ACTION_PATH/build.sh" "$GITHUB_ACTION_PATH/../build-rpm/build-rpm.sh" \
-          "$GITHUB_ACTION_PATH/../build-deb/build-deb.sh" | sha256sum | cut -c1-16)
+          "$GITHUB_ACTION_PATH/../build-deb/build-deb.sh" "$GITHUB_ACTION_PATH/../build-deb/render-changelog.sh" | sha256sum | cut -c1-16)
         digest=$(printf '%s' "$shas" | sha256sum | cut -c1-32)
         echo "shas=$shas" >> "$GITHUB_OUTPUT"
         echo "key=wave-deps-$ID-$VERSION_ID-$(uname -m)-$scripts-$digest" >> "$GITHUB_OUTPUT"
