@@ -620,3 +620,25 @@ repository file are inputs too, and default to OpenMixer's, so a caller that pas
 The signing key and its passphrase reach the workflow under the declared secret names; the caller maps its own secrets onto
 them (`OPENMIXER_PACKAGES_SIGNING_KEY: ${{ secrets.RPM_GPG_KEY }}`, `PACKAGES_SIGNING_PASSPHRASE: ${{ secrets.RPM_GPG_PASSPHRASE }}`).
 A channel serves exactly one key and the two channels share none. `tests/channel-profile.sh` publishes through both profiles.
+
+The two channels are independent (owner ruling 2026-11-23, .github#224): neither serves a package of the other,
+openmixer-release requires nothing FreeREAC's channel serves (1-10), `add-openmixer` installs one channel's release
+package per call, and the installability gate reads no channel but the one it judges. A job that needs both adds each.
+
+### Taking the mirrored freereac-release out of the channel
+
+openmixer-release 1-7 to 1-9 required freereac-release, and a mirror (removed) served FreeREAC's freereac-release 1-2
+from this channel: `rpm/fedora/45/noarch`, `deb/debian/trixie/all` and its changelog. The channel's prune cannot drop
+it, because openmixer-release 1-9 (still served) requires it. `remove-freereac-release.yml` does, and removes nothing
+else: `tools/remove-freereac-release.sh` takes out the files that are freereac-release by their own header, makes the
+metadata again with the publish's tree scripts and signs it, and refuses any other change (`tests/remove-freereac-release.sh`).
+Once openmixer-release 1-10 is published, the tag runs it, from a checkout of main (a dispatch is a dry run):
+
+```
+git tag -s -m 'remove-freereac-release-1' remove-freereac-release-1 origin/main
+git push origin remove-freereac-release-1
+```
+
+Afterwards `dnf repoquery --repo openmixer-noarch freereac-release` and `apt-cache policy freereac-release` on a machine
+with the channel alone find nothing, and openmixer-release 1-9 is left uninstallable from this channel alone, which
+dnf and apt never offer while 1-10 is the newest. The workflow, the script and the test are deleted once the tag has run.
