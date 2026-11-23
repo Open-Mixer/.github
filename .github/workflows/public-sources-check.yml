@@ -3,7 +3,12 @@
 name: public-sources-check
 # The checks every OpenMixer repository runs on what it publishes, from this repository and nowhere else:
 #   - its pull request's own commits carry no attribution line (commit-message-check);
-#   - no tracked file points into a private repository (private-refs-check);
+#   - (commit-identity: true) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
+#     by GitHub (commit-identity-check);
+#   - (fedora-workflows: true) no workflow names a Fedora release outside allowed-fedora (fedora-workflow-check);
+#   - no tracked file points into a private repository (private-refs-check); like the commit message check and the
+#     layout check, it skips only a repository that is private and carries the topic stays-private, read live from
+#     GitHub with the run's token (no input switches it off);
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);
 #   - no tracked JSON file gives a "$schema" or "$id" a code-hosting address (json-schema-url-check): a schema is named
 #     under https://openmixer.org/schema/;
@@ -15,14 +20,36 @@ name: public-sources-check
 #     public-sources:
 #       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@openmixer-v1
 #       with:
+#         commit-identity: true      # optional, off by default; author-email / committer-email override the house pair
+#         fedora-workflows: true     # optional, off by default; allowed-fedora (default "45") is the list of releases a workflow may name
 #         runner: arc-freemixer      # optional: a private repository's own runners (default ubuntu-latest)
 on:
   workflow_call:
     inputs:
-      private-refs:
-        description: the checks of a public repository, private-refs-check and public-layout-check (a private repository passes false)
+      commit-identity:
+        description: run commit-identity-check on pull requests (every commit authored and committed by the house emails and verified). Off by default so moving openmixer-v1 turns no caller red; a repository whose open pull requests are clean passes true
         type: boolean
-        default: true
+        default: false
+      author-email:
+        description: the author email commit-identity-check expects; empty takes the action's default
+        type: string
+        default: ''
+      committer-email:
+        description: the committer email commit-identity-check expects; empty takes the action's default
+        type: string
+        default: ''
+      upstream-url:
+        description: a fork's upstream URL (an exact line of the upstream-exempt list); the upstream's own commits are exempt from commit-identity-check and both message checks. Empty, no exemption
+        type: string
+        default: ''
+      fedora-workflows:
+        description: run fedora-workflow-check (no workflow of the repository names a Fedora release outside allowed-fedora). Off by default so moving openmixer-v1 turns no caller red; a repository that drops its own copy of the check passes true
+        type: boolean
+        default: false
+      allowed-fedora:
+        description: the Fedora releases fedora-workflow-check lets a workflow name, space or comma separated; the development matrix is 45 only, the full set returns by widening this list
+        type: string
+        default: '45'
       runner:
         description: runner label for every job (a private repository passes its own runners, e.g. arc-freemixer; a pull request from a fork always runs on GitHub-hosted runners)
         type: string
@@ -45,10 +72,38 @@ jobs:
       - uses: Open-Mixer/.github/.github/actions/commit-message-check@openmixer-v1
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
+          upstream-url: ${{ inputs.upstream-url }}
+
+  commit-identity:
+    name: every commit has the house author and committer and is verified
+    if: github.event_name == 'pull_request' && inputs.commit-identity
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: Open-Mixer/.github/.github/actions/commit-identity-check@openmixer-v1
+        with:
+          base-ref: ${{ github.event.pull_request.base.ref }}
+          author-email: ${{ inputs.author-email }}
+          committer-email: ${{ inputs.committer-email }}
+          upstream-url: ${{ inputs.upstream-url }}
+
+  fedora-workflows:
+    name: no workflow names a Fedora release outside the allowed list
+    if: inputs.fedora-workflows
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Open-Mixer/.github/.github/actions/fedora-workflow-check@openmixer-v1
+        with:
+          allowed-fedora: ${{ inputs.allowed-fedora }}
 
   private-refs:
     name: no tracked file points into a private repository
-    if: inputs.private-refs
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:
@@ -57,7 +112,6 @@ jobs:
 
   public-layout:
     name: no dated document, no dated folder, no evidence or notes folder
-    if: inputs.private-refs
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
     steps:

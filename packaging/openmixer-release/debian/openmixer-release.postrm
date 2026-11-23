@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
-# The source link postinst made goes with the package.
+# The source link and the testing source postinst made go with the package.
 set -e
 
 case "$1" in
@@ -9,6 +9,8 @@ remove|purge)
     if [ -L /etc/apt/sources.list.d/openmixer.sources ]; then
         rm -f /etc/apt/sources.list.d/openmixer.sources
     fi
+    # the testing source postinst wrote goes too: without the package its key is gone
+    rm -f /etc/apt/sources.list.d/openmixer-testing.sources
     ;;
 esac
 

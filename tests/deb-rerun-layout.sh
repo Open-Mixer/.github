@@ -69,7 +69,7 @@ attempt() { # attempt <n> <publish pattern> <release pattern>: the publish job, 
     mv "$run/collected" "$dir/collected"
     # the action's first step writes the tree and its environment to GITHUB_ENV; the steps after it read them there
     : > "$run/github-env"
-    (cd "$dir" && DEB_DIR=collected STAGING=$staging SUITES="bookworm trixie" GITHUB_ENV=$run/github-env bash "$work/tree.sh") \
+    (cd "$dir" && GITHUB_ACTION_PATH=$action DEB_DIR=collected STAGING=$staging SUITES="bookworm trixie" GITHUB_ENV=$run/github-env bash "$work/tree.sh") \
         > "$run/publish.log" 2>&1 || { cat "$run/publish.log" >&2; fail "attempt $n: the tree step failed"; }
     grep -qx "DEB_TREE=$tree" "$run/github-env" || fail "attempt $n: the action names another tree than $tree"
     (cd "$dir" && set -a && . "$run/github-env" && set +a && "$action/publish-tree.sh" "build/channel/$DEB_TREE" collected) \
@@ -89,15 +89,14 @@ attempt() { # attempt <n> <publish pattern> <release pattern>: the publish job, 
         RUNNER_TEMP="$run" bash "$work/attach.sh") >> "$run/publish.log" 2>&1
 }
 
-arm() { # arm <name> <staging>: a fresh artifact store holding the four builds, and an empty tree
+arm() { # arm <name> <staging> [<cells>]: a fresh artifact store holding the builds of the cells ("<suite>/<arch> ...",
+    # default the four of a release), and an empty tree
     dir=$work/$1 staging=$2 tree=deb
     [ "$staging" = false ] || tree=staging/deb
     mkdir -p "$dir/store" "$dir/build/channel/$tree"
-    local suite arch
-    for suite in bookworm trixie; do
-        for arch in amd64 arm64; do
-            deb "$dir/store/$(expand "$work/name-build" "$suite" "$arch")/$suite" "$arch"
-        done
+    local cell
+    for cell in ${3:-bookworm/amd64 bookworm/arm64 trixie/amd64 trixie/arm64}; do
+        deb "$dir/store/$(expand "$work/name-build" "${cell%/*}" "${cell#*/}")/${cell%/*}" "${cell#*/}"
     done
 }
 
@@ -130,17 +129,23 @@ grep -q 'is not laid out <suite>/<package>.deb' "$dir/attempt2/publish.log" || {
 echo "ok   control: a pattern that takes the flat copies in is refused"
 
 # the same two with staging on: the packages land in staging/deb, deb/ is never written, and the flat copies a staged
-# run uploads are refused there as in deb/
-arm staged-fixed true
+# run uploads are refused there as in deb/. A staged run builds the tested platform alone, trixie arm64 (owner ruling
+# 2026-11-23, .github#233); the four cells of a release are refused at the tree step, by cell
+arm staged-four true
+if (attempt 1 "$publish" "$release") 2>/dev/null; then fail "staged: the four cells of a release were staged"; fi
+grep -q '(bookworm amd64)' "$dir/attempt1/publish.log" || { cat "$dir/attempt1/publish.log" >&2; fail "staged: the four cells were refused for another reason"; }
+echo "ok   staged: the four cells of a release are refused, by cell; a staged run stages trixie arm64 alone"
+
+arm staged-fixed true trixie/arm64
 attempt 1 "$publish" "$release" || { cat "$dir/attempt1/publish.log" >&2; fail "staged: the first attempt did not publish"; }
 attempt 2 "$publish" "$release" || { cat "$dir/attempt2/publish.log" >&2; fail "staged: the rerun refused its own packages"; }
 grep -q '^kept   ' "$dir/attempt2/publish.log" || fail "staged: the rerun did not keep what the first attempt published"
 ! grep -q '^placed ' "$dir/attempt2/publish.log" || fail "staged: the rerun placed a package again"
-[ "$(find "$dir/build/channel/staging/deb" -name '*.deb' | wc -l)" = 4 ] || fail "staged: staging/deb does not hold the four packages"
+[ "$(find "$dir/build/channel/staging/deb" -name '*.deb' | wc -l)" = 1 ] || fail "staged: staging/deb does not hold the one package of trixie arm64"
 [ -z "$(find "$dir/build/channel/deb" -name '*.deb' -print -quit 2>/dev/null)" ] || fail "staged: deb/ was written"
 echo "ok   staged: a rerun keeps the packages in staging/deb and leaves deb/ alone"
 
-arm staged-wide true
+arm staged-wide true trixie/arm64
 attempt 1 "$wide" "$wide" || fail "staged control: the first attempt did not publish"
 if attempt 2 "$wide" "$wide"; then fail "staged control: the flat copies were not refused, this test sees nothing"; fi
 grep -q 'is not laid out <suite>/<package>.deb' "$dir/attempt2/publish.log" || { cat "$dir/attempt2/publish.log" >&2; fail "staged control: refused for another reason"; }

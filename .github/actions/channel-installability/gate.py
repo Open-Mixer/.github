@@ -30,7 +30,12 @@ packages" on a clean bookworm and trixie). Three arms:
 A package named in --same-pass (released by another repository in the same pass) excuses a breakage of its own or one
 it causes: its own release is checked when it publishes. --unbuilt-arch-pass (a dry run, whose matrix builds one
 architecture) does the same, on an architecture the release brings no binary package for, for the binary packages it
-built on another: the release builds them there at the new version. Every architecture is still checked. "before" is the published channel without the exact versions
+built on another: the release builds them there at the new version. Every architecture is still checked.
+A same-pass name may be a SOURCE package: it covers every binary the channel's own metadata says it builds (rpm SOURCERPM,
+deb Source field, the Package name when absent). A same-pass name that is neither a source nor a binary of the channel's
+metadata is RED by name (it covers nothing: a repository name, say). A package that installs alone only through a same-pass binary's unmet
+requirement (every unmet requirement on its dependency path is held by binaries of the pass) is reported like the pass's own;
+any breakage through a package outside the pass stays RED. "before" is the published channel without the exact versions
 this release brings, so a gate re-run after a partial publish judges the release, not the channel it already changed.
 
 Exit status: 0 green, 1 red, 2 the check could not be made (an index that does not download, a tool that is missing):
@@ -224,8 +229,9 @@ def key(kind, version):
 # ----------------------------------------------------------------------------------------------- packages
 
 class Pkg:
-    def __init__(self, name, version, arch, deps, raw=None):
+    def __init__(self, name, version, arch, deps, raw=None, source=None):
         self.name, self.version, self.arch, self.deps, self.raw = name, version, arch, deps, raw
+        self.source = source or name  # the source package that builds it (the binary's own name when none is said)
 
     def __repr__(self):
         return f"{self.name} {self.version} ({self.arch})"
@@ -263,8 +269,14 @@ def deb_deps(fields):
     return atoms
 
 
+def deb_source(fields):
+    """The source package a stanza's binary is built from: its Source field without the version a binNMU adds
+    ("omx-clap-core (0.32.5-1)"), the Package name when the field is absent."""
+    return (fields.get("Source", "").split() or [fields["Package"]])[0]
+
+
 def deb_pkgs(stanzas):
-    return [Pkg(f["Package"], f.get("Version", ""), f.get("Architecture", ""), deb_deps(f), raw)
+    return [Pkg(f["Package"], f.get("Version", ""), f.get("Architecture", ""), deb_deps(f), raw, deb_source(f))
             for f, raw in stanzas]
 
 
@@ -289,13 +301,19 @@ def rpm_req_atoms(req):
     return atoms
 
 
+def rpm_source_name(sourcerpm):
+    """The name of the source package from a SOURCERPM (omx-clap-core-0.32.5-1.fc45.src.rpm); (none) is no source."""
+    m = re.match(r"^(.+)-[^-]+-[^-]+\.src\.rpm$", sourcerpm)
+    return m.group(1) if m else None
+
+
 def parse_rpm_query(text):
     """The output of repoquery --qf '@@%{name} %{evr} %{arch}\\n%{requires}\\n' as packages."""
     pkgs, cur = [], None
     for line in text.splitlines():
         if line.startswith("@@"):
-            name, evr, arch = line[2:].split()[:3]
-            cur = Pkg(name, evr, arch, [])
+            name, evr, arch, *srpm = line[2:].split()[:4]
+            cur = Pkg(name, evr, arch, [], source=rpm_source_name(srpm[0]) if srpm else None)
             pkgs.append(cur)
         elif cur is not None and line.strip():
             cur.deps.extend(rpm_req_atoms(line))
@@ -324,12 +342,12 @@ def r107_ceiling(floor):
     return f"0.{nums[1] + 1}" if nums[0] == 0 else f"{nums[0] + 1}"
 
 
-SNAPSHOT_RE = re.compile(r"^(?P<release>.+?)~git[0-9][^-]*(?P<revision>-.*)?$")
+SNAPSHOT_RE = re.compile(r"^(?P<release>.+?)[~+]git[0-9][^-]*(?P<revision>-.*)?$")
 
 
 def release_version(version):
-    """The version a pull request's snapshot would release: <v>~git<time>.<sha> (build-deb's separator, which sorts
-    below <v>) is <v>, its Debian revision kept; any other version is itself."""
+    """The version a pull request's snapshot would release: <v>~git<time>.<sha> or <v>+git<time>.<sha> (build-deb's
+    separators: ~git sorts below <v>, +git above it) is <v>, its Debian revision kept; any other version is itself."""
     m = SNAPSHOT_RE.match(version)
     return m.group("release") + (m.group("revision") or "") if m else version
 
@@ -453,9 +471,59 @@ def hygiene(kind, published):
 
 # ----------------------------------------------------------------------------------------------- newest arm
 
-def newest_judge(where, before, after, same_pass, reds, warns, notes):
+def expand_same_pass(same_pass, pkgs):
+    """The same-pass names with, for each one that names a SOURCE package, every binary the channel's metadata says
+    it builds (rpm SOURCERPM, deb Source field, the Package name when absent): a pass names what another repository
+    releases, which is its sources. A name that is already a binary stays as it is."""
+    names = set(same_pass)
+    covered = sorted({p.name for p in pkgs if p.source in names} - names)
+    if covered:
+        say(f"same pass: {' '.join(sorted(names & {p.source for p in pkgs}))} also covers its binaries "
+            f"{' '.join(covered)} (the channel's own metadata)")
+    return list(same_pass) + covered
+
+
+def unknown_same_pass_reds(same_pass, pkgs):
+    """A same-pass entry that matches NEITHER a source NOR a binary name in the channel's metadata (rpm SOURCERPM and
+    name, deb Source and Package) is refused by name: it covers nothing, and the breakage it was meant to excuse stays
+    red with no hint why (a repository name, omx-clap-core, whose source is omx-clap-host). pkgs is the metadata the gate
+    read for the pass, the packages this pass builds included: a brand-new source built in this run matches here. A
+    brand-new source that this run does not build is not in the metadata and is refused too."""
+    known = {p.name for p in pkgs} | {p.source for p in pkgs}
+    return [f"same-pass entry {n} is neither a source nor a binary package in the channel (a repository name? its source "
+            f"may be named differently; a package new to the channel and not built in this run is refused as well)"
+            for n in dict.fromkeys(same_pass) if n not in known]
+
+
+def held_by_pass(kind, pkgs, req, dep, same_pass):
+    """True when every requirement the newest builds leave unmet on the way from req (the package installed alone)
+    is held by a binary released in the same pass: the walk follows the dependencies between our own packages at
+    their newest versions, and a package whose requirement on another of ours (dep alone, when dep is a package
+    other than req) the other's newest version does not meet is a holder. False when no holder is found, or when any
+    one of them is not of the pass: that breakage is not the pass's alone. Returns the holders it found, or None."""
+    newest = {}
+    for p in pkgs:
+        if p.name not in newest or (deb_cmp if kind == "deb" else rpm_cmp)(p.version, newest[p.name].version) > 0:
+            newest[p.name] = p
+    holders, seen, todo = set(), set(), [req]
+    while todo:
+        name = todo.pop()
+        if name in seen or name not in newest:
+            continue
+        seen.add(name)
+        for dn, op, ver in newest[name].deps:
+            if dn not in newest or dn == name:
+                continue
+            todo.append(dn)
+            if op and (dep in (None, req) or dn == dep) and not satisfies(kind, newest[dn].version, op, ver):
+                holders.add(name)
+    return holders if holders and holders <= set(same_pass) else None
+
+
+def newest_judge(where, before, after, same_pass, reds, warns, notes, graph=None):
     """before and after map (requested package, our package resolved older) to a message. A fallback the release
-    brings is RED; one that was there before is reported."""
+    brings is RED; one that was there before is reported. graph is (kind, our packages): a package whose only unmet
+    requirement on its path is held by a same-pass binary (held_by_pass) is reported like the pass's own."""
     for k in sorted(after):
         req, dep = k
         # a package that does not resolve names what is missing only in dnf's problem: when every name it misses is
@@ -465,6 +533,9 @@ def newest_judge(where, before, after, same_pass, reds, warns, notes):
             warns.append(f"{where}: already before this release: {after[k]}")
         elif {req, dep} & set(same_pass) or (missing and missing <= set(same_pass)):
             notes.append(f"{where}: until the rest of the pass is released: {after[k]}")
+        elif graph and (held := held_by_pass(graph[0], graph[1], req, dep, same_pass)):
+            notes.append(f"{where}: until the rest of the pass is released: {after[k]} "
+                         f"(every unmet requirement on its path is held by {' '.join(sorted(held))}, of the pass)")
         else:
             reds.append(f"{where}: {after[k]}")
 
@@ -748,6 +819,7 @@ def deb_arm(a):
             for suite in [x for x in suites if not any(c.startswith(f"{x}/") for c in a.cell)]:
                 say(f"debian/{suite}: outside the cells of the set, not judged")
             suites = [x for x in suites if any(c.startswith(f"{x}/") for c in a.cell)]
+        read_pkgs = []  # the channel's metadata the gate read, every suite: a same-pass name is checked against it
         for suite in suites:
             pub_src = join(a.channel, "debian", suite, "Packages")
             published = parse_stanzas(open(fetch(pub_src, os.path.join(work, f"pub-{suite}"))).read())
@@ -760,6 +832,8 @@ def deb_arm(a):
                           if (s[0]["Package"], s[0].get("Version"), s[0].get("Architecture")) not in new_keys]
             arches = a.arch or sorted({f.get("Architecture") for f, _ in published + new} - {"all", None, ""})
             new_names = {f["Package"] for f, _ in new}
+            chan = deb_pkgs(published + new)
+            read_pkgs += chan
             say(f"debian/{suite}: {len(published)} published, {len(new)} new "
                 f"({' '.join(sorted(new_names)) or 'none'}), architectures {' '.join(arches)}")
             # a dry run judges only the architectures it built (the artefacts say which); a real publish judges them all
@@ -772,8 +846,9 @@ def deb_arm(a):
                     continue
                 bg = a.bg or debian_background(suite, arch, a.mirror, a.security, work)
                 pick = lambda ss: [s for s in ss if s[0].get("Architecture") in (arch, "all")]  # noqa: E731
-                same_pass = unbuilt_pass(a, {f["Package"] for f, _ in new if f.get("Architecture") == arch},
-                                         {f["Package"] for f, _ in new if f.get("Architecture") not in (arch, "all")})
+                same_pass = expand_same_pass(
+                    unbuilt_pass(a, {f["Package"] for f, _ in new if f.get("Architecture") == arch},
+                                 {f["Package"] for f, _ in new if f.get("Architecture") not in (arch, "all")}), chan)
                 before = run_dose(pick(before_all), bg, arch, work, f"{suite}-{arch}-before")
                 after = run_dose(pick(before_all) + pick(new), bg, arch, work, f"{suite}-{arch}-after")
                 judge(f"debian/{suite} {arch}", before, after, new_names, same_pass, reds, warns, notes)
@@ -784,14 +859,19 @@ def deb_arm(a):
                     names_a = {f["Package"] for f, _ in view_a}
                     nb = apt_newest(view_b, bg, arch, {f["Package"] for f, _ in view_b}, work, f"{suite}-{arch}-before")
                     na = apt_newest(view_a, bg, arch, names_a, work, f"{suite}-{arch}-after")
-                    newest_judge(f"debian/{suite} {arch} newest", nb, na, same_pass, reds, warns, notes)
+                    newest_judge(f"debian/{suite} {arch} newest", nb, na, same_pass, reds, warns, notes,
+                                 ("deb", deb_pkgs(view_a)))
                     say(f"debian/{suite} {arch}: {len(names_a)} packages installed alone, {len(nb)} not at their "
                         f"newest before, {len(na)} after")
             warns += [f"debian/{suite}: {x}" for x in hygiene("deb", deb_pkgs(published))]
-            r, w, n = ceiling_check("deb", deb_pkgs(published), deb_pkgs(new), a.same_pass)
+            r, w, n = ceiling_check("deb", deb_pkgs(published), deb_pkgs(new), expand_same_pass(a.same_pass, chan))
             reds += [f"debian/{suite}: {x}" for x in r]
             warns += [f"debian/{suite}: {x}" for x in w]
             notes += [f"debian/{suite}: {x}" for x in n]
+        if read_pkgs:
+            reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+        else:  # no metadata read (the cells left no suite): nothing to match the names against, so none is judged
+            say("same-pass names not checked: no suite judged")
     finally:
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -841,7 +921,7 @@ def run_repoclosure(base, repos, check, arch):
     return broken
 
 
-QF = "@@%{name} %{evr} %{arch}\n%{requires}\n"
+QF = "@@%{name} %{evr} %{arch} %{sourcerpm}\n%{requires}\n"
 
 
 def repoquery(base, repos, ids, excludes=()):
@@ -875,6 +955,7 @@ def rpm_arm(a):
         if not versions:
             raise Cannot(f"no Fedora release served under {a.channel}/fedora and none given")
         arches = a.arch or ["x86_64", "aarch64"]
+        read_pkgs = []  # the channel's metadata the gate read, every cell: a same-pass name is checked against it
         for rel in versions:
             for arch in arches:
                 where = f"fedora/{rel} {arch}"
@@ -882,7 +963,7 @@ def rpm_arm(a):
                     continue
                 mine = [f for f in rpms if re.search(rf"\.fc{rel}\.({arch}|noarch)\.rpm$", f)]
                 rpm_name = lambda f: os.path.basename(f).rsplit("-", 2)[0]  # noqa: E731
-                same_pass = unbuilt_pass(
+                unbuilt = unbuilt_pass(
                     a, {rpm_name(f) for f in rpms if re.search(rf"\.fc{rel}\.{arch}\.rpm$", f)},
                     {rpm_name(f) for f in rpms if re.search(rf"\.fc{rel}\.[^.]+\.rpm$", f)
                      and not re.search(rf"\.fc{rel}\.({arch}|noarch)\.rpm$", f)})
@@ -900,6 +981,9 @@ def rpm_arm(a):
                 new_nevras = [f"{p.name}-{p.version}.{p.arch}" for p in new_pkgs]
                 excl = new_nevras + [x for x in (a.drop or [])]
                 ids = [r for r, _ in pub]
+                published = repoquery(base, pub, ids, excl)
+                same_pass = expand_same_pass(unbuilt, published + new_pkgs)
+                read_pkgs += published + new_pkgs
                 excl_opts = [f"--setopt={rid}.excludepkgs={','.join(excl)}" for rid in ids] if excl else []
                 before = run_repoclosure(base + excl_opts, pub, ids, arch)
                 # repoclosure --newest takes the newest of each repository, so the published versions of what the
@@ -913,7 +997,6 @@ def rpm_arm(a):
                 say(f"{where}: {len(new_pkgs)} new ({' '.join(sorted(new_names)) or 'none'}), "
                     f"{sum(map(len, before.values()))} unresolved before, {sum(map(len, after.values()))} after")
                 judge(where, before, after, new_names, same_pass, reds, warns, notes)
-                published = repoquery(base, pub, ids, excl)
                 if not a.no_newest:
                     # every version stays in view here: the fallback to an old build is what is looked for
                     sysrepos = [f"--disablerepo={r}" for r in system_omx_repos()]
@@ -925,13 +1008,19 @@ def rpm_arm(a):
                     va = vb + [f"--repofrompath={i},{u}" for i, u in newrepo]
                     nb = dnf_newest(vb, ids, published, arch)
                     na = dnf_newest(va, ids + ["omx-gate-new"], published + new_pkgs, arch)
-                    newest_judge(f"{where} newest", nb, na, same_pass, reds, warns, notes)
+                    newest_judge(f"{where} newest", nb, na, same_pass, reds, warns, notes, ("rpm", [
+                        p for p in published + new_pkgs if p.arch in (arch, "noarch")]))
                     say(f"{where}: {len(nb)} of our packages not at their newest before, {len(na)} after")
                 warns += [f"{where}: {x}" for x in hygiene("rpm", published)]
                 r, w, n = ceiling_check("rpm", published, new_pkgs, same_pass)
                 reds += [f"{where}: {x}" for x in r]
                 warns += [f"{where}: {x}" for x in w]
                 notes += [f"{where}: {x}" for x in n]
+        # the entries are the pass's own names, not the unbuilt ones the cells derive from their metadata
+        if read_pkgs:
+            reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+        else:  # no metadata read (the cells left no suite): nothing to match the names against, so none is judged
+            say("same-pass names not checked: no cell judged")
     finally:
         if not a.keep:
             shutil.rmtree(work, ignore_errors=True)
@@ -1012,7 +1101,8 @@ def ceiling_cmd(a):
     else:
         pub = parse_rpm_query(open(a.published).read())
         new = sum((parse_rpm_query(open(f).read()) for f in a.new), [])
-    return report("ceiling", *ceiling_check(a.kind, pub, new, a.same_pass))
+    r, w, n = ceiling_check(a.kind, pub, new, expand_same_pass(a.same_pass, pub + new))
+    return report("ceiling", unknown_same_pass_reds(a.same_pass, pub + new) + r, w, n)
 
 
 def main(argv=None):
@@ -1030,7 +1120,7 @@ def main(argv=None):
         p.add_argument("--keep", action="store_true", help="keep the work directory")
         p.add_argument("--no-newest", action="store_true", help="skip the arm that installs each package alone")
         p.add_argument("--cell", action="append",
-                       help="judge only these cells, RELEASE/ARCH (44/x86_64, trixie/arm64); every other cell is named and "
+                       help="judge only these cells, RELEASE/ARCH (45/x86_64, trixie/arm64); every other cell is named and "
                             "left out. A release of the quick set passes its cells: the trees outside it stay as served")
         p.add_argument("--dry-run", action="store_true",
                        help="a release dry run (nothing is published): the deb arm judges only the architectures the "

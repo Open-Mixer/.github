@@ -46,7 +46,7 @@ outputs:
     description: "'quick' or 'full': what the run builds"
     value: ${{ steps.matrix.outputs.set }}
   cells:
-    description: 'the cells, a JSON array for strategy.matrix.include: {"fedora": "44", "arch": "x86_64"} or {"suite": "trixie", "arch": "arm64"}'
+    description: 'the cells, a JSON array for strategy.matrix.include: {"fedora": "45", "arch": "x86_64"} or {"suite": "trixie", "arch": "arm64"}'
     value: ${{ steps.matrix.outputs.cells }}
   releases:
     description: the Fedora releases or Debian releases the cells cover, space separated

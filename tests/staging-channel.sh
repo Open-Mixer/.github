@@ -166,15 +166,26 @@ def check(path, kind):
         assert group.endswith("-live") == want_stage, f"{path}: {name} publishes in group {group}"
     st = sst
     assert "5f455d37cfb5" in ev(st["with"]["tag"], staged), f"{path}: the staged commit message does not name the commit"
-    rels = ev(st["with"]["releases" if kind == "rpm" else "suites"], staged)
-    assert rels == " ".join(json.loads(base["fedora-versions" if kind == "rpm" else "suite-matrix"])), \
-        f"{path}: the staging skeleton is {rels!r}, not every release of the matrix"
+    # the skeleton is the releases the run BUILT (the preflight's output), not the caller's whole list: a quick run
+    # writes no staging metadata for a release the set dropped
+    built = "45" if kind == "rpm" else "trixie"
+    rels = ev(st["with"]["releases" if kind == "rpm" else "suites"], staged, needs=O(preflight=O(outputs=O(releases=built))))
+    assert rels == built, f"{path}: the staging skeleton is {rels!r}, not the releases the run built ({built!r})"
     if kind == "deb":
         assert ev(st["with"]["changelogs-url"], staged).endswith("/staging/deb/changelogs"), f"{path}: staged changelogs URL"
         assert ev(rst["with"]["changelogs-url"], tag, ref_type="tag").endswith("/deb/changelogs") and \
             "staging" not in ev(rst["with"]["changelogs-url"], tag, ref_type="tag"), f"{path}: release changelogs URL"
-        sep = steps[bld[0]]["with"].get("separator")
-        assert ev(sep, staged) == "+git" and ev(sep, dry) == "~git", f"{path}: the staged DEB snapshot separator"
+        # the separator is chosen by the action's separator.sh from what the workflow hands it: staged, and whether the run
+        # is a dry run (not at a release tag); it no longer spells a separator itself
+        w = steps[bld[0]]["with"]
+        assert "separator" not in w, f"{path}: the build step still spells a separator; separator.sh chooses it"
+        assert w.get("staged") == "${{ inputs.staged }}" and w.get("dry-run") == "${{ env.RELEASE_TAG == '' }}", \
+            f"{path}: the staged DEB snapshot separator: the build step does not pass staged and dry-run to the action"
+        import os, subprocess
+        sh = os.path.join(os.path.dirname(os.path.abspath(path)), "..", "actions", "build-deb", "separator.sh")
+        got = lambda *a: subprocess.run([sh, *a], capture_output=True, text=True, check=True).stdout.strip()
+        assert got("", "true", "false") == "+git" and got("", "false", "true") == "+git", \
+            f"{path}: the staged DEB snapshot separator: separator.sh does not give +git for a staged build and a dry run"
 
     # the install check: from staging after a staged publish, from the real channel alone after a release
     v = jobs["verify"]
@@ -352,6 +363,7 @@ step "$here/.github/actions/purge-staging/action.yml" - '^Purge the staging tree
 mkdir -p "$t/g/bin" "$t/g/act"
 printf '#!/bin/bash\n[ -z "${TOUCH:-}" ] || echo changed >> "build/channel/$TOUCH"\n' > "$t/g/act/purge-staging.sh"
 chmod +x "$t/g/act/purge-staging.sh"
+mkdir -p "$t/g/release-matrix" && ln -s "$here/.github/actions/release-matrix/staged-cells.sh" "$here/.github/actions/release-matrix/quick.txt" "$t/g/release-matrix/"
 guard() { # <file the fake purge changes, or empty>
     rm -rf "$t/g/w"; mkdir -p "$t/g/w/build/channel/rpm" "$t/g/w/build/channel/staging/deb"
     (cd "$t/g/w/build/channel" && git init -q && echo a > rpm/a && echo b > staging/deb/b && git add -A &&

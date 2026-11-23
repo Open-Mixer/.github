@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# FreeREAC package repository (REAC stack: libreac, reac-pw, reac-stageboxes)
+[freereac]
+name=FreeREAC
+baseurl=https://freereac.github.io/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-freereac
+metadata_expire=6h
+skip_if_unavailable=False
+
+[freereac-noarch]
+name=FreeREAC (noarch)
+baseurl=https://freereac.github.io/rpm/fedora/$releasever/noarch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-freereac
+metadata_expire=6h
+skip_if_unavailable=False
+
+[freereac-source]
+name=FreeREAC - Sources
+baseurl=https://freereac.github.io/rpm/fedora/$releasever/SRPMS/
+enabled=0
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-freereac
