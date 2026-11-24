@@ -113,6 +113,8 @@ printf 'rpm\n' > "$t/bad.txt"
 PROMOTE_FROZEN="$t/bad.txt" refuses "a frozen list line that is not <kind> <release>" 'frozen\.txt|not .<kind> <release>.' "$t/f" "${rpm_args[@]}" --commit 5f455d3
 grep -v '^#' "$here/.github/actions/release-matrix/frozen.txt" | grep -qx 'rpm 44' || fail "release-matrix/frozen.txt does not list rpm 44 (owner ruling 2026-11-19)"
 ok "release-matrix/frozen.txt lists rpm 44"
+grep -v '^#' "$here/.github/actions/release-matrix/frozen.txt" | grep -qx 'deb bookworm' || fail "release-matrix/frozen.txt does not list deb bookworm (owner ruling 2026-11-16)"
+ok "release-matrix/frozen.txt lists deb bookworm"
 
 # ---- the workflow, rendered
 wf=$here/.github/workflows/promote-staged.yml
