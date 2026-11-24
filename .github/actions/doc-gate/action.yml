@@ -23,7 +23,7 @@ inputs:
     description: hold the baseline, the Doxyfile and the suppressions to the base (true on a pull request; a push has no base)
     default: 'true'
   base:
-    description: the base ref when compare is true (origin/${{ github.base_ref }}); empty is refused, never a default
+    description: the base ref when compare is true (origin/<base>, <base> the pull request's base branch, github.base_ref); empty is refused, never a default
     default: ''
   py:
     description: the Python paths ruff checks, space-separated (none means no Python half)

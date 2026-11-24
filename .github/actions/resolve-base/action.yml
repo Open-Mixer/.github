@@ -11,7 +11,7 @@ description: Resolve the base of a compare gate the one way, fetched and verifie
 
 inputs:
   base:
-    description: the base ref (origin/${{ github.base_ref }} on a pull request); empty is refused, never a default
+    description: the base ref (origin/<base> on a pull request, <base> its base branch, github.base_ref); empty is refused, never a default
     required: true
   merge-base:
     description: also give the merge-base with HEAD (false for a gate that reads the base's tip)
