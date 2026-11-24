@@ -20,7 +20,8 @@ name: Release unit (dry run)
 # msi (5.3). Both change what is tested, not the job graph whose time the dry run measures.
 #
 # A push to a branch unit-dry-run/<anything> runs the same dry run, with the defaults: a workflow_dispatch reaches only
-# a workflow the default branch carries, and this one does not yet. Neither ever publishes.
+# a workflow the default branch carries, and this one does not yet. A push run keeps going past a red level (a
+# measurement, like keep-going). Neither ever publishes.
 
 on:
   workflow_dispatch:
@@ -126,7 +127,7 @@ jobs:
   rpm-1:
     name: rpm level 1 (${{ matrix.m.name }})
     needs: [plan, rpm-0]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-1 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-1 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -138,7 +139,7 @@ jobs:
   rpm-2:
     name: rpm level 2 (${{ matrix.m.name }})
     needs: [plan, rpm-0, rpm-1]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-2 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-2 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +151,7 @@ jobs:
   rpm-3:
     name: rpm level 3 (${{ matrix.m.name }})
     needs: [plan, rpm-0, rpm-1, rpm-2]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-3 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-3 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -162,7 +163,7 @@ jobs:
   rpm-4:
     name: rpm level 4 (${{ matrix.m.name }})
     needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-4 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-4 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -174,7 +175,7 @@ jobs:
   rpm-5:
     name: rpm level 5 (${{ matrix.m.name }})
     needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-5 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-5 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +187,7 @@ jobs:
   rpm-6:
     name: rpm level 6 (${{ matrix.m.name }})
     needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4, rpm-5]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-6 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-6 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -198,7 +199,7 @@ jobs:
   rpm-7:
     name: rpm level 7 (${{ matrix.m.name }})
     needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4, rpm-5, rpm-6]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-7 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.rpm-7 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -238,7 +239,7 @@ jobs:
   deb-1:
     name: deb level 1 (${{ matrix.m.name }})
     needs: [plan, deb-0]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-1 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-1 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -250,7 +251,7 @@ jobs:
   deb-2:
     name: deb level 2 (${{ matrix.m.name }})
     needs: [plan, deb-0, deb-1]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-2 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-2 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -262,7 +263,7 @@ jobs:
   deb-3:
     name: deb level 3 (${{ matrix.m.name }})
     needs: [plan, deb-0, deb-1, deb-2]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-3 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-3 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -274,7 +275,7 @@ jobs:
   deb-4:
     name: deb level 4 (${{ matrix.m.name }})
     needs: [plan, deb-0, deb-1, deb-2, deb-3]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-4 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-4 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -286,7 +287,7 @@ jobs:
   deb-5:
     name: deb level 5 (${{ matrix.m.name }})
     needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-5 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-5 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -298,7 +299,7 @@ jobs:
   deb-6:
     name: deb level 6 (${{ matrix.m.name }})
     needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4, deb-5]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-6 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-6 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -310,7 +311,7 @@ jobs:
   deb-7:
     name: deb level 7 (${{ matrix.m.name }})
     needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4, deb-5, deb-6]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-7 != '[]' }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) && needs.plan.outputs.deb-7 != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -322,7 +323,7 @@ jobs:
   integrate-rpm:
     name: Install the unit (fc45, x86_64)
     needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4, rpm-5, rpm-6, rpm-7]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -348,7 +349,7 @@ jobs:
   integrate-deb:
     name: Install the unit (trixie, arm64)
     needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4, deb-5, deb-6, deb-7]
-    if: ${{ !cancelled() && (inputs.keep-going || !failure()) }}
+    if: ${{ !cancelled() && (inputs.keep-going || github.event_name == 'push' || !failure()) }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
