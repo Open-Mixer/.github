@@ -80,13 +80,13 @@ git checkout -q topic~0
 rc=0; "$chk" --author-email "" --committer-email "" "main..$wc" >/dev/null || rc=$?
 [ "$rc" = 1 ] || fail "empty flags with a wrong committer gave $rc, not 1"
 
-# the workflow's inputs reach the action, the switch is off by default and skips the job, the action takes env not a splice
+# the workflow's inputs reach the action, the switch is ON by default (.github#190) and false skips the job, the action takes env not a splice
 python3 -I - "$here" <<'PY' || fail "workflow wiring"
 import sys, yaml
 h = sys.argv[1]
 w = yaml.safe_load(open(h + "/.github/workflows/public-sources-check.yml"))
 i = w[True]["workflow_call"]["inputs"]
-assert i["commit-identity"]["default"] is False, "the switch must default off"
+assert i["commit-identity"]["default"] is True, "the gate is on everywhere: the switch must default on (.github#190)"
 assert i["author-email"]["default"] == "" and i["committer-email"]["default"] == "", "no second copy of the emails"
 j = w["jobs"]["commit-identity"]
 assert "inputs.commit-identity" in j["if"], "the job is not skipped when off"
