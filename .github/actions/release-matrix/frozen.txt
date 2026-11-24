@@ -1,0 +1,6 @@
+# The frozen releases: a release the channel still serves and that nothing builds any more. Its tree stays as it is
+# (nothing pruned without a separate decision), and a promotion (promote-staged/collect.py) does not hold it against
+# its matrix. One per line: the package kind and the Fedora release or Debian suite as the channel names it.
+# This list is the only place it is written.
+# fc44: owner ruling 2026-11-19, every machine is on Fedora 45 (docs/release-operations.md).
+rpm 44
