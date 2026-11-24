@@ -18,7 +18,9 @@ It refuses, naming each case, and copies nothing when:
   - staging holds no build of that version, or builds of more than one commit and --commit names none of them;
   - a release and architecture of the matrix holds no build of a binary (or, for rpm, a release holds no source package);
   - the channel root serves a binary for a release the staged build does not cover: a machine on that release would
-    be left on the old version.
+    be left on the old version. A FROZEN release is not held against the matrix: one the channel still serves and
+    nothing builds any more, a line of release-matrix/frozen.txt (PROMOTE_FROZEN names another list), whose tree
+    stays as it is.
 
 On success: one "<sha256>  <path in the channel root>" line per file in --sums (default DIR.sha256) and on stdout, then
 "commit <sha>", the short commit the staged build recorded.
@@ -29,6 +31,25 @@ import os
 import re
 import shutil
 import sys
+
+FROZEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "release-matrix", "frozen.txt")
+
+
+def frozen(kind):
+    """The releases of this kind the frozen list names (lines '<kind> <release>', '#' comments)."""
+    path = os.environ.get("PROMOTE_FROZEN") or FROZEN
+    out = set()
+    with open(path, encoding="utf-8") as h:
+        for n, line in enumerate(h, 1):
+            words = line.split("#", 1)[0].split()
+            if not words:
+                continue
+            if len(words) != 2 or words[0] not in LAYOUT:
+                sys.exit(f"refused: {path}:{n} is not '<kind> <release>': {line.strip()}")
+            if words[0] == kind:
+                out.add(words[1])
+    return out
+
 
 LAYOUT = {
     "rpm": ("fedora", "noarch", "SRPMS"),
@@ -111,7 +132,7 @@ def main():
                     refused.append(f"{where}/{rel}/{arch} holds no {pkg} {a.version} of {commit}")
         if srcdir and not has(rel, srcdir, a.name):
             refused.append(f"{where}/{rel}/{srcdir} holds no source package of {a.name} {a.version} of {commit}")
-    for rel in sorted({r for (r, _) in root} - set(releases)):
+    for rel in sorted({r for (r, _) in root} - set(releases) - frozen(a.kind)):
         for pkg in binaries:
             if serves(rel, pkg):
                 refused.append(f"the channel serves {pkg} in {a.kind}/{top}/{rel}, and the matrix of this promotion has no {rel}")
