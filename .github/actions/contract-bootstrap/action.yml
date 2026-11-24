@@ -43,7 +43,7 @@ runs:
           dnf install -y --setopt=install_weak_deps=False git make pkgconf rpm-build
           ! dnf -q repoquery --available omx-contract-devel | grep -q . || dnf install -y --setopt=install_weak_deps=False omx-contract-devel
         elif [ "$KIND" = deb ]; then
-          apt-get install -y --no-install-recommends git make pkgconf dpkg-dev
+          apt-get install -y --no-install-recommends git make pkgconf dpkg-dev python3
           [ -z "$(apt-cache policy libomx-contract-dev | sed -n 's/^ *Candidate: *//p' | grep -v '(none)')" ] \
             || apt-get install -y --no-install-recommends libomx-contract-dev
         else
