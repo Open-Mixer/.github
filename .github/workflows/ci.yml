@@ -54,6 +54,7 @@ jobs:
       - run: tests/install-clean-retry.sh
       - run: tests/quick-unbuilt-pass.sh
       - run: tests/reusable-workflows.sh
+      - run: tests/unit-plan.sh
       - run: tests/runner-selection.sh
       - run: tests/hosted-default-runner.sh
       - run: tests/langpacks-fill-runner.sh

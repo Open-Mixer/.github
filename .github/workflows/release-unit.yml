@@ -1,0 +1,387 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Release unit (dry run)
+
+# The pipeline of a release unit (the release-units design of 2026-11-24, sections
+# 5.2 and 5.3), DISPATCH-ONLY for now: it builds and installs, and PUBLISHES NOTHING. It is the section 9 dry run, and
+# the shape the continuous devel run (5.7) and a lane proof on PR heads (5.6, heads=) take.
+#
+#   plan        units/<unit>.txt, the one member list, and one commit per member (.github/scripts/unit-plan.py): the
+#               branch tips (devel by default), heads= overrides, a manifest reship= wins over the branch.
+#   rpm-N/deb-N every member of dependency level N, in parallel (a matrix of build-rpm.yml / build-deb.yml calls, at
+#               this commit, with source-commit: a dry run of the member's untagged commit), rpm and deb chains apart.
+#               Level N starts when level N-1 of its format is done. A level with no member is skipped.
+#   integrate   the whole built set installed in ONE transaction per format (fedora 45 x86_64, trixie arm64), the
+#               members' build dependencies outside the unit from the channel.
+#   timing      wall clock from the run's start to would-publish, per level and per member (.github/scripts/unit-timing.py).
+#
+# KNOWN GAP of this first cut (named, not hidden): a member builds against the CHANNEL's packages of the members below
+# it, at their floors, not yet against this run's artifacts (5.2); and the integration box is a hosted container, not
+# msi (5.3). Both change what is tested, not the job graph whose time the dry run measures.
+#
+# A push to a branch unit-dry-run/<anything> runs the same dry run, with the defaults: a workflow_dispatch reaches only
+# a workflow the default branch carries, and this one does not yet. Neither ever publishes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unit:
+        description: 'The unit: units/<unit>.txt'
+        type: string
+        default: plugins
+      ref:
+        description: "The branch each member's commit is read from"
+        type: string
+        default: devel
+      heads:
+        description: 'Members built at another commit, space separated <repo>=<40-hex sha> (a lane proof on its PR heads)'
+        type: string
+        default: ''
+      matrix:
+        description: "'full' builds every cell (a production release), 'quick' the tested cells (a testing release)"
+        type: string
+        default: full
+      keep-going:
+        description: 'Build every level even when a lower one failed (a measurement); off, a red level stops the run'
+        type: boolean
+        default: false
+  push:
+    branches: ['unit-dry-run/**']
+
+# what the called build workflows declare; this run uses none of it to publish (publish: false, stage: build)
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: release-unit-${{ inputs.unit || 'plugins' }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: Plan the unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      rpm-0: ${{ steps.plan.outputs.rpm-0 }}
+      rpm-1: ${{ steps.plan.outputs.rpm-1 }}
+      rpm-2: ${{ steps.plan.outputs.rpm-2 }}
+      rpm-3: ${{ steps.plan.outputs.rpm-3 }}
+      rpm-4: ${{ steps.plan.outputs.rpm-4 }}
+      rpm-5: ${{ steps.plan.outputs.rpm-5 }}
+      rpm-6: ${{ steps.plan.outputs.rpm-6 }}
+      rpm-7: ${{ steps.plan.outputs.rpm-7 }}
+      deb-0: ${{ steps.plan.outputs.deb-0 }}
+      deb-1: ${{ steps.plan.outputs.deb-1 }}
+      deb-2: ${{ steps.plan.outputs.deb-2 }}
+      deb-3: ${{ steps.plan.outputs.deb-3 }}
+      deb-4: ${{ steps.plan.outputs.deb-4 }}
+      deb-5: ${{ steps.plan.outputs.deb-5 }}
+      deb-6: ${{ steps.plan.outputs.deb-6 }}
+      deb-7: ${{ steps.plan.outputs.deb-7 }}
+      members: ${{ steps.plan.outputs.members }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          UNIT: ${{ inputs.unit || 'plugins' }}
+          REF: ${{ inputs.ref || 'devel' }}
+          HEADS: ${{ inputs.heads }}
+        run: python3 -I .github/scripts/unit-plan.py . "$UNIT" "$REF" "$HEADS" --levels=8
+
+  rpm-0:
+    name: rpm level 0 (${{ matrix.m.name }})
+    needs: plan
+    if: ${{ needs.plan.outputs.rpm-0 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-0) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: &rpm
+      package-name: ${{ matrix.m.name }}
+      binary-names: ${{ matrix.m.bins }}
+      source-repository: ${{ matrix.m.repo }}
+      source-commit: ${{ matrix.m.sha }}
+      source-sha: ${{ matrix.m.sha }}
+      arch-matrix: ${{ matrix.m.arches }}
+      channel-deps: ${{ matrix.m.channel-deps }}
+      build-packages: ${{ matrix.m.build-packages }}
+      bootstrap: ${{ matrix.m.bootstrap }}
+      matrix: ${{ inputs.matrix || 'full' }}
+      stage: build
+      publish: false
+      create-github-release: false
+      verify-install: false
+      needs-mod-host: ${{ matrix.m.needs-mod-host }}
+    secrets: inherit
+
+  rpm-1:
+    name: rpm level 1 (${{ matrix.m.name }})
+    needs: [plan, rpm-0]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-1 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-1) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  rpm-2:
+    name: rpm level 2 (${{ matrix.m.name }})
+    needs: [plan, rpm-0, rpm-1]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-2 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-2) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  rpm-3:
+    name: rpm level 3 (${{ matrix.m.name }})
+    needs: [plan, rpm-0, rpm-1, rpm-2]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-3 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-3) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  rpm-4:
+    name: rpm level 4 (${{ matrix.m.name }})
+    needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-4 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-4) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  rpm-5:
+    name: rpm level 5 (${{ matrix.m.name }})
+    needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-5 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-5) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  rpm-6:
+    name: rpm level 6 (${{ matrix.m.name }})
+    needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4, rpm-5]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-6 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-6) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  rpm-7:
+    name: rpm level 7 (${{ matrix.m.name }})
+    needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4, rpm-5, rpm-6]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.rpm-7 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.rpm-7) }}
+    uses: ./.github/workflows/build-rpm.yml
+    with: *rpm
+    secrets: inherit
+
+  deb-0:
+    name: deb level 0 (${{ matrix.m.name }})
+    needs: plan
+    if: ${{ needs.plan.outputs.deb-0 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-0) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: &deb
+      package-name: ${{ matrix.m.name }}
+      binary-names: ${{ matrix.m.bins }}
+      source-repository: ${{ matrix.m.repo }}
+      source-commit: ${{ matrix.m.sha }}
+      source-sha: ${{ matrix.m.sha }}
+      arch-matrix: ${{ matrix.m.arches }}
+      channel-deps: ${{ matrix.m.channel-deps }}
+      build-packages: ${{ matrix.m.build-packages }}
+      bootstrap: ${{ matrix.m.bootstrap }}
+      matrix: ${{ inputs.matrix || 'full' }}
+      stage: build
+      publish: false
+      create-github-release: false
+      verify-install: false
+      dependencies: ${{ matrix.m.deps }}
+      requires: ''
+    secrets: inherit
+
+  deb-1:
+    name: deb level 1 (${{ matrix.m.name }})
+    needs: [plan, deb-0]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-1 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-1) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  deb-2:
+    name: deb level 2 (${{ matrix.m.name }})
+    needs: [plan, deb-0, deb-1]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-2 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-2) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  deb-3:
+    name: deb level 3 (${{ matrix.m.name }})
+    needs: [plan, deb-0, deb-1, deb-2]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-3 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-3) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  deb-4:
+    name: deb level 4 (${{ matrix.m.name }})
+    needs: [plan, deb-0, deb-1, deb-2, deb-3]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-4 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-4) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  deb-5:
+    name: deb level 5 (${{ matrix.m.name }})
+    needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-5 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-5) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  deb-6:
+    name: deb level 6 (${{ matrix.m.name }})
+    needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4, deb-5]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-6 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-6) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  deb-7:
+    name: deb level 7 (${{ matrix.m.name }})
+    needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4, deb-5, deb-6]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) && needs.plan.outputs.deb-7 != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        m: ${{ fromJSON(needs.plan.outputs.deb-7) }}
+    uses: ./.github/workflows/build-deb.yml
+    with: *deb
+    secrets: inherit
+
+  integrate-rpm:
+    name: Install the unit (fc45, x86_64)
+    needs: [plan, rpm-0, rpm-1, rpm-2, rpm-3, rpm-4, rpm-5, rpm-6, rpm-7]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container:
+      image: fedora:45
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-rpms-fc45-*'
+          path: art
+          merge-multiple: true
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+      - name: One transaction, the whole set
+        run: |
+          set -euo pipefail
+          mapfile -t rpms < <(find art -name '*.rpm' ! -name '*.src.rpm' \( -name '*.x86_64.rpm' -o -name '*.noarch.rpm' \) | sort)
+          [ "${#rpms[@]}" -gt 0 ] || { echo "::error::no RPM of this run to install"; exit 1; }
+          printf '%s\n' "${rpms[@]}"
+          dnf install -y --setopt=install_weak_deps=False "${rpms[@]}"
+          rpm -q --qf '%{name}-%{evr}.%{arch}\n' $(rpm -qp --qf '%{name} ' "${rpms[@]}")
+
+  integrate-deb:
+    name: Install the unit (trixie, arm64)
+    needs: [plan, deb-0, deb-1, deb-2, deb-3, deb-4, deb-5, deb-6, deb-7]
+    if: ${{ !cancelled() && (inputs.keep-going || !failure()) }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-debs-trixie-*'
+          path: art
+          merge-multiple: true
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+      - name: One transaction, the whole set
+        run: |
+          set -euo pipefail
+          mapfile -t debs < <(find "$PWD/art" \( -name '*_arm64.deb' -o -name '*_all.deb' \) ! -name '*-dbgsym_*' | sort)
+          [ "${#debs[@]}" -gt 0 ] || { echo "::error::no DEB of this run to install"; exit 1; }
+          printf '%s\n' "${debs[@]}"
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${debs[@]}"
+
+  timing:
+    name: Wall clock to would-publish
+    needs: [plan, integrate-rpm, integrate-deb]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/unit-timing.py "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"

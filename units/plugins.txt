@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+#
+# The PLUGINS release unit: the ONE declaration of its members (the release-units design of 2026-11-24,
+# section 2). The pipeline (.github/workflows/release-unit.yml) and
+# the release tool (unit-release.sh) read it; no tool keeps a second list.
+#
+# One member per line, in build order: the repository (Open-Mixer/<repo>), then key=value fields.
+#   level=N        dependency level: a member builds after every member of a lower level, beside the members of
+#                  its own level. A member's level is one above the highest level of the members its packaging
+#                  builds on (BuildRequires, Build-Depends). Two edges point back down and are taken from the
+#                  channel at their floor: plugin-hostd-protocol's plugin-db-contract and plugin-hostd's
+#                  libplugin-qualification-db-devel (section 9, fallback 2, removes them).
+#   rpm=SRC deb=SRC  the source package of each format; '-' builds none of that format.
+#   rpm-bins=, deb-bins=  the binaries the build must produce, comma separated; empty is the source name.
+#   rpm-arches=, deb-arches=  comma separated; empty is build-rpm.yml's / build-deb.yml's default.
+#   channel-deps=false  takes no BuildRequires from the channel.     needs-mod-host=true  builds mod-host first (rpm).
+#   deb-deps=  build-deb.yml's dependencies input, comma separated.  build-packages=  extra distribution packages.
+#   bootstrap=REPO:PACKAGE  a -contract package of member REPO, built at that member's commit of this run and
+#                  installed for this member's build only (the omx-clap-contract step: omx-clap-contract, then
+#                  plugin-hostd-protocol, then the rest of omx-clap-core).
+#   reship=SHA     (set by unit-release.sh, never by hand) the member's last testing commit, re-shipped because its
+#                  devel is red (section 5.1).
+omx-contract level=0 rpm=omx-contract deb=omx-contract channel-deps=false rpm-bins=libomx-domain,libomx-domain-devel,omx-contract,omx-contract-data,omx-contract-devel,omx-contract-langpack-ca,omx-contract-langpack-es,omx-contract-langpack-fr,omx-contract-langpack-de,omx-contract-langpack-it,omx-contract-langpack-pt,python3-omx-contract deb-bins=libomx-contract-dev,libomx-domain-dev,libomx-domain0,omx-contract,omx-contract-data,omx-contract-l10n-ca,omx-contract-l10n-es,omx-contract-l10n-fr,omx-contract-l10n-de,omx-contract-l10n-it,omx-contract-l10n-pt,python3-omx-contract
+omx-dsp level=1 rpm=omx-dsp deb=omx-dsp rpm-bins=omx-dsp-devel,omx-rt-gate deb-bins=libomxdsp-dev,omx-rt-gate,omx-dsp-contract rpm-arches=x86_64
+plugin-hostd-protocol level=2 rpm=plugin-hostd-protocol deb=libplugin-hostd-protocol bootstrap=omx-clap-core:omx-clap-contract rpm-bins=plugin-hostd-protocol,plugin-hostd-protocol-devel,plugin-hostd-protocol-contract deb-bins=libplugin-hostd-protocol0,libplugin-hostd-protocol-dev,plugin-hostd-protocol-contract
+plugin-db level=3 rpm=plugin-db deb=plugin-db rpm-bins=plugin-db-devel,plugin-db-contract deb-bins=plugin-db-dev,plugin-db-contract
+omx-panel level=4 rpm=omx-panel deb=omx-panel rpm-bins=omx-panel,omx-panel-render,omx-panel-render-devel,omx-panel-store,omx-panel-store-devel,omx-panel-contract deb-bins=omx-panel,libomx-panel-render0,libomx-panel-render-dev,libomx-panel-store0,libomx-panel-store-dev,omx-panel-store,omx-panel-contract
+omx-clap-core level=5 rpm=omx-clap-host deb=omx-clap-host needs-mod-host=true deb-deps=mod-host-protocol,clap-headers
+plugin-hostd level=6 rpm=plugin-hostd deb=plugin-hostd needs-mod-host=true deb-deps=mod-host-protocol,clap-headers rpm-arches=x86_64
+plugin-qualify level=6 rpm=plugin-qualify deb=plugin-qualify deb-deps=clap-headers build-packages=python3
+omx-plugins level=7 rpm=omx-plugins deb=omx-plugins rpm-bins=omx-plugins,omx-plugins-clap,omx-plugins-lv2 deb-bins=omx-plugins,omx-plugins-clap,omx-plugins-lv2 deb-deps=clap-headers rpm-arches=x86_64 deb-arches=arm64
+plugin-db-qualification level=7 rpm=plugin-qualification-records deb=plugin-db-qualification rpm-bins=plugin-qualification-records,libplugin-qualification-db,libplugin-qualification-db-devel,plugin-qualification-db,plugin-qualification-db-schema,plugin-qualification-db-write deb-bins=plugin-qualification-records,libplugin-qualification-db0,libplugin-qualification-db-dev,plugin-qualification-db,plugin-qualification-db-schema,plugin-qualification-db-write build-packages=python3 deb-arches=arm64
+plugin-hostd-full level=7 rpm=plugin-hostd-full deb=- needs-mod-host=true rpm-arches=x86_64
