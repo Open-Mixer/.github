@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: upgrade-check
+description: The upgrade arm of the release install check, before the publish - what the channel serves of this source upgrades onto the build in one transaction
+
+# A machine that holds the channel's packages of this source runs `dnf upgrade` with the build offered above the
+# channel, from each of the newest <back> versions served below it. Red, by name, when the transaction fails (a file
+# two packages own, a requirement nothing meets) or when a package of the source stays at the old version: a rename or
+# a drop without `Obsoletes:` (omx-clap-core 0.34.0, whose renamed packages clashed with 0.33.1's on dnf upgrade).
+# upgrade-rpm.sh holds the logic; tests/upgrade-check-rpm.sh proves it on packages built there. RPM only: the channel's
+# DEB arm is not written yet (the Debian packages of a source are served on fewer architectures than it builds).
+# Runs as root in the release's Fedora container, the channel already added (add-openmixer).
+
+inputs:
+  rpm-dir:
+    description: the directory holding the built RPMs (this cell's architecture and the noarch ones)
+    required: true
+  release-package:
+    description: the channel's release package (openmixer-release, freereac-release); its repositories are the channel
+    default: openmixer-release
+  back:
+    description: how many of the newest versions the channel serves below the build are upgraded from
+    default: '2'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RPM_DIR: ${{ inputs.rpm-dir }}
+        RELEASE_PACKAGE: ${{ inputs.release-package }}
+        BACK: ${{ inputs.back }}
+      run: |
+        set -euo pipefail
+        [[ $RELEASE_PACKAGE =~ ^[a-z0-9]+-release$ ]] || { echo "::error::release-package '$RELEASE_PACKAGE' is not <channel>-release"; exit 1; }
+        command -v createrepo_c >/dev/null || dnf install -y -q --setopt=install_weak_deps=False createrepo_c
+        bash "$GITHUB_ACTION_PATH/upgrade-rpm.sh" "$RPM_DIR" "${RELEASE_PACKAGE%-release}" "$BACK"

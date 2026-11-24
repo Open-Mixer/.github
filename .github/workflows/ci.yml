@@ -315,6 +315,20 @@ jobs:
         shell: bash
         run: tests/testing-source-round-trip.sh
 
+  upgrade-check:
+    name: The upgrade arm of the release install check, with real dnf
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:45
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c findutils
+      - uses: actions/checkout@v4
+      # a rename with Obsoletes upgrades, one without is red on the file conflict, a drop without is red as left behind
+      - name: A served version upgrades onto the build in one transaction, or the arm is red by name
+        shell: bash
+        run: tests/upgrade-check-rpm.sh
+
   staging-installability:
     name: channel-installability judges the real channel alone
     runs-on: ubuntu-latest
