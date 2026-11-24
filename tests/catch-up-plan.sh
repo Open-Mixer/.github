@@ -129,7 +129,8 @@ for kind in ("rpm", "deb"):
     assert c and c["type"] == "boolean" and c["default"] is False, f"build-{kind}.yml has no boolean catch-up input defaulting to false"
     jobs = wf["jobs"]
     pre = jobs["preflight"]
-    assert pre["outputs"].get("count") == "${{ steps.matrix.outputs.count }}", f"build-{kind}.yml's preflight does not output the planned count"
+    # the planned count, or none when the promotion publishes the tag (tests/one-publisher.sh)
+    assert pre["outputs"].get("count") == "${{ steps.promoted.outputs.holds == 'true' && '0' || steps.matrix.outputs.count }}", f"build-{kind}.yml's preflight does not output the planned count"
     m = [s for s in pre["steps"] if s.get("id") == "matrix"][0]["with"]
     assert m.get("catch-up") == "${{ inputs.catch-up }}", f"build-{kind}.yml does not hand catch-up to release-matrix"
     assert m.get("names") == "${{ inputs.binary-names || inputs.package-name }}", f"build-{kind}.yml does not name the packages to release-matrix"

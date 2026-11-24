@@ -126,7 +126,8 @@ def run(kind, inputs, event, ref_type, var):
     if p.returncode:
         return None, p.stdout + p.stderr
     out = O(l.rstrip("\n").split("=", 1) for l in open(env["GITHUB_OUTPUT"]))
-    steps = O(matrix=O(outputs=out))
+    # staged-holds is asked on a publishing tag push alone (tests/one-publisher.sh); here it answered nothing
+    steps = O(matrix=O(outputs=out), promoted=O(outputs=O(holds="")))
     pre = d["jobs"]["preflight"]
     needs = O(preflight=O(outputs=O({k: ev(v, full, event, ref_type, var, steps=steps) for k, v in pre["outputs"].items()})))
     names = {}

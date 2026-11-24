@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Does staging hold this build
+description: >
+  The one question a v<version> tag asks before it publishes (docs/release-operations.md "One publisher per tag"):
+  does the staging tree of the channel hold a build of this version of this commit? promote-staged.yml publishes when
+  it does, build-rpm.yml and build-deb.yml when it does not. Reads the channel's file list only (a blobless clone, no
+  token for a public channel); writes nothing.
+inputs:
+  kind:
+    description: rpm or deb
+    required: true
+  version:
+    description: the version; a leading v (the tag) is dropped
+    required: true
+  commit:
+    description: the commit, short or full
+    required: true
+  names:
+    description: the binary package names, space separated (globs allowed); any one of them staged is the build
+    required: true
+  channel:
+    description: the channel repository
+    default: Open-Mixer/open-mixer.github.io
+  branch:
+    description: its branch
+    default: main
+  token:
+    description: a token that reads the channel; empty for a public one
+    default: ''
+  promoter:
+    description: >-
+      A checkout of the calling repository: the answer is true only when it also has a workflow that calls
+      promote-staged.yml. The release workflows pass it; the promotion passes nothing.
+    default: ''
+outputs:
+  holds:
+    description: "'true' when staging holds the build (and, with promoter, the repository promotes it), else 'false'"
+    value: ${{ steps.ask.outputs.holds }}
+runs:
+  using: composite
+  steps:
+    - id: ask
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        VERSION: ${{ inputs.version }}
+        COMMIT: ${{ inputs.commit }}
+        NAMES: ${{ inputs.names }}
+        CHANNEL: ${{ inputs.channel }}
+        BRANCH: ${{ inputs.branch }}
+        TOKEN: ${{ inputs.token }}
+        PROMOTER: ${{ inputs.promoter }}
+      run: |
+        set -euo pipefail
+        VERSION=${VERSION#v}
+        d=$(mktemp -d)
+        auth=()
+        [ -z "$TOKEN" ] || auth=(-c "http.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)")
+        git "${auth[@]}" clone --quiet --depth 1 --filter=blob:none --no-checkout --branch "$BRANCH" "https://github.com/$CHANNEL" "$d"
+        echo "the channel at $(git -C "$d" rev-parse HEAD)"
+        args=()
+        [ -z "$PROMOTER" ] || args=(--promoter "$PROMOTER")
+        # shellcheck disable=SC2086 # NAMES is a list of names
+        git -C "$d" ls-tree -r --name-only HEAD -- staging | python3 -I "$GITHUB_ACTION_PATH/holds.py" "${args[@]}" "$KIND" "$VERSION" "$COMMIT" $NAMES | tee "$d.out"
+        rm -rf "$d"
+        grep '^holds=' "$d.out" >> "$GITHUB_OUTPUT"
