@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The OpenMixer packages a job of this repository installs by hand that no package it builds declares, each with why
+# (deps-render's installs.sh, .github#257). This repository builds no package of its own at the root: its
+# packages are the third-party ones under packaging/<name>/, and no %check of theirs runs these jobs.
+# <package>  <why a job that no package build runs needs it>
+omx-contract-devel   contract-bootstrap installs omx-contract's installer for the sibling whose install-contract it runs
+libomx-contract-dev  contract-bootstrap's Debian arm of the same installer
+omx-contract         the langpacks-fill job and its test run omx-contract translate, which no package here builds with
+omx-contract-data    the langpacks-fill job reads the language list omx-contract-data ships
+omx-clap-host        the surge-xt install check loads the built plugin in omx-clap-host's scanner, after the build

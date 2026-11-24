@@ -9,6 +9,8 @@ description: Hold a repository's dependency floors and ceilings to its one packa
 # (render.sh --check, which this action runs). The caller has checked the repository out.
 # A repository with no packaging/deps.txt is not rendered, but this action still refuses every ceiling in its spec,
 # debian/control and workflow install lines (.github#146): call it whether or not deps.txt exists.
+# With deps.txt or without, every OpenMixer package a workflow or action install line names is one the packaging
+# declares, or a packaging/ci-only.txt row with its reason (installs.sh, .github#257).
 
 runs:
   using: composite
