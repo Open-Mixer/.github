@@ -109,8 +109,11 @@ runs:
         COMMITTED_KEYS: ${{ inputs.committed-keys }}
         SIGNING_FPR: ${{ inputs.signing-fingerprint }}
         REPO_FILE_IN: ${{ inputs.repo-file }}
+        CHANNEL_IN: ${{ inputs.channel }}
       run: |
         set -o pipefail
+        # the channel, for the tree script's organisation guard (channel-owner.sh) and the lost-race rebuild alike
+        echo "CHANNEL_REPO=$CHANNEL_IN" >> "$GITHUB_ENV"
         # the channel profile: another project's key file, repository file and committed keys, for the tree script and the lost-race rebuild alike
         [ -z "$KEY_FILE_IN" ] || echo "KEY_FILE=$KEY_FILE_IN" >> "$GITHUB_ENV"
         "$GITHUB_ACTION_PATH/../import-gpg-key/check-fingerprint.sh" want "$COMMITTED_KEYS" "$SIGNING_FPR"
@@ -133,6 +136,8 @@ runs:
         fi
         find "$RPM_DIR" -name '*.rpm' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no RPM under $RPM_DIR"; exit 1; }
+        # the testing channel carries the tested platforms alone (owner ruling 2026-11-23): nothing of another cell is staged
+        [ "$STAGING" != true ] || "$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" check rpm "$RPM_DIR"
 
     - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
       if: inputs.sign == 'true'

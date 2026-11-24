@@ -14,12 +14,8 @@ kind=$1 dir=$2 channel=${3:-}
 here=$(cd "$(dirname "$0")" && pwd)
 base=${BASE_URL:-https://www.openmixer.org}
 [ -n "$channel" ] || channel=$base/$kind
-# the one declared place of the channels this channel's packages may depend on (external-channels.txt); EXTERNAL_CHANNELS names
-# another file for a test, an empty value none. Never inferred from the packages.
-external=${EXTERNAL_CHANNELS-$here/external-channels.txt}
 args=("$kind" --channel "$channel" --new-dir "$dir" --same-pass "${SAME_PASS:-}")
 for a in ${ARCHES:-}; do args+=(--arch "$a"); done
-[ -z "$external" ] || args+=(--external-channels "$external")
 [ "${UNBUILT_ARCH_PASS:-}" != true ] || args+=(--unbuilt-arch-pass)
 # DRY_RUN=true (nothing is published): the deb arm judges only the architectures the pass built
 [ "${DRY_RUN:-}" != true ] || args+=(--dry-run)

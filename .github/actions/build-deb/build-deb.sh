@@ -11,7 +11,9 @@
 # must be that tag's commit; without it the build is a snapshot: the top changelog entry becomes
 # <version>~git<commit time>.<short sha>, which sorts below the release; the commit's own time in seconds comes first so
 # that the build of a later commit sorts above the build of an earlier one (a short sha alone sorts by chance). Lintian warnings fail the build; a tag that is deliberate carries an
-# override with its reason in debian/. -s replaces the snapshot's ~git: +git sorts above the release, so a sibling built
+# override with its reason in debian/. A snapshot build alone suppresses package-has-long-file-name: its name carries the commit
+# time and sha by design, so a source with a long name draws it on the .changes and .buildinfo file names, which no package
+# override covers; a tag build has no suffix and lints in full, and no other tag is suppressed. -s replaces the snapshot's ~git: +git sorts above the release, so a sibling built
 # for another repository's tests (wave-deps) meets a (>= <version>) range; -L skips lintian for such a build, whose own CI
 # lints it.
 set -euo pipefail
@@ -45,21 +47,16 @@ for spec in packaging/*.spec; do
     [ "$specver" = "$version" ] || { echo "debian/changelog says $version, $spec says $specver" >&2; exit 1; }
 done
 
-short=$(git rev-parse --short HEAD)
-stamp=$(git log -1 --format=%ct HEAD).$short
-"$here/../changelog/changelog.sh" deb -C . "${tag:-HEAD}"
-if [ -n "$tag" ]; then
-    [ "$tag" = "v$version" ] || { echo "tag $tag is not v$version, the debian/changelog version" >&2; exit 1; }
-    [ "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)" ] || { echo "the tree is not at $tag" >&2; exit 1; }
-else
-    sed -i "1s/^\\(\\S\\+\\) (\\([^)]*\\))/\\1 ($version$sep$stamp)/" debian/changelog
-fi
+# the changelog the DEBs carry: render-changelog.sh, the one rendering (contract-bootstrap's bootstrap.sh packs it too)
+"$here/render-changelog.sh" -C . ${tag:+-t "$tag"} -s "$sep" >/dev/null
 
 apt-get build-dep -y --no-install-recommends ./
 dpkg-buildpackage -b -uc -us
 
 changes=$(ls ../"${name}"_*.changes)
-[ "$lint" = 0 ] || lintian --fail-on error,warning "$changes"
+suppress=()
+[ -n "$tag" ] || suppress=(--suppress-tags package-has-long-file-name)
+[ "$lint" = 0 ] || lintian --fail-on error,warning "${suppress[@]}" "$changes"
 
 find .. -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*' -exec cp {} "$out/" \;
 ls "$out"/*.deb

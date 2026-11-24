@@ -36,6 +36,17 @@ deb)
     find "$tree" -type f \( -name '*.deb' -o -name Packages -o -name Packages.gz -o -name Release \
         -o -name InRelease -o -name Release.gpg \) -delete
     rm -rf "$tree/changelogs"
+    # an architecture the skeleton no longer names leaves with its packages, so the signed Release names only the
+    # skeleton's (a directory that still holds anything stays, and is named)
+    if [ -n "${SKELETON_ARCHES:-}" ] && [ -d "$tree/debian" ]; then
+        for d in "$tree"/debian/*/*/; do
+            [ -d "$d" ] || continue
+            a=$(basename "$d")
+            [[ " $SKELETON_ARCHES all " == *" $a "* ]] && continue
+            rmdir "$d" 2>/dev/null && echo "dropped ${d#"$channel"/}: not an architecture of the skeleton ($SKELETON_ARCHES)" ||
+                echo "kept ${d#"$channel"/}: it still holds files"
+        done
+    fi
     LABEL=OpenMixer-Staging EMPTY_OK=true "$here/../publish-debs/publish-tree.sh" "$tree" "$empty" ${key:+"$key"}
     ;;
 esac

@@ -16,3 +16,6 @@ ams-lv2 https://github.com/blablack/ams-lv2 f029b1e4ad7717d11fb3b1b8201ea5abac21
 calf https://github.com/calf-studio-gear/calf 60c4963333de726f0a6d502d97fffe8d7dec8499
 DISTRHO-Ports https://github.com/DISTRHO/DISTRHO-Ports 43330739392197cd1b3b0df23b194879ddf68f23
 zita-convolver https://github.com/deepin-community/zita-convolver 930492863d7bdb7922fb7b587ccb8fb1290a1811
+# jackd2: Debian's own packaging repository at the commit of the version the Debian release ships, built with the jack2
+# metadata fix as one more quilt patch (packaging/jackd2); the line goes away with the patch when Debian carries the fix
+jackd2-trixie https://salsa.debian.org/multimedia-team/jackd2.git 3224206cc8cd0b0379d5174ca3a1981cc5a010dd

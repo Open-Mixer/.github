@@ -23,6 +23,8 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 wf=${NO_HARDCODED_WORKFLOWS:-$here/.github/workflows}
+# a check-matrix input's default, from the action file: the plan step is run as its action runs it
+input_default() { python3 -I -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["inputs"][sys.argv[2]]["default"])' "$here/.github/actions/check-matrix/action.yml" "$1"; }
 actions=$here/.github/actions
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 : > "$t/log"; : > "$t/out"
@@ -56,8 +58,9 @@ ALLOW_MATRIX = [
     ("ci.yml", "key-transition", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
     ("ci.yml", "staging-publish", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
     ("ci.yml", "staging-bootstrap", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
-    ("ci.yml", "channel-installability", "three arms, each its own toolchain, on an image of the quick set"),
-    ("mirror-freereac-release.yml", "checks", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
+    ("ci.yml", "contract-bootstrap", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
+    ("ci.yml", "channel-installability", "five arms, each its own toolchain, on an image of the quick set"),
+    ("remove-freereac-packages.yml", "check", "two arms (rpm, deb), each its own toolchain, on an image of the quick set"),
 ]
 used = set()
 
@@ -190,6 +193,7 @@ render_plan() { # <file> <job> <wave> <event> <ref type>: key=value lines in $t/
     check-matrix)
         GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$actions/check-matrix WAVE=$3 MATRIX='' RPM_RELEASES=$(field "$p" rpm-releases) \
             RPM_ARCHES=$(field "$p" rpm-arches) DEB_RELEASES=$(field "$p" deb-releases) DEB_ARCHES=$(field "$p" deb-arches) \
+            ARM_ARCHES=$(input_default arm-arches) ARM_RUNNER=$(input_default arm-runner) X86_RUNNER=$(input_default x86-runner) \
             "$actions/check-matrix/check-matrix.sh" > "$t/log" 2>&1 ;;
     esac
 }

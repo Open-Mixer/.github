@@ -9,8 +9,9 @@
 #     the matrix input, the organisation variable, staged and source-ref; the build and the install check both take
 #     their cells from its answer and nothing else, so an install check never runs for a cell that was not built;
 #   - which jobs each run renders, by name, with matrix.sh run as the runner runs it: a caller that passes nothing
-#     builds the full matrix on a tag and the quick set on a tag while OMX_RELEASE_MATRIX is quick; a staged run and a
-#     workflow_dispatch build the quick set, and the full matrix when the variable or the input says full; a pull
+#     builds the full matrix on a tag and the quick set on a tag while OMX_RELEASE_MATRIX is quick; a
+#     workflow_dispatch builds the quick set, and the full matrix when the variable or the input says full; a staged
+#     run builds the quick set whatever the variable says, and is refused told full or with no quick cell; a pull
 #     request builds the full matrix whatever the variable says; a caller built for x86_64 alone has no quick deb
 #     cell and builds its own full deb matrix;
 #   - a matrix or a variable that is neither quick nor full fails the first job;
@@ -103,7 +104,8 @@ for kind, (path, rel_in, key) in WF.items():
     served = [s for s in pre["steps"] if "/actions/release-preflight@" in s.get("uses", "")][0]
     assert served["with"]["releases"].replace(" ", "") == "${{steps.matrix.outputs.releases}}", f"{path}: the already-served check reads releases this run does not publish into"
     if kind == "rpm":
-        assert raw.count("needs.preflight.outputs.first-arch") == 2, f"{path}: the source and noarch packages do not ship from the first architecture the set builds"
+        # the library's own build step and the bootstrap-only step (a bootstrap package is noarch): both ship from it
+        assert raw.count("needs.preflight.outputs.first-arch") == 3, f"{path}: the source and noarch packages do not ship from the first architecture the set builds"
 print("ok   build-rpm.yml and build-deb.yml: one release-matrix call, the build and the install check take its cells")
 
 def run(kind, inputs, event, ref_type, var):
@@ -154,8 +156,9 @@ cases = [
     ("a release of another tag (source-ref) by dispatch", {"publish": True, "source-ref": "v1.2.0"}, "workflow_dispatch", "branch", None, "full", FULL),
     ("a staged run", {"staged": True}, "workflow_dispatch", "branch", None, "quick", QUICK),
     ("a staged run while the wave is open", {"staged": True}, "workflow_dispatch", "branch", "quick", "quick", QUICK),
-    ("a staged run with OMX_RELEASE_MATRIX=full", {"staged": True}, "workflow_dispatch", "branch", "full", "full", FULL),
-    ("a staged run with matrix: full", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", None, "full", FULL),
+    # the testing channel carries the tested platforms alone (owner ruling 2026-11-23, .github#233): the variable never widens a staged run
+    ("a staged run with OMX_RELEASE_MATRIX=full", {"staged": True}, "workflow_dispatch", "branch", "full", "quick", QUICK),
+    ("a staged run with matrix: quick", {"staged": True, "matrix": "quick"}, "workflow_dispatch", "branch", "full", "quick", QUICK),
     ("a workflow_dispatch dry run", {}, "workflow_dispatch", "branch", None, "quick", QUICK),
     ("a workflow_dispatch dry run with matrix: full", {"matrix": "full"}, "workflow_dispatch", "branch", None, "full", FULL),
     ("a pull request", {}, "pull_request", "branch", None, "full", FULL),
@@ -195,6 +198,17 @@ got, log = run("deb", {"arch-matrix": '["amd64"]'}, "workflow_dispatch", "branch
 assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"an amd64-only caller in a quick run builds {got.set} {got.jobs}, not the set's trixie arm64: {log}"
 got, log = run("rpm", {"arch-matrix": '["aarch64"]'}, "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs) == ("quick", ["fc45, x86_64"]), f"an aarch64-only rpm caller in a quick run builds {got.set} {got.jobs}, not the set's fc45 x86_64: {log}"
+# the development set wins over the caller's releases too: a caller listing fc44 and fc45 (plugin-hostd, plugin-db, ...)
+# builds fc45 only, never a release outside the set, and the publish jobs run in an image of the set, not of the caller's
+# first release (plugin-db 0.4.7's dry run built fc44 and refused "fc44 has no rpm cell in the quick set")
+got, log = run("rpm", {"fedora-versions": '["44", "45"]', "staged": True}, "workflow_dispatch", "branch", None)
+assert (got.set, got.jobs, got.releases) == ("quick", ["fc45, x86_64"], "45"), f"a caller listing 44 45 builds {got.set} {got.jobs} {got.releases}: {log}"
+# no job but the preflight reads the caller's list of releases or suites: a publish job takes the releases and suites the
+# run built (preflight outputs), or a quick run writes empty fc44 staging metadata and runs in a release the set dropped
+for wfname, caller_input in (("build-rpm.yml", "inputs.fedora-versions"), ("build-deb.yml", "inputs.suite-matrix")):
+    bad = [n for n, j in yaml.safe_load(open(f"{here}/.github/workflows/{wfname}"))["jobs"].items()
+           if n != "preflight" and caller_input in json.dumps(j)]
+    assert not bad, f"{wfname}: jobs {bad} read the caller's {caller_input}, not the releases the run built (preflight outputs)"
 # one Fedora release asked for: the quick set never adds a release the caller did not name
 got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
@@ -212,6 +226,20 @@ for what, inputs, var, word in (("matrix: fast", {"matrix": "fast"}, None, "matr
         got, log = run(kind, inputs, "push", "tag", var)
         assert got is None and word in log, f"{kind}: {what} is not refused by name: {got} {log}"
 print("ok   a matrix or a variable that is neither quick nor full fails the first job, by name")
+
+# a staged run never leaves the tested platforms (owner ruling 2026-11-23, .github#233): told full, or given a caller
+# whose releases hold no quick cell, its first job fails by name instead of staging another cell
+for what, kind, inputs, var, word in (
+        ("a staged run with matrix: full", "rpm", {"staged": True, "matrix": "full"}, None, "a staged run builds the tested platforms alone"),
+        ("a staged run with matrix: full", "deb", {"staged": True, "matrix": "full"}, "quick", "a staged run builds the tested platforms alone"),
+        ("a staged run of a caller with no quick cell (fc44 alone)", "rpm", {"staged": True, "fedora-versions": '["44"]'}, None, "no tested platform"),
+        ("a staged run of a caller with no quick cell (fc44 alone), OMX_RELEASE_MATRIX=full", "rpm", {"staged": True, "fedora-versions": '["44"]'}, "full", "no tested platform")):
+    got, log = run(kind, inputs, "workflow_dispatch", "branch", var)
+    assert got is None and word in log, f"{kind}: {what} is not refused by name: {got} {log}"
+# the dry run that is not staged keeps its fallback: no quick cell builds the caller's full matrix
+got, log = run("rpm", {"fedora-versions": '["44"]'}, "workflow_dispatch", "branch", None)
+assert got is not None and got.set == "full", f"a dry run with no quick cell: {got} {log}"
+print("ok   a staged run is the tested platforms or nothing: matrix: full and a caller with no quick cell are refused by name")
 
 # ---- the callers in this repository
 lib = yaml.safe_load(open(f"{here}/.github/workflows/release-c-lib.yml"))
