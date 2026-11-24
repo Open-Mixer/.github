@@ -22,13 +22,17 @@
 #     renders bookworm while quick, and goes red here).
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
-actions=${CHECK_MATRIX_ACTIONS:-$here/.github/actions}
+real=${CHECK_MATRIX_ACTIONS:-$here/.github/actions}
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+# the cell cases below keep plugin-hostd's old matrix with bookworm, a retired release images.txt has no digest for: they
+# run on a copy whose images.txt gives it a stand-in digest; the digest section reads the real list
+cp -a "$real" "$t/act"; actions=$t/act
+printf 'debian:bookworm sha256:%064d\n' 0 >> "$actions/check-matrix/images.txt"
 fail=0
 no() { echo "FAIL $*"; fail=1; }
 yes() { echo "ok   $*"; }
 
-[ -f "$actions/check-matrix/action.yml" ] || { echo "FAIL there is no check-matrix action"; exit 1; }
+[ -f "$real/check-matrix/action.yml" ] || { echo "FAIL there is no check-matrix action"; exit 1; }
 # the step script, read out of the action file and run with the env it maps
 python3 -I - "$actions/check-matrix/action.yml" "$t/step.sh" <<'PY'
 import sys, yaml
@@ -53,8 +57,8 @@ render() { # <wave> <matrix input> <rpm releases> <rpm arches> <deb releases> <d
         RPM_RELEASES=$3 RPM_ARCHES=$4 DEB_RELEASES=$5 DEB_ARCHES=$6 bash "$t/step.sh" > "$t/log" 2>&1
 }
 out() { sed -n "s/^$1=//p" "$t/out"; }
-expect() { # <name> <output> <want>
-    local got; got=$(out "$2")
+expect() { # <name> <output> <want>: the cells and images compared without their digests (pinned below)
+    local got; got=$(out "$2" | sed -E 's/@sha256:[0-9a-f]{64}//g')
     if [ "$got" = "$3" ]; then yes "$1: $2"; else no "$1: $2 is '$got', want '$3'"; cat "$t/log"; fi
 }
 
@@ -139,6 +143,29 @@ GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/ycopy/check-matrix WAVE=full MATRIX='
 if grep -q arc-freemixer <<< "$(out deb)"; then no "sabotage: an ignored x86-runner passed"; else yes "sabotage: an ignored x86-runner is red"; fi
 # a label that is not a label is refused
 if X86_RUNNER='a b;c' render full '' '' '' '["trixie"]' '["amd64"]'; then no "a runner label with a space passed"; else yes "a runner label with a space is refused"; fi
+
+# ---- every image pinned by its digest from images.txt (.github#248), and an image with no digest refused
+: > "$t/out"
+GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$real/check-matrix WAVE=full MATRIX='' ARM_ARCHES=$ARM_ARCHES_DEFAULT \
+    ARM_RUNNER=$ARM_RUNNER_DEFAULT X86_RUNNER=$X86_RUNNER_DEFAULT RPM_RELEASES='["44", "45"]' RPM_ARCHES='["x86_64"]' \
+    DEB_RELEASES='["trixie"]' DEB_ARCHES="$PHD_DEBA" bash "$t/step.sh" > "$t/log" 2>&1 || { no "full render of the real images failed"; cat "$t/log"; }
+imgs=$(grep -v '^#' "$real/check-matrix/images.txt" | awk 'NF { print $1 "@" $2 }' | sort)
+got=$(out cells | grep -oE '"image":"[^"]+"' | sed 's/^"image":"//; s/"$//' | sort -u)
+if [ -n "$got" ] && [ "$got" = "$imgs" ]; then yes "every cell's image is its images.txt line, image@digest"; else no "cell images '$got', images.txt '$imgs'"; fi
+got=$(out images | tr -d '[]"' | tr , '\n' | sort)
+if [ "$got" = "$imgs" ]; then yes "the image list carries the digests"; else no "the image list is '$got'"; fi
+cp -a "$real" "$t/dcopy"
+grep -q '^debian:bookworm ' "$t/dcopy/check-matrix/images.txt" && no "images.txt pins bookworm, a retired release"
+: > "$t/out"
+if GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/dcopy/check-matrix ARM_ARCHES=$ARM_ARCHES_DEFAULT ARM_RUNNER=$ARM_RUNNER_DEFAULT \
+    X86_RUNNER=$X86_RUNNER_DEFAULT WAVE=full MATRIX='' RPM_RELEASES='' RPM_ARCHES='' DEB_RELEASES="$PHD_DEB" \
+    DEB_ARCHES="$PHD_DEBA" bash "$t/step.sh" > "$t/log" 2>&1; then no "an image with no digest passed"
+elif grep -q 'debian:bookworm' "$t/log"; then yes "an image with no digest is refused, by name"; else no "the refusal does not name the image: $(cat "$t/log")"; fi
+sed -i 's/^\(debian:bookworm\) .*/\1 latest/' "$t/dcopy/check-matrix/images.txt"; printf 'debian:bookworm latest\n' >> "$t/dcopy/check-matrix/images.txt"
+if GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/dcopy/check-matrix ARM_ARCHES=$ARM_ARCHES_DEFAULT ARM_RUNNER=$ARM_RUNNER_DEFAULT \
+    X86_RUNNER=$X86_RUNNER_DEFAULT WAVE=full MATRIX='' RPM_RELEASES='' RPM_ARCHES='' DEB_RELEASES="$PHD_DEB" \
+    DEB_ARCHES="$PHD_DEBA" bash "$t/step.sh" > "$t/log" 2>&1; then no "a line whose digest is not sha256:<64 hex> passed"
+else yes "a line whose digest is not sha256:<64 hex> is refused"; fi
 
 # ---- one source: no cell restated, and quick.txt is what is read
 if grep -nE '\b(bookworm|trixie|x86_64|aarch64|amd64|arm64)\b' "$actions/check-matrix/check-matrix.sh" "$t/step.sh" | grep -v '^[^:]*:[0-9]*:#'; then

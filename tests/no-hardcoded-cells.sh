@@ -230,14 +230,14 @@ check_plan "clap rpm" clap-rpm.yml plan $D '' '45 x86_64' '45 x86_64, 45 aarch64
 # release of the set (the dist tag ties a build to its release); its install check after the publish
 check_plan "openmixer-release deb" release-package.yml plan push tag 'trixie arm64' 'trixie arm64' ''
 check_plan "openmixer-release rpm" release-package.yml rpm-plan push tag '45 x86_64' '45 x86_64' ''
-render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
+render_plan release-package.yml verify-plan quick push tag && [ "$(sed -n 's/^images=//p' "$t/out" | sed -E 's/@sha256:[0-9a-f]{64}//g')" = '["fedora:45","debian:trixie"]' ] \
     && yes "openmixer-release verify, quick: fedora:45, debian:trixie" || { no "openmixer-release verify, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-render_plan release-package.yml verify-plan full push tag && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
+render_plan release-package.yml verify-plan full push tag && [ "$(sed -n 's/^images=//p' "$t/out" | sed -E 's/@sha256:[0-9a-f]{64}//g')" = '["fedora:45","debian:trixie"]' ] \
     && yes "openmixer-release verify, full: the same three images (no bookworm)" || { no "openmixer-release verify, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
 # .github's own CI: the language packs
-render_plan ci.yml plan quick push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
+render_plan ci.yml plan quick push '' && [ "$(sed -n 's/^images=//p' "$t/out" | sed -E 's/@sha256:[0-9a-f]{64}//g')" = '["fedora:45","debian:trixie"]' ] \
     && yes "ci langpacks, quick: fedora:45, debian:trixie" || { no "ci langpacks, quick: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
-render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out")" = '["fedora:45","debian:trixie"]' ] \
+render_plan ci.yml plan full push '' && [ "$(sed -n 's/^images=//p' "$t/out" | sed -E 's/@sha256:[0-9a-f]{64}//g')" = '["fedora:45","debian:trixie"]' ] \
     && yes "ci langpacks, full: the same three images (no bookworm)" || { no "ci langpacks, full: images $(sed -n 's/^images=//p' "$t/out")"; cat "$t/log"; }
 # promote-staged.yml stays as it is, by design: it promotes the whole matrix (collect.py refuses a staged tree that lacks
 # any release or architecture), so its install checks cover what it promotes; its lists are inputs, never literals in a job.
