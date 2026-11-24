@@ -51,6 +51,19 @@ for the event, so it never turns a published release red.
 `verify-install: false` skips the clean-container install check. The release is then not proven installable,
 and the dispatch goes out on the publish alone.
 
+## The upgrade check
+
+A clean install does not show what a machine that already holds the source sees. omx-clap-core 0.34.0 renamed three
+packages with no `Obsoletes:`. Its clean install passed, and every host holding 0.33.1 then failed `dnf upgrade` on the
+files both names own (.github#261). So each cell of `build-rpm.yml` runs `Upgrade check` before anything is published
+(`actions/upgrade-check`). From each of the two newest versions the channel serves below the build, it installs that
+version's packages, offers the build above the channel, and runs `dnf upgrade` on them. It is red, by name, when the
+transaction fails (a file two packages own, a requirement nothing meets). It is also red when a package of the source
+stays at the old version, which is a rename or a drop with no `Obsoletes: <old> < <first version without it>`. The
+publish waits for it. A served version whose own packages no longer install from the channel is a warning, and a
+first release a notice. Neither is a pass. `tests/upgrade-check-rpm.sh` proves the arm with real dnf on packages it
+builds. The DEB arm is not written yet.
+
 ## The installability gate
 
 No release may leave a package of the channel uninstallable. `channel-installability` builds the channel as it
