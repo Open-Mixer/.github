@@ -26,14 +26,16 @@
 #   NAMES       with CATCH_UP, the binary package names the release builds, space separated (globs allowed)
 #
 # Which set, first match:
-#   1. MATRIX, when the caller passed it;
+#   1. MATRIX, when the caller passed it (on a staged run too: see below);
 #   2. a release (a tag, or source-ref): WAVE, and FULL without it. A tag pushed by hand, with no wave open, never
 #      publishes part of the matrix because nobody said otherwise;
 #   3. a staged run or a workflow_dispatch: WAVE, and QUICK without it;
 #   4. anything else (a pull request, a push to a branch): full, the dry run it always was.
-# A STAGED RUN is the quick set, always: the testing channel carries the tested platforms alone (owner ruling
-# 2026-11-23, .github#233, docs/release-operations.md "The staging channel of a release wave"). Told full it is refused,
-# WAVE does not widen it, and a caller whose matrix holds no quick cell is refused rather than given its full matrix.
+# A STAGED RUN is the quick set by default: the testing channel carries the tested platforms (owner ruling 2026-11-23,
+# .github#233, docs/release-operations.md "The staging channel of a release wave"). WAVE does not widen it, and a caller
+# whose matrix holds no quick cell is refused rather than given its full matrix. Only an explicit MATRIX=full widens it:
+# a promotion candidate, staged for every release and architecture so the promotion finds every cell it promotes (build
+# once, promote the same package: owner ruling 2026-11-24, which supersedes #233 for promotion candidates; .github#273).
 # The quick set is the lines of quick.txt of this kind that the caller's matrix holds. When it holds none of them
 # (a library built for x86_64 alone has no arm64 deb), the run builds the caller's full matrix and says so: a run
 # never builds nothing.
@@ -68,12 +70,11 @@ mapfile -t arches < <(list ARCHES "${ARCHES:?ARCHES}")
 wave=${WAVE:-}
 case $wave in quick | full | '') ;; *) echo "::error::OMX_RELEASE_MATRIX is '$wave', not quick or full" >&2; exit 2 ;; esac
 staged=${STAGED:-}
-if [ "$staged" = true ] && [ "${MATRIX:-}" = full ]; then
-    echo "::error::matrix is 'full' on a staged run: a staged run builds the tested platforms alone, the quick set of quick.txt (owner ruling 2026-11-23); every other cell is released from the tag" >&2
-    exit 2
-fi
 case ${MATRIX:-} in
-quick | full) set=$MATRIX source="the matrix input" ;;
+quick | full)
+    set=$MATRIX source="the matrix input"
+    [ "$staged:$set" != true:full ] || source="$source, a staged promotion candidate (every cell)"
+    ;;
 '')
     if [ "${REF_TYPE:-}" = tag ] || [ -n "${SOURCE_REF:-}" ]; then
         set=${wave:-full} source="a release"
