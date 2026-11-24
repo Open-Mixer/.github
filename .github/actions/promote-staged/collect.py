@@ -14,9 +14,16 @@ file of that version and commit goes along, the subpackages too. --releases are 
 (deb), --arches the architectures a release builds; --binaries are the packages every one of those must hold
 (default: the name), as its own architecture or as noarch / all.
 
+A staged run holds the tested platforms alone (quick.txt of release-matrix; owner ruling 2026-11-23, .github#233), so
+only a TESTED cell must be staged. Every other cell of the matrix is missing, to be built from the staged commit
+(built-cells.py), unless staging holds it anyway or the channel root already serves this version of this commit there
+(a re-run after a failed cell): it goes to --missing (default DIR.missing), one "<release> <arch>" line per cell, and
+to stdout as "missing <release> <arch>".
+
 It refuses, naming each case, and copies nothing when:
   - staging holds no build of that version, or builds of more than one commit and --commit names none of them;
-  - a release and architecture of the matrix holds no build of a binary (or, for rpm, a release holds no source package);
+  - a tested release and architecture holds no build of a binary (or, for rpm, a tested release holds no source
+    package);
   - the channel root serves a binary for a release the staged build does not cover: a machine on that release would
     be left on the old version.
 
@@ -62,13 +69,20 @@ def cells(tree, ext):
     return out
 
 
+def tested_cells(kind):
+    """the tested platforms a staged run holds, (release, arch), from release-matrix/quick.txt"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "release-matrix", "quick.txt")
+    with open(path, encoding="utf-8") as h:
+        return {(f[1], f[2]) for f in (line.split() for line in h) if len(f) == 3 and f[0] == kind}
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("channel")
     ap.add_argument("kind", choices=("rpm", "deb"))
     for name in ("--name", "--version", "--releases", "--arches", "--out"):
         ap.add_argument(name, required=True)
-    for name in ("--binaries", "--commit", "--sums"):
+    for name in ("--binaries", "--commit", "--sums", "--missing"):
         ap.add_argument(name, default="")
     a = ap.parse_args()
     top, anyarch, srcdir = LAYOUT[a.kind]
@@ -103,13 +117,25 @@ def main():
         return any(r == rel and d != srcdir and re.match(rf"^{re.escape(pkg)}{sep}[0-9]", f)
                    for (r, d), files in root.items() for f in files)
 
-    refused = []
+    def served_here(rel, arch, pkg):
+        """the channel root serves <pkg> of this version and commit in this cell (or arch-independent in the release)"""
+        for d in (arch, anyarch):
+            for f in root.get((rel, d), []):
+                p = parse(a.kind, a.version, f)
+                if p and p[0] == pkg and (p[1].startswith(commit) or commit.startswith(p[1])):
+                    return True
+        return False
+
+    tested = tested_cells(a.kind)
+    refused, missing = [], []
     for rel in releases:
         for arch in arches:
-            for pkg in binaries:
-                if not has(rel, arch, pkg) and not has(rel, anyarch, pkg):
-                    refused.append(f"{where}/{rel}/{arch} holds no {pkg} {a.version} of {commit}")
-        if srcdir and not has(rel, srcdir, a.name):
+            lacks = [pkg for pkg in binaries if not has(rel, arch, pkg) and not has(rel, anyarch, pkg)]
+            if (rel, arch) in tested:
+                refused += [f"{where}/{rel}/{arch} holds no {pkg} {a.version} of {commit}" for pkg in lacks]
+            elif lacks and not all(served_here(rel, arch, pkg) for pkg in lacks):
+                missing.append((rel, arch))
+        if srcdir and any(r == rel for (r, _) in tested) and not has(rel, srcdir, a.name):
             refused.append(f"{where}/{rel}/{srcdir} holds no source package of {a.name} {a.version} of {commit}")
     for rel in sorted({r for (r, _) in root} - set(releases)):
         for pkg in binaries:
@@ -130,7 +156,11 @@ def main():
             lines.append(f"{hashlib.sha256(h.read()).hexdigest()}  {a.kind}/{top}/{rel}/{arch}/{f}")
     with open(a.sums or a.out.rstrip("/") + ".sha256", "w", encoding="utf-8") as h:
         h.write("\n".join(lines) + "\n")
+    with open(a.missing or a.out.rstrip("/") + ".missing", "w", encoding="utf-8") as h:
+        h.write("".join(f"{rel} {arch}\n" for rel, arch in missing))
     print("\n".join(lines))
+    for rel, arch in missing:
+        print(f"missing {rel} {arch}")
     print(f"commit {commit}")
 
 
