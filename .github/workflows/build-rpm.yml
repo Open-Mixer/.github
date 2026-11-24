@@ -492,11 +492,48 @@ jobs:
           if-no-files-found: ${{ matrix.arch == needs.preflight.outputs.first-arch && 'error' || 'ignore' }}
           retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
 
+  # The upgrade arm of the install check, before anything is published: a machine holding what the channel serves of
+  # this source upgrades onto this build in one dnf transaction and keeps none of the old packages (actions/upgrade-check).
+  # A rename or a drop without Obsoletes, or a file two packages own, is red here by name, and the publish waits for it:
+  # omx-clap-core 0.34.0 renamed three packages with no Obsoletes and every host holding 0.33.1 failed its dnf upgrade.
+  upgrade:
+    name: Upgrade check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
+    needs: [preflight, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && !inputs.bootstrap-only }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    container:
+      image: fedora:${{ matrix.fedora }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.preflight.outputs.cells) }}
+    steps:
+      # this cell's packages, and the noarch ones the first architecture's job carries
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.package-name }}-rpms-fc${{ matrix.fedora }}-*
+          merge-multiple: true
+          path: built
+
+      # what the channel serves is the starting point; a staged run's wave is beside it, as its build saw it
+      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
+        with:
+          base-url: ${{ inputs.base-url }}
+          release-package: ${{ inputs.release-package }}
+          staging: ${{ inputs.staged || inputs.staging }}
+          staging-bootstrap: ${{ inputs.staging-bootstrap }}
+
+      - uses: Open-Mixer/.github/.github/actions/upgrade-check@openmixer-v1
+        with:
+          rpm-dir: built
+          release-package: ${{ inputs.release-package }}
+
   publish-go:
     name: Release publish gate
-    needs: [preflight, build]
+    needs: [preflight, build, upgrade]
     # the conditions of the publish stage live here, so that the job which signs and pushes can carry the tag condition alone
-    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && needs.upgrade.result != 'failure' && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -557,10 +594,11 @@ jobs:
 
   publish:
     name: Stage the build, or assemble the unsigned tree (a release is publish-release)
-    needs: [preflight, build]
+    needs: [preflight, build, upgrade]
     # the publish stage takes the packages a build stage of this run left; channel-installability inside the
-    # publish action refuses a release that would leave a package of the channel uninstallable
-    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && !(inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
+    # publish action refuses a release that would leave a package of the channel uninstallable, and the upgrade check
+    # one that a machine holding the served version cannot upgrade onto
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && needs.upgrade.result != 'failure' && !(inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
     outputs:
       commit: ${{ steps.staged.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
@@ -787,7 +825,7 @@ jobs:
   # calls this workflow). Without it the step fails loudly with an error naming the missing permission.
   report-failure:
     name: Report a failed release
-    needs: [preflight, build, publish-go, publish, publish-release, release, live, verify]
+    needs: [preflight, build, upgrade, publish-go, publish, publish-release, release, live, verify]
     if: ${{ always() && inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: 5
