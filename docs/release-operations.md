@@ -154,6 +154,22 @@ order, omx-contract first, since each build takes its BuildRequires from the cha
 release), or by a new version tag. The preflight refuses a version the channel already serves, but only in the
 trees the release publishes into, so a version served for fc44 does not block its first fc45 publish.
 
+## A release builds only a verified commit
+
+Every tag path (a release tool, a tag pushed by hand) crosses the preflight of build-rpm.yml and
+build-deb.yml, so that is where the commit is judged. On a tag run, and on a release of another
+repository's tag (`source-ref`), the action `verified-at-sha` reads the combined status of the commit checked out and
+refuses the run unless `cluster/verify` (or `cluster/verify (staged)`) is `success` there and neither is `failure` or
+`error`. No status, a pending one or a status that cannot be read is a refusal naming the repository, the sha and the
+context, never a wait. The verdict comes from our cluster, not from Actions: the cluster's verify scan
+verifies every main tip of the release repositories, and a stage
+box verify posts the same context. A tag pushed before its commit is verified fails here before any build; re-run it
+once the status is green. A public repository's statuses are read with the run's token whatever it grants; a private
+caller must grant `statuses: read`. `bootstrap-only` builds a sibling commit its entry names and is not judged here.
+Every caller is judged, the C libraries too (libdiginet, libmackie): a repository with no verify row has no green
+status and cannot release until it gets one. `tests/verified-at-sha.sh` holds the rule, the read door and the wiring,
+with each refusal sabotaged once.
+
 ## The staging channel of a release wave
 
 A release wave publishes inner layers before the outer ones build on them. Inside the wave, a layer does not wait
