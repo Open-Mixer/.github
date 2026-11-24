@@ -16,8 +16,10 @@ The rules, each a string comparison:
     canonical sign gates, when the CALLER gives that action a literal sign of false (or none, the default being false):
     it assembles a tree and pushes nothing. Any expression where a literal is needed is not a proof.
 A workflow a person can start by hand takes no input named like a publish switch. .yml and .yaml, workflows and
-composite actions, are all read. LIMIT: a script of the repository that itself does the push or the upload, and is not in
-an action directory, is invisible (Open-Mixer/.github#132).  Usage: publish_only_by_tag.py <repo root> | --selftest
+composite actions, are all read. A repository script a run step names is read too, and the scripts it names in turn
+(Open-Mixer/.github#132, SCRIPT_REF): a push or an upload moved into a script is the step's. Not followed: a path built
+from an expression the gate cannot resolve, and tests (a tests/ directory, test*/selftest* names), as in an action
+directory.  Usage: publish_only_by_tag.py <repo root> | --selftest
 """
 import os, re, shutil, sys, tempfile
 import yaml
@@ -112,6 +114,36 @@ def only_git_push(text):
     return not any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in text.splitlines())
 
 
+def script_text(path):
+    txt = re.sub(r"\\\n\s*", " ", open(path, errors="replace").read())
+    return "\n".join(l for l in txt.splitlines() if not l.lstrip().startswith("#"))
+
+
+def script_publishes(path):
+    """(what, prhead) of a script file: it publishes when a LINE starts with the command (a quoted example or a fixture
+    does not)"""
+    txt = script_text(path)
+    what = None
+    for rx, w in RUN_PUBLISHES:
+        if re.search(r"^\s*(?:\w+=\S+\s+)*(?:" + rx.pattern.replace("^\\s*", "").replace("\\b", "", 1) + ")", txt, re.M): what = w; break
+    if what is None and any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in txt.splitlines()): what = "a curl upload"
+    if not what: return None, None
+    return what, (what == "git push" and only_git_push(txt) and pr_head_only(txt, py=path.endswith(".py"))) or None
+
+
+# A repository script a run step names, followed wherever it lives (.github#132): a path ending .sh, .bash or .py,
+# from the repository root (bare, ./, $GITHUB_WORKSPACE/, ${{ github.workspace }}/), and inside a followed script also
+# from that script's own directory ("$(dirname "$0")"/x.sh, $here/x.sh). A script under tests/ or named test*/selftest*
+# is a test of this repository (its pushes go to fixture remotes) and is not followed, as in an action directory.
+SCRIPT_REF = re.compile(r"((?:[\w.-]+/)*[\w.-]+\.(?:sh|bash|py))(?![\w.-])")
+WORKSPACE = re.compile(r"\$\{?GITHUB_WORKSPACE\}?/|\$\{\{\s*github\.workspace\s*\}\}/")
+
+
+def is_test(rel):
+    parts = rel.split("/")
+    return "tests" in parts[:-1] or parts[-1].startswith(("test", "selftest"))
+
+
 class Repo:
     def __init__(self, root):
         self.root = root
@@ -122,6 +154,7 @@ class Repo:
                 p = os.path.join(d, name, fn)
                 if os.path.exists(p): self.actions[name] = yaml.safe_load(open(p)); break
         self.memo = {}
+        self.followed = {}
 
     def local(self, uses):
         m = re.match(r"(?:\./|[\w.-]+/[\w.-]+/)\.github/actions/([\w-]+)(?:@.*)?$", uses)
@@ -145,18 +178,33 @@ class Repo:
         d = os.path.join(self.root, ".github", "actions", name)
         for fn in sorted(os.listdir(d)):
             if not fn.endswith((".sh", ".py")) or fn.startswith(("selftest", "test")): continue
-            txt = re.sub(r"\\\n\s*", " ", open(os.path.join(d, fn), errors="replace").read())
-            txt = "\n".join(l for l in txt.splitlines() if not l.lstrip().startswith("#"))
-            what = None
-            for rx, w in RUN_PUBLISHES:
-                # a script publishes when a LINE starts with the command (a quoted example or a fixture does not)
-                if re.search(r"^\s*(?:\w+=\S+\s+)*(?:" + rx.pattern.replace("^\\s*", "").replace("\\b", "", 1) + ")", txt, re.M): what = w; break
-            if what is None and any(re.match(r"\s*curl\b", l) and run_publishes(l) for l in txt.splitlines()): what = "a curl upload"
+            what, prhead = script_publishes(os.path.join(d, fn))
             if not what: continue
-            prhead = (what == "git push" and only_git_push(txt) and pr_head_only(txt, py=fn.endswith(".py"))) or None
             for st in [x for x in steps if fn in str(x.get("run", ""))] or [{}]:
                 out.append({"what": what + " in " + fn, "dest": None, "prhead": prhead, "gated": norm_if(st["if"]) if "if" in st and norm_if(st["if"]) in SIGN_GATES else None})
         self.memo[name] = out
+        return out
+
+    def scripts(self, text, here=None, seen=()):
+        """[(rel path, what, prhead)] of the repository scripts text names that publish, followed into what they name"""
+        out = []
+        root = os.path.realpath(self.root)
+        text = WORKSPACE.sub("", text)
+        for m in SCRIPT_REF.finditer(text):
+            ref = m.group(1)
+            cands = [os.path.join(root, ref.removeprefix("./"))]
+            if here: cands += [os.path.join(here, ref), os.path.join(here, os.path.basename(ref))]
+            for c in cands:
+                c = os.path.realpath(c)
+                rel = os.path.relpath(c, root)
+                if rel.startswith("..") or not os.path.isfile(c) or is_test(rel) or rel in seen: continue
+                if rel not in self.followed:
+                    self.followed[rel] = None  # a cycle reads as nothing published here
+                    what, prhead = script_publishes(c)
+                    found = [(rel, what, prhead)] if what else []
+                    self.followed[rel] = found + self.scripts(script_text(c), os.path.dirname(c), seen + (rel,))
+                out += self.followed[rel] or []
+                break
         return out
 
     def step_findings(self, st, stack=()):
@@ -183,6 +231,8 @@ class Repo:
                 rt = run_text(st)
                 found.append({"what": what, "dest": None, "gated": None, "sign": None, "staging": None,
                               "prhead": (what == "git push" and only_git_push(rt) and pr_head_only(rt)) or None})
+            for rel, w, prhead in self.scripts(run_text(st)):
+                found.append({"what": f"{w} in {rel}", "dest": None, "gated": None, "sign": None, "staging": None, "prhead": prhead})
         return found
 
 
@@ -242,7 +292,8 @@ def plant(files, real=None):
     if real:
         shutil.copytree(os.path.join(real, ".github", "actions"), os.path.join(d, ".github", "actions"))
     for rel, text in files.items():
-        p = os.path.join(d, ".github", rel); os.makedirs(os.path.dirname(p), exist_ok=True)
+        # a key starting with / is a file of the repository root (a script outside .github), any other a file of .github
+        p = os.path.join(d, rel[1:]) if rel.startswith("/") else os.path.join(d, ".github", rel); os.makedirs(os.path.dirname(p), exist_ok=True)
         open(p, "w").write(text)
     return d
 
@@ -392,6 +443,30 @@ def selftest(real):
         "a push to the pull request's own head branch, same-repo pr job": {"workflows/a.yml": wf(run=head, on=PRON, job_if=PRJ)},
         "the same, refs/heads/ and the env var": {"workflows/a.yml": wf(run='git push origin "HEAD:refs/heads/$GITHUB_HEAD_REF"', on=PRON, job_if=PRJ)},
         "an action script pushing only to the pr head, same-repo pr job": {"actions/pyfill/action.yml": pyact, "actions/pyfill/f.py": pyok, "workflows/a.yml": call("./.github/actions/pyfill", job_if=PRJ)},
+    })
+    # a repository script a run step names is followed, wherever it lives (.github#132)
+    reds.update({
+        "a run step calling a repository script that pushes": {
+            "/scripts/publish.sh": "#!/bin/bash\nset -e\ngit push origin HEAD:main\n",
+            "workflows/a.yml": wf(run="bash scripts/publish.sh")},
+        "a run step calling ./tools/up.py that uploads": {
+            "/tools/up.py": "import subprocess\n",
+            "/tools/up.sh": "#!/bin/sh\nrsync -a out host:/srv\n",
+            "workflows/a.yml": wf(run="./tools/up.sh --all")},
+        "a repository script calling another that publishes": {
+            "/scripts/release.sh": "#!/bin/bash\n\"$(dirname \"$0\")\"/inner.sh\n",
+            "/scripts/inner.sh": "#!/bin/bash\ngh release upload v1 x.rpm\n",
+            "workflows/a.yml": wf(run="scripts/release.sh")},
+        "a composite action step calling a repository script that pushes": {
+            "/scripts/publish.sh": "#!/bin/bash\ngit push origin HEAD\n",
+            "actions/p4/action.yml": "name: p4\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: $GITHUB_WORKSPACE/scripts/publish.sh\n",
+            "workflows/a.yml": call("./.github/actions/p4")},
+    })
+    greens.update({
+        "a run step calling a repository script that publishes nothing": {"/scripts/build.sh": "#!/bin/bash\n# git push is not done here\nmake\necho 'git push later'\n", "workflows/a.yml": wf(run="bash scripts/build.sh")},
+        "a run step calling a repository script that pushes, under the tag condition": {"/scripts/publish.sh": "#!/bin/bash\ngit push origin HEAD:main\n", "workflows/a.yml": wf(run="bash scripts/publish.sh", job_if="${{ " + T + " }}")},
+        "a script that calls itself": {"/scripts/loop.sh": "#!/bin/bash\nscripts/loop.sh\nmake\n", "workflows/a.yml": wf(run="scripts/loop.sh")},
+
     })
     realplants = {"reds": {
         "the real publish-rpms from a dispatch job, sign true": call("./.github/actions/publish-rpms", "          sign: 'true'\n          rpm-dir: x\n"),
