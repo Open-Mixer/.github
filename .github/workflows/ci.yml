@@ -66,6 +66,7 @@ jobs:
       - run: tests/add-openmixer-release-package.sh
       - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
+      - run: tests/publish-served-url.sh
       - run: tests/release-matrix.sh
       - run: tests/staged-cells.sh
       - run: tests/check-matrix.sh
@@ -242,6 +243,11 @@ jobs:
         if: matrix.kind == 'rpm'
         shell: bash
         run: tests/noarch-pin-matrix-arches.sh
+
+      - name: A quick release's noarch package that needs no architecture reaches every architecture view
+        if: matrix.kind == 'rpm'
+        shell: bash
+        run: tests/noarch-every-arch-view.sh
 
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})

@@ -65,7 +65,7 @@ rpm)
     mkrpm() { # <name> <arch> <release> <description> <out dir> [sources]
         local spec=$work/$1-$2-$3-$4.spec
         printf '%s\n' "Name: $1" 'Version: 0.20.4' "Release: 1.fc$3" 'Summary: t' 'License: MIT' \
-            "$([ "$2" = noarch ] && echo 'BuildArch: noarch')" '%description' "$4" '%files' > "$spec"
+            "$([ "$2" = noarch ] && echo 'BuildArch: noarch')" ${REQ:+"Requires: $REQ"} '%description' "$4" '%files' > "$spec"
         rpmbuild "-b${6:-b}" --quiet --define "_topdir $work/rb-$1-$2-$3-$4" --define 'dist %{nil}' --define 'debug_package %{nil}' \
             $([ "$2" = noarch ] || echo "--target $2") "$spec" >/dev/null 2>&1 || fail "rpmbuild $1 $2 fc$3"
         mkdir -p "$5"
@@ -73,12 +73,13 @@ rpm)
     }
     publish() { CATCH_UP=${CU:-} "$actions/publish-rpms/publish-tree.sh" "$tree" "$1" "$key"; }
     mkrpm plugin-qualify x86_64 45 first "$work/first" a
-    mkrpm plugin-qualify-langpack-ca noarch 45 first "$work/first"
+    # the language pack needs plugin-qualify, an arch package: a quick release keeps it in the quick tree (.github#267)
+    REQ=plugin-qualify mkrpm plugin-qualify-langpack-ca noarch 45 first "$work/first"
     mkrpm other x86_64 45 first "$work/first"
     MATRIX_SET=quick publish "$work/first" > /dev/null
     sleep 1 # another build time: the rebuilt source and language pack get other bytes
     mkrpm plugin-qualify aarch64 45 catchup "$work/catchup" a
-    mkrpm plugin-qualify-langpack-ca noarch 45 rebuilt "$work/catchup"
+    REQ=plugin-qualify mkrpm plugin-qualify-langpack-ca noarch 45 rebuilt "$work/catchup"
     new=fedora/45/aarch64/plugin-qualify-0.20.4-1.fc45.aarch64.rpm
     # the first publish is a quick release: its noarch language pack is served from the quick tree, fc45 x86_64, alone
     indep=fedora/45/x86_64/plugin-qualify-langpack-ca-0.20.4-1.fc45.noarch.rpm

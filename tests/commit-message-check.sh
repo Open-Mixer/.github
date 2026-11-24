@@ -79,7 +79,7 @@ mkdir -p "$tmp/home" "$tmp/s/r"; git -C "$tmp/s/r" init -q
 echo "clean change" > "$tmp/msg"; printf 'change\n\nCo-Authored''-By: Claude <noreply@anthro''pic.com>\n' > "$tmp/bad"
 # the house identity: the commit-msg mode judges who commits as well as what the message says
 HOUSE=(GIT_AUTHOR_NAME="Pau Aliagas" GIT_AUTHOR_EMAIL=linuxnow@gmail.com GIT_COMMITTER_NAME="Pau Aliagas" GIT_COMMITTER_EMAIL=commits@openmixer.org)
-hook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
+hook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB "${HOUSE[@]}" HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$1 sh "$stub" "$2"); }
 rc=0; out=$(hook "$tmp/none.git" "$tmp/msg" 2>&1) || rc=$?
 [ "$rc" = 1 ] || fail "with no checker anywhere the stub gave $rc, not 1"
 grep -q 'no commit-message checker at' <<<"$out" || fail "with no checker anywhere the stub did not say why: $out"
@@ -129,25 +129,18 @@ mv "$tmp/o.git" "$tmp/o.away"; touch -d '20 minutes ago' "$cache/.git/FETCH_HEAD
 rc=0; hook "$tmp/o.git" "$tmp/msg" >/dev/null 2>"$tmp/err" || rc=$?
 [ "$rc" = 0 ] && grep -q 'could not fetch openmixer-v1' "$tmp/err" || fail "an unreachable remote did not fall back to the cached checker and say so (rc $rc)"
 
-# the env var moved to the openmixer name; for one transitional pass the stub also reads the old FREEMIXER_ names, the
-# new name winning, the old one read with a one-line notice (the old names are removed in a later pass)
+# the stub reads OPENMIXER_DOTGITHUB; the old FREEMIXER_ names are not read at all
 mv "$tmp/o.away" "$tmp/o.git"
 for w in new old; do mkdir -p "$tmp/dg$w/.github/actions/commit-message-check"
   printf '#!/bin/sh\necho "checker=%s"\n' "$w" > "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"
   chmod +x "$tmp/dg$w/.github/actions/commit-message-check/commit-message-check.sh"; done
-envhook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u OPENMIXER_DOTGITHUB_URL -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home "$@" sh "$stub" "$tmp/msg" 2>"$tmp/err"); }
-out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew") || fail "the new OPENMIXER_DOTGITHUB was not read"
-[ "$out" = "checker=new" ] && [ ! -s "$tmp/err" ] || fail "the new name gave '$out' / '$(cat "$tmp/err")'"
-out=$(envhook FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "the old FREEMIXER_DOTGITHUB was not read"
-[ "$out" = "checker=old" ] || fail "the old name gave '$out'"
-grep -q 'FREEMIXER_DOTGITHUB is deprecated, use OPENMIXER_DOTGITHUB' "$tmp/err" || fail "the old name was read without a notice"
-out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew" FREEMIXER_DOTGITHUB="$tmp/dgold") || fail "both names set: stub failed"
-[ "$out" = "checker=new" ] || fail "both names set: the new did not win ('$out')"
+envhook() { (cd "$tmp/s/r" && env -u OPENMIXER_DOTGITHUB -u OPENMIXER_DOTGITHUB_URL "${HOUSE[@]}" HOME=$tmp/home "$@" sh "$stub" "$tmp/msg" 2>"$tmp/err"); }
+out=$(envhook OPENMIXER_DOTGITHUB="$tmp/dgnew") || fail "OPENMIXER_DOTGITHUB was not read"
+[ "$out" = "checker=new" ] && [ ! -s "$tmp/err" ] || fail "OPENMIXER_DOTGITHUB gave '$out' / '$(cat "$tmp/err")'"
 rm -rf "$tmp/home/.cache"
-envhook FREEMIXER_DOTGITHUB_URL="$tmp/o.git" >/dev/null || fail "the old FREEMIXER_DOTGITHUB_URL was not read"
-grep -q 'FREEMIXER_DOTGITHUB_URL is deprecated, use OPENMIXER_DOTGITHUB_URL' "$tmp/err" || fail "the old URL name was read without a notice"
+out=$(envhook FREEMIXER_DOTGITHUB="$tmp/dgold" OPENMIXER_DOTGITHUB_URL="$tmp/o.git") || fail "with the old name set the stub did not use the cache clone"
+[ "$out" != "checker=old" ] || fail "the old FREEMIXER_DOTGITHUB was read"
 rm -rf "$tmp/home/.cache"
-envhook OPENMIXER_DOTGITHUB_URL="$tmp/o.git" FREEMIXER_DOTGITHUB_URL="$tmp/none.git" >/dev/null || fail "both URL names set: the new did not win"
 
 # the stub as git runs it: a real commit in a throwaway repository whose core.hooksPath holds the stub. git exports GIT_DIR
 # and GIT_INDEX_FILE to a hook, and the stub's cache commands must not read them as the cache's: before, every fetch ran
@@ -157,7 +150,7 @@ rm -rf "$tmp/home/.cache" "$tmp/w" "$tmp/hooks"; mkdir -p "$tmp/hooks"; cp "$stu
 # checkout it is a relative .git, which after git -C <cache> happens to name the cache's own
 git init -q "$tmp/w"; git -C "$tmp/w" -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m base
 git -C "$tmp/w" worktree add -q --detach "$tmp/wt"
-realcommit() { (cd "$tmp/wt" && env -u OPENMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB -u FREEMIXER_DOTGITHUB_URL "${HOUSE[@]}" \
+realcommit() { (cd "$tmp/wt" && env -u OPENMIXER_DOTGITHUB "${HOUSE[@]}" \
   HOME=$tmp/home OPENMIXER_DOTGITHUB_URL=$tmp/o.git git -c core.hooksPath="$tmp/hooks" -c commit.gpgsign=false commit -q --allow-empty "$@") 2>"$tmp/rerr"; }
 realcommit -m "clean change" || fail "a real commit through the stub refused a clean message: $(cat "$tmp/rerr")"
 [ "$(git -C "$cache" rev-parse HEAD 2>/dev/null)" = "$(git -C "$tmp/o" rev-parse openmixer-v1)" ] || fail "the first real commit did not clone openmixer-v1 into the cache"

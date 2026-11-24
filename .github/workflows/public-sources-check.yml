@@ -85,6 +85,7 @@ jobs:
       - uses: Open-Mixer/.github/.github/actions/commit-identity-check@openmixer-v1
         with:
           base-ref: ${{ github.event.pull_request.base.ref }}
+          head-ref: ${{ github.event.pull_request.head.ref }}
           author-email: ${{ inputs.author-email }}
           committer-email: ${{ inputs.committer-email }}
           upstream-url: ${{ inputs.upstream-url }}

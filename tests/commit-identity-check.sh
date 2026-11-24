@@ -92,9 +92,11 @@ j = w["jobs"]["commit-identity"]
 assert "inputs.commit-identity" in j["if"], "the job is not skipped when off"
 st = [s for s in j["steps"] if "commit-identity-check" in s.get("uses", "")][0]["with"]
 assert st["author-email"] == "${{ inputs.author-email }}" and st["committer-email"] == "${{ inputs.committer-email }}", st
+assert st["head-ref"] == "${{ github.event.pull_request.head.ref }}", "the head branch does not reach the action: every published commit would be judged"
 a = open(h + "/.github/actions/commit-identity-check/action.yml").read()
 assert "'${{ inputs.author-email }}'" not in a and "'${{ inputs.committer-email }}'" not in a, "inputs spliced into the script"
 assert 'AUTHOR_EMAIL: ${{ inputs.author-email }}' in a and 'COMMITTER_EMAIL: ${{ inputs.committer-email }}' in a
+assert 'HEAD_REF: ${{ inputs.head-ref }}' in a and '--head-ref "$HEAD_REF"' in a, "head-ref does not reach the script"
 PY
 
 # a GitHub-made merge commit is named with the fix: a local signed merge, not a rebase
@@ -173,4 +175,45 @@ fork f5 up.git; sab UPLIST list; runx "file://$tmp/up3.git" || fail "sabotage: w
 fork f6 evil.git; git config "url.$tmp/evil.git.insteadOf" "$UPU"; sab UPREWRITE rewrite; runx "$UPU" >/dev/null 2>&1 || fail "sabotage: with the rewrite check removed the rewritten URL should (wrongly) pass"
 CHK=
 echo "upstream exemption: the listed upstream's commits pass; ours (commit, merge), unlisted, look-alike and rewritten URLs are refused; each check removed turns its arm red"
+# ---- PUBLISHED HISTORY folded in (#269, omx-clap-core#213): a commit already reachable from a public ref of this repository
+# (an origin branch other than the head's, or a tag) was judged when it was pushed and is named as published, not judged;
+# every commit reachable only from the head is judged in full. The refs are laid out as a fetch-depth 0 checkout leaves them.
+rm -rf "$tmp/p"; git init -q -b main "$tmp/p"; cd "$tmp/p" || exit 1; git config user.name t; git config commit.gpgsign false
+mk $A $C true "base"; git update-ref refs/remotes/origin/main HEAD
+git checkout -q -b old; mk $C $C false "old lane, authored by the committer"; old1=$sha
+mk $C $C false "old lane two"; old2=$sha; git update-ref refs/remotes/origin/old HEAD
+git checkout -q -b tagged main; mk $C $C false "only a tag holds it"; tg=$sha; git tag v-old
+git checkout -q -b pr main; mk $A $C true "new own"
+GIT_AUTHOR_EMAIL=$A GIT_COMMITTER_EMAIL=$C git merge -q --no-ff old -m "fold the old lane"; echo "true valid" > "$tmp/fix/$(git rev-parse HEAD)"
+GIT_AUTHOR_EMAIL=$A GIT_COMMITTER_EMAIL=$C git merge -q --no-ff tagged -m "fold the tagged commit"; echo "true valid" > "$tmp/fix/$(git rev-parse HEAD)"
+git update-ref refs/remotes/origin/pr HEAD
+runp() { "${CHK:-$chk}" --author-email "$A" --committer-email "$C" --head-ref "${HR:-pr}" main..HEAD; }
+# control: without --head-ref the old commits are judged and red (the defect of #269)
+rc=0; run main..HEAD >"$tmp/out" || rc=$?
+[ "$rc" = 1 ] && grep -q "^$old1: \[author-email\]" "$tmp/out" || fail "control: without --head-ref the folded commits were not judged (rc $rc)"
+# the folded old commits and the tagged one pass, each named as published
+runp >"$tmp/out" || fail "published history folded in was refused: $(cat "$tmp/out")"
+for x in $old1 $old2 $tg; do grep -q "^$x: published" "$tmp/out" || fail "$x not named as published: $(cat "$tmp/out")"; done
+grep -q ', 3 published commits not judged' "$tmp/out" || fail "the published count is not said: $(cat "$tmp/out")"
+# a NEW bad commit on top of the folded history is judged and refused, and it alone is named
+mk $C $C false "new, authored by the committer"; nb=$sha; git update-ref refs/remotes/origin/pr HEAD
+rc=0; runp >"$tmp/out" || rc=$?
+[ "$rc" = 1 ] && grep -q "^$nb: \[author-email\] $C" "$tmp/out" && [ "$(grep -c '^[0-9a-f]\{40\}: \[' "$tmp/out")" = 2 ] \
+  || fail "the new bad commit was not the only one refused (rc $rc): $(cat "$tmp/out")"
+# a misnamed head ref would publish the head itself: exit 2, never a pass
+rc=0; HR=nosuch runp >"$tmp/out" 2>&1 || rc=$?
+[ "$rc" = 2 ] && grep -q 'the head ref is misnamed' "$tmp/out" || fail "a misnamed head ref gave $rc: $(cat "$tmp/out")"
+# SABOTAGE: (1) the head branch not excluded from the public refs: the new bad commit is no longer refused (rc 1 arm red);
+# (2) that and the misnamed-head guard removed: the new bad commit passes outright
+sed 's/| grep -vxF "refs\/remotes\/origin\/\$HEAD_REF"//' "$chk" > "$tmp/sab1.sh"; chmod +x "$tmp/sab1.sh"
+! grep -q 'grep -vxF' "$tmp/sab1.sh" || fail "sabotage setup: the exclusion was not removed"
+rc=0; CHK=$tmp/sab1.sh runp >/dev/null 2>&1 || rc=$?
+[ "$rc" != 1 ] || fail "sabotage 1: with the head branch counted as public the new bad commit was still refused"
+sed '/the head ref is misnamed/{n;d}' "$tmp/sab1.sh" > "$tmp/sab2.sh"; chmod +x "$tmp/sab2.sh"
+rc=0; CHK=$tmp/sab2.sh runp >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] || fail "sabotage 2: with the exclusion and the guard removed the new bad commit should (wrongly) pass, got $rc"
+rc=0; HR=nosuch CHK=$tmp/sab2.sh runp >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] || fail "sabotage 2: with the guard removed a misnamed head should (wrongly) pass, got $rc"
+CHK=; HR=
+echo "published history: folded old and tagged commits pass, named; a new bad commit on top is refused; a misnamed head is exit 2; each guard removed turns its arm red"
 echo PASS
