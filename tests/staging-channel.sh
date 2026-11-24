@@ -103,7 +103,7 @@ def check(path, kind):
         if isinstance(x, dict): return {k: render(v, inp, rt) for k, v in x.items()}
         if isinstance(x, list): return [render(v, inp, rt) for v in x]
         if isinstance(x, str) and "${{" in x:
-            try: return ("=", ev(x, inp, needs=O(preflight=O(result="success", outputs=O(count="1")), build=O(result="success"), publish=O(result="success")), ref_type=rt))
+            try: return ("=", ev(x, inp, needs=O(preflight=O(result="success", outputs=O(count="1")), build=O(result="success"), upgrade=O(result="success"), publish=O(result="success")), ref_type=rt))
             except Exception as e: return ("!", type(e).__name__)
         return x
     for rt, extra in (("branch", {}), ("branch", {"staged": True}), ("branch", {"staging": True}), ("tag", {"publish": True})):
@@ -119,7 +119,7 @@ def check(path, kind):
     staging = dict(caller, staging=True)
     tag = dict(caller, publish=True)
     dry = dict(caller)
-    ok_build = O(preflight=O(result="success", outputs=O(count="1")), build=O(result="success"))
+    ok_build = O(preflight=O(result="success", outputs=O(count="1")), build=O(result="success"), upgrade=O(result="success"))
 
     # the build: the cells the first job names (the quick set or the full matrix: tests/release-matrix.sh renders
     # both), with the staging channel added before the build when staged or staging
@@ -154,6 +154,12 @@ def check(path, kind):
     assert "staged" not in rel["concurrency"]["group"] and rel["concurrency"]["group"].endswith("-live"), f"{path}: the release publishes outside the live group"
     pub = jobs["publish"]
     assert ev(pub.get("if", "true"), staged, needs=ok_build), f"{path}: publish skipped on a staged run"
+    if "upgrade" in jobs:
+        # the upgrade check before the publish: its failure stops both publish jobs (.github#261)
+        bad_up = O(ok_build, upgrade=O(result="failure"))
+        assert not ev(pub["if"], staged, needs=bad_up), f"{path}: publish runs after a failed upgrade check"
+        assert not ev(jobs["publish-go"]["if"], tag, needs=bad_up, ref_type="tag"), f"{path}: publish-go runs after a failed upgrade check"
+        assert ev(jobs["publish-go"]["if"], tag, needs=ok_build, ref_type="tag"), f"{path}: publish-go skipped after a green upgrade check"
     sst = [x for x in pub["steps"] if x.get("id") == "staged"][0]
     dst = [x for x in pub["steps"] if x.get("id") == "dry"][0]
     assert sst["with"]["sign"] == "true" and sst["with"]["staging"] == "true", f"{path}: the staged publish is not sign true, staging true"
