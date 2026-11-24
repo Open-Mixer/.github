@@ -80,9 +80,9 @@ runs:
       env:
         BASE_URL: ${{ inputs.base-url }}
         SUITE: ${{ inputs.suite }}
-        # a pull request into devel never skips an absent staging channel
+        # a pull request into devel never skips an absent staging channel: add-staging.sh refuses it before it reads STAGING_BOOTSTRAP
         STAGING_FOR_DEVEL: ${{ startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release' }}
-        STAGING_BOOTSTRAP: ${{ inputs.staging-bootstrap == 'true' && !(startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') }}
+        STAGING_BOOTSTRAP: ${{ inputs.staging-bootstrap }}
       run: |
         set -euo pipefail
         "$GITHUB_ACTION_PATH/add-staging.sh"

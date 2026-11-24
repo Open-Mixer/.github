@@ -8,11 +8,13 @@
 # omx-contract 3.19.1/3.21.0 from the channel, not the wave's build). The switch lives in add-openmixer itself, so every
 # caller gets it: build-rpm.yml, build-deb.yml and any repository's own ci.yml job that adds the channel.
 #   1. add-openmixer's staging step, its condition and its env, evaluated for each kind of run: a pull request into
-#      devel adds staging (OpenMixer's channel only), whatever staging says, and never with staging-bootstrap.
-#   2. build-rpm.yml and build-deb.yml run their add-openmixer step on a pull request into devel even without
-#      channel-deps, and pass staging and staging-bootstrap as before (no switch of their own).
-#   3. add-staging.sh, run against a file:// channel with no staging tree: STAGING_FOR_DEVEL=true refuses by name, even
-#      with STAGING_BOOTSTRAP=true; STAGING_BOOTSTRAP=true alone still skips with its notice.
+#      devel adds staging (OpenMixer's channel only), whatever staging says, with STAGING_FOR_DEVEL; STAGING_BOOTSTRAP is
+#      the caller's input as it is (add-staging.sh refuses a devel pull request before it reads it).
+#   2. build-rpm.yml and build-deb.yml run their add-openmixer step on a pull request into devel on OpenMixer's channel
+#      even without channel-deps (never for FreeREAC's), and pass staging and staging-bootstrap as before.
+#   3. add-staging.sh, run against a file:// channel with no staging tree, on any machine (staging is judged before
+#      the real channel's file is looked for): STAGING_FOR_DEVEL=true refuses by name, even with STAGING_BOOTSTRAP=true;
+#      STAGING_BOOTSTRAP=true alone still skips with its notice. SUITE is set, for a machine without dnf.
 # Nothing else changes: a pull request into any other branch, a tag and a plain dispatch see the real channel only.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
@@ -57,11 +59,13 @@ else:
     env = st.get("env", {})
     for k in ("STAGING_FOR_DEVEL", "STAGING_BOOTSTRAP"):
         if k not in env: fails.append(f"add-openmixer: the staging step has no {k}")
+    if str(env.get("STAGING_BOOTSTRAP")) != "${{ inputs.staging-bootstrap }}":
+        fails.append(f"add-openmixer: STAGING_BOOTSTRAP is {env.get('STAGING_BOOTSTRAP')}, not the input as it is (a first staged run must still skip)")
     cases = [
         # name, event, base_ref, staging, staging-bootstrap, release-package, want runs, want for-devel, want bootstrap
         ("a pull request into devel", "pull_request", "devel", "false", "false", "openmixer-release", True, True, False),
         ("a pull_request_target into devel", "pull_request_target", "devel", "false", "false", "openmixer-release", True, True, False),
-        ("a pull request into devel asking staging-bootstrap", "pull_request", "devel", "true", "true", "openmixer-release", True, True, False),
+        ("a pull request into devel asking staging-bootstrap", "pull_request", "devel", "true", "true", "openmixer-release", True, True, True),
         ("a pull request into devel on FreeREAC's channel", "pull_request", "devel", "false", "false", "freereac-release", False, None, None),
         ("a pull request into main", "pull_request", "main", "false", "false", "openmixer-release", False, None, None),
         ("a push to devel", "push", "", "false", "false", "openmixer-release", False, None, None),
@@ -94,9 +98,13 @@ for wf in wfs:
     ib = [i for i, n in enumerate(names) if n.startswith("Open-Mixer/.github/.github/actions/contract-bootstrap@")]
     if ib and ib[0] < ia:
         fails.append(f"{wf}: contract-bootstrap runs before add-openmixer, so a bootstrap never sees staging")
-    base_inputs = {"inputs.channel-deps": False, "inputs.staged": False, "inputs.staging": False, "inputs.staging-bootstrap": False}
+    base_inputs = {"inputs.channel-deps": False, "inputs.staged": False, "inputs.staging": False, "inputs.staging-bootstrap": False,
+                   "inputs.release-package": "openmixer-release"}
+    frc = {"inputs.release-package": "freereac-release"}
     cases = [
         ("a pull request into devel", "pull_request", "devel", {}, True),
+        ("a pull request into devel on FreeREAC's channel", "pull_request", "devel", frc, False),
+        ("a pull request into devel on FreeREAC's channel with channel-deps", "pull_request", "devel", dict(frc, **{"inputs.channel-deps": True}), True),
         ("a pull request into devel with channel-deps", "pull_request", "devel", {"inputs.channel-deps": True}, True),
         ("a pull request into main with channel-deps", "pull_request", "main", {"inputs.channel-deps": True}, True),
         ("a pull request into main", "pull_request", "main", {}, False),
@@ -121,12 +129,12 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/devel-pr-staging.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/channel/rpm" "$work/channel/deb"
 script=$root/.github/actions/add-openmixer/add-staging.sh
-if STAGING_FOR_DEVEL=true STAGING_BOOTSTRAP=true BASE_URL="file://$work/channel" bash "$script" > "$work/dev.log" 2>&1; then
+if STAGING_FOR_DEVEL=true STAGING_BOOTSTRAP=true SUITE=trixie BASE_URL="file://$work/channel" bash "$script" > "$work/dev.log" 2>&1; then
     cat "$work/dev.log"; echo "FAIL: a pull request into devel passed with no staging channel (it must refuse by name)" >&2; exit 1
 fi
 grep -q 'a pull request into devel builds against the staging channel' "$work/dev.log" ||
     { cat "$work/dev.log"; echo "FAIL: the refusal of a pull request into devel does not say why" >&2; exit 1; }
 echo "devel pull request, no staging channel: refused by name, staging-bootstrap or not: ok"
-STAGING_BOOTSTRAP=true BASE_URL="file://$work/channel" bash "$script" > "$work/boot.log" 2>&1 ||
+STAGING_BOOTSTRAP=true SUITE=trixie BASE_URL="file://$work/channel" bash "$script" > "$work/boot.log" 2>&1 ||
     { cat "$work/boot.log"; echo "FAIL: staging-bootstrap no longer skips a staging channel never published" >&2; exit 1; }
 echo "staging-bootstrap alone still skips a staging channel never published: ok"

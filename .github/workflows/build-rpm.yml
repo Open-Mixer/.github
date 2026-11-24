@@ -375,7 +375,7 @@ jobs:
       # a pull request into devel: add-openmixer itself adds the staging channel and refuses an absent one by name
       # (devel -> staging -> prod); the step runs for it whatever channel-deps says
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
-        if: inputs.channel-deps || inputs.staged || inputs.staging || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')
+        if: inputs.channel-deps || inputs.staged || inputs.staging || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release')
         with:
           base-url: ${{ inputs.base-url }}
           release-package: ${{ inputs.release-package }}
