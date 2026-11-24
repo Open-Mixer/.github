@@ -26,9 +26,13 @@
 # on its spec, debian/control and workflow install lines: a ceiling there is refused, naming file, line and package
 # (.github#146). Every ceiling form is refused on every package: `<`, `<=`, a rich `with ... <`, debian `<<` and `<=`,
 # and an apt-get pin.
+# And with deps.txt or without it, a CI install line installs only an OpenMixer package the packaging declares
+# (installs.sh, .github#257): one refusal per line, naming the file, the line and the package.
 set -euo pipefail
 
 DEPS=packaging/deps.txt
+# shellcheck source-path=SCRIPTDIR source=installs.sh
+. "$(dirname "${BASH_SOURCE[0]}")/installs.sh"
 
 load() { # <root>: fills RPM[] DEB[] FLOOR[] CEIL[] VAR[] from deps.txt
   RPM=(); DEB=(); FLOOR=(); CEIL=(); VAR=()
@@ -139,9 +143,11 @@ run() { # <mode> <root>
     # no deps.txt (.github#146): there is no floor to render, so the render is skipped, but the floors-only rule is not
     [ "$mode" = write ] && { echo "deps-render: $root/$DEPS is missing: there is no floor to write" >&2; return 1; }
     RPM=(); DEB=()
-    local out; out="$(ceilings "$root")"
-    if [ -n "$out" ]; then printf '%s\n' "$out" >&2; return 1; fi
-    [ "$mode" = check ] && echo "deps-render: no $DEPS: nothing rendered; no spec, debian/control or workflow install line carries a ceiling"
+    local out ins; out="$(ceilings "$root")"; ins="$(undeclared_installs "$root")"
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    [ -z "$ins" ] || printf '%s\n' "$ins" >&2
+    [ -z "$out$ins" ] || return 1
+    [ "$mode" = check ] && echo "deps-render: no $DEPS: nothing rendered; no spec, debian/control or workflow install line carries a ceiling; every OpenMixer package an install line names is declared"
     return 0
   fi
   load "$root" || return 1
@@ -229,6 +235,9 @@ run() { # <mode> <root>
   # floors only (.github#146): a ceiling is refused by name, file and line, listed by deps.txt or not, wherever it is
   # written; a Recommends is a FLOOR row too (ruling a), so a ceiling in one is refused there as well
   local out; out="$(ceilings "$root")"
+  if [ -n "$out" ]; then printf '%s\n' "$out" >&2; bad=1; fi
+  # an OpenMixer package installed by hand is one the packaging declares (installs.sh, .github#257)
+  out="$(undeclared_installs "$root")"
   if [ -n "$out" ]; then printf '%s\n' "$out" >&2; bad=1; fi
   [ "$bad" = 0 ] || return 1
   [ "$mode" = check ] && echo "deps-render: spec, debian/control and workflows carry the floors of $DEPS"
@@ -359,6 +368,10 @@ if [ "${1:-}" = --self-test ]; then
     if run check "$S/c" >/dev/null 2>&1; then echo "SABOTAGE $1: STAYED GREEN"; fail=1; else echo "SABOTAGE $1: red"; fi; }
   sabc recommends-spec-ceiling-listed    packaging/c.spec '$a Recommends: libx-rec < 2'
   sabc recommends-control-ceiling-listed debian/control   '$a Recommends: libx-rec-dev (<< 2~)'
+  # an OpenMixer package an install line names, undeclared by the packaging (installs.sh), through run check, with
+  # deps.txt and without it
+  installs_self_test || fail=1
+  installs_self_test nodeps || fail=1
   [ "$fail" = 0 ] || exit 1
   echo "deps-render self-test: every drift red"
   exit 0

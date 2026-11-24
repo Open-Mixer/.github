@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The OpenMixer package families: the names the OpenMixer channel serves from Open-Mixer's own sources, one shell glob
+# per line. installs.sh reads an install line's package only when its name is one of these: a CI job may install a
+# tool of the distribution or of a third-party repository as it needs, but an OpenMixer package it installs by hand
+# must be one the repository's packaging declares (.github#257). A new Open-Mixer source repository adds its
+# family here.
+omx-*
+libomx*
+python3-omx*
+plugin-hostd*
+libplugin-hostd*
+python3-plugin-hostd*
+plugin-db*
+libplugin-db*
+plugin-qualify*
+plugin-qualification*
+libplugin-qualification*
+mod-host*
+openmixer*
+libsurface*
+libmackie*
+libdiginet*
+diginet*
