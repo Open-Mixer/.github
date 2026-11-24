@@ -47,15 +47,8 @@ for spec in packaging/*.spec; do
     [ "$specver" = "$version" ] || { echo "debian/changelog says $version, $spec says $specver" >&2; exit 1; }
 done
 
-short=$(git rev-parse --short HEAD)
-stamp=$(git log -1 --format=%ct HEAD).$short
-"$here/../changelog/changelog.sh" deb -C . "${tag:-HEAD}"
-if [ -n "$tag" ]; then
-    [ "$tag" = "v$version" ] || { echo "tag $tag is not v$version, the debian/changelog version" >&2; exit 1; }
-    [ "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)" ] || { echo "the tree is not at $tag" >&2; exit 1; }
-else
-    sed -i "1s/^\\(\\S\\+\\) (\\([^)]*\\))/\\1 ($version$sep$stamp)/" debian/changelog
-fi
+# the changelog the DEBs carry: render-changelog.sh, the one rendering (contract-bootstrap's bootstrap.sh packs it too)
+"$here/render-changelog.sh" -C . ${tag:+-t "$tag"} -s "$sep" >/dev/null
 
 apt-get build-dep -y --no-install-recommends ./
 dpkg-buildpackage -b -uc -us

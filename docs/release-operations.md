@@ -307,6 +307,41 @@ is pushed or released. A promoted package keeps the version string of its staged
 (`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
 
+### A build-dependency cycle: the bootstrap input
+
+Two libraries of a wave can need each other's packages to build (plugin-hostd-protocol needs omx-clap-contract, while
+omx-clap-core, which builds that package, needs plugin-hostd-protocol; Open-Mixer/.github#230). No order satisfies both. A
+stage-box chain line breaks such a cycle with `bootstrap=`. `build-rpm.yml` and `build-deb.yml` break it with the
+`bootstrap` input, the same mechanism: entries `<owner>/<repo>@<full commit>:<package>`. Each entry is one `-contract`
+data package of the later library, built alone from its source at that commit (`actions/contract-bootstrap`:
+`make install-contract`, packed as the library's packaging declares it). On Debian that is the library's own snapshot
+build of the package, file for file: only the files its `debian/<package>.install` names, the directories its `.dirs`
+names, and the changelog as `build-deb.sh` renders it (`render-changelog.sh`), so the library's build of the same commit
+and the bootstrap never differ in a path or a byte (#240). The build job builds it before the
+library's own build and installs it in the container, so it meets the build's dependencies. It is never released;
+the library's own release replaces it. The entry must name the commit itself: a short sha, a ref, or an annotated
+tag's object (whose checkout is another commit) is refused before anything is built.
+
+When the consumer has to be **released** before the library, the build container is not enough: the channel must
+serve the package. `bootstrap-only` makes the one bootstrap package the release of the run, with every gate of a
+release (the preflight and its already-served check, channel-installability, the signed publish, the install check),
+and checks out nothing of the calling repository. Its version is the house snapshot form, below the library's own
+release of the same version and above a consumer's floor: rpm `<version>-0.git<commit time>.<short sha>%{?dist}`, deb
+`<version>~git<commit time>.<short sha>`. The library's release of `<version>` supersedes it, and the channel's
+`cells.tsv` records it under `<version>` (`served.sh <package> <version>` answers for it).
+
+`contract-bootstrap.yml` is the caller, here and not in either library. A release publishes only on a tag push of its
+caller; the library's `v<version>` tag is its full release; and the consumer's release workflow is the one its own
+head carries. The caller reads one line of `.github/contract-bootstraps.txt` (`<package> <version>
+<owner>/<repo>@<full commit>`):
+
+- a push of the tag `bootstrap-<package>-<version>` on a commit of main releases that line;
+- `gh workflow run contract-bootstrap.yml -f package=<package>` is a dry run of the same line and publishes nothing.
+
+A line goes when the library's own release of its version is served. `tests/contract-bootstrap.sh static|rpm|deb`
+holds the wiring, the line reader, the package, both version bounds and the commit refusals, each with its sabotage;
+its deb arm also builds the fixture library with `build-deb.sh` and holds the two packages equal in every path and byte.
+
 ### The purge
 
 After the wave's release pass has published every layer to the real channel, run `purge-staging.yml` (dispatched by hand, it being on the default
@@ -599,7 +634,7 @@ publishes it.
 
 | | RPM | DEB |
 | --- | --- | --- |
-| repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch`; `openmixer-testing` and `openmixer-testing-noarch` (the staging channel, disabled, as Fedora's updates-testing) | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME` |
+| repository | `/etc/yum.repos.d/openmixer.repo`, ids `openmixer` and `openmixer-noarch`; `openmixer-testing` and `openmixer-testing-noarch` (the staging channel, disabled, as Fedora's updates-testing) | `/etc/apt/sources.list.d/openmixer.sources`, deb822, a link to the source of the system's `VERSION_CODENAME`; `/etc/apt/sources.list.d/openmixer-testing.sources` (the staging channel, trixie, `Enabled: no`, as the RPM's `openmixer-testing`) |
 | key | `/etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer`, the channel's `rpm/RPM-GPG-KEY-openmixer` | `/usr/share/keyrings/openmixer-archive-keyring.asc`, the channel's `deb/openmixer.asc` |
 | stable name | `rpm/openmixer-release.noarch.rpm` (the oldest Fedora release's build; noarch installs on every release) | `deb/openmixer-release.deb` |
 | updates from | `fedora/<release>/noarch/` of the tree: one build per Fedora release of the set, since the dist tag `.fcNN` ties a build to its release | `debian/<suite>/all/` of the tree |
@@ -608,6 +643,38 @@ The DEB ships one source per Debian release the channel serves (bookworm, trixie
 running system at configure time: the stable `.deb` is one file for every release, and the sources stay
 package contents, so an upgrade changes them. A system whose codename the channel does not serve fails the
 install. A system upgraded to another Debian release relinks with `dpkg-reconfigure openmixer-release`.
+
+### The testing repositories
+
+openmixer-release installs the staging channel of the release wave as a testing repository, present and disabled, as
+`fedora-repos` installs updates-testing: what a wave has proved, before its release tag publishes it. Turning it on is
+the tester's whole opt-in, and turning it off returns the machine to the real channel at the next upgrade (apt and dnf do
+not downgrade what is installed).
+
+| | RPM | DEB |
+| --- | --- | --- |
+| file | `openmixer-testing`, `openmixer-testing-noarch` in `/etc/yum.repos.d/openmixer.repo` (`%config(noreplace)`) | `/etc/apt/sources.list.d/openmixer-testing.sources`, a file postinst writes from `/usr/share/openmixer-release/testing/openmixer-testing-<suite>.sources` |
+| tree | `staging/rpm/fedora/$releasever/`: fc45 x86_64 and noarch, the tested platform | `staging/deb/debian/trixie/`: arm64 and all, the tested platform (Zynthian, the Pi); an amd64 machine finds only the `all` packages there, and bookworm gets no testing source |
+| on, once | `dnf --enablerepo=openmixer-testing --enablerepo=openmixer-testing-noarch upgrade` | none: apt has no per-command switch |
+| on | `dnf config-manager setopt openmixer-testing.enabled=1 openmixer-testing-noarch.enabled=1` | `sed -i 's/^Enabled: no$/Enabled: yes/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
+| off | the same with `enabled=0` | `sed -i 's/^Enabled: yes$/Enabled: no/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
+
+An upgrade of openmixer-release keeps the choice: the RPM file is not replaced, and the DEB's postinst rewrites the
+source from the package's copy (so a new URI or key arrives with the upgrade) and keeps its `Enabled` line, `yes` only
+when it read exactly `Enabled: yes`. Removing the package removes the testing source with the real one.
+
+No priority and no apt pin: enabled, the newer build wins, as with updates-testing. The staged versions sort above the
+release of the same version (`+git<commit time>.<sha>`, `.git<commit time>.<sha>`), so a staged build is taken without
+a pin, and the released build of a later version is taken over it as soon as the real channel serves it. A pin above
+500 would hold a tester on a staged build after the real channel moved past it; a disabled deb822 source is not read at
+all, so it cannot win whatever the pins say. The `Pin-Priority: 600` of `openmixer-staging.pref` is the CI's
+(`add-staging.sh`, "The files a machine adds"), where a build must take the staged dependency even over a higher
+released one. A machine has one or the other: the testing source and `openmixer-staging.sources` name the same tree, so
+both enabled is the same source twice.
+
+`install-check.sh` refuses a machine where a testing repository is missing or enabled; on Debian it also enables the
+testing source once, requires its signed index to load with the shipped key and no warning, and requires apt to read
+nothing from it once disabled again.
 
 The key is the file the channel serves at build time, read over HTTPS from `www.openmixer.org`, never kept in
 this repository: a key added to the channel (channel-keys.sh) reaches machines by the next release of the

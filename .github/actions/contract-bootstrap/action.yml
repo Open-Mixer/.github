@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: contract-bootstrap
+description: Build -contract data packages of sibling repositories alone, each from its source at a named commit
+
+# The way past a real build-dependency cycle between two libraries of a pass (Open-Mixer/.github#230): the earlier
+# library builds on a -contract data package of the later one, so that one package is built alone from the later
+# library's source at a named commit, as a stage-box chain line's bootstrap= builds it. bootstrap.sh holds what is built
+# and what is refused. Used by the build jobs of build-rpm.yml and build-deb.yml (the bootstrap input): installed in the
+# build container to meet the build's dependencies, or, with bootstrap-only, the package the run releases.
+#
+# The caller runs in a Fedora (rpm) or Debian (deb) container with the channel added (add-openmixer): `make
+# install-contract` runs omx-contract's installer, which the channel serves.
+
+inputs:
+  kind:
+    description: "'rpm' or 'deb'"
+    required: true
+  entries:
+    description: '<owner>/<repo>@<full commit>:<package>, space separated'
+    required: true
+  out:
+    description: directory the packages are written to
+    default: bootstrap
+  install:
+    description: "'true' installs the packages in this container, for the build that follows"
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        ENTRIES: ${{ inputs.entries }}
+        OUT: ${{ inputs.out }}
+        INSTALL: ${{ inputs.install }}
+      run: |
+        set -euo pipefail
+        [ -n "$ENTRIES" ] || { echo "::error::contract-bootstrap: no entries"; exit 1; }
+        # the tools, and omx-contract's installer where the channel serves it (a sibling's install-contract runs it)
+        if [ "$KIND" = rpm ]; then
+          dnf install -y --setopt=install_weak_deps=False git make pkgconf rpm-build
+          ! dnf -q repoquery --available omx-contract-devel | grep -q . || dnf install -y --setopt=install_weak_deps=False omx-contract-devel
+        elif [ "$KIND" = deb ]; then
+          apt-get install -y --no-install-recommends git make pkgconf dpkg-dev python3
+          [ -z "$(apt-cache policy libomx-contract-dev | sed -n 's/^ *Candidate: *//p' | grep -v '(none)')" ] \
+            || apt-get install -y --no-install-recommends libomx-contract-dev
+        else
+          echo "::error::contract-bootstrap: kind is rpm or deb, not '$KIND'"; exit 1
+        fi
+        mkdir -p "$OUT"
+        for e in $ENTRIES; do
+          "$GITHUB_ACTION_PATH/bootstrap.sh" "$KIND" "$e" "$OUT" | tee -a "$OUT/bootstrap.log"
+        done
+        if [ "$INSTALL" = true ]; then
+          # shellcheck disable=SC2046 # the package files, one word each (no spaces in a package file name)
+          if [ "$KIND" = rpm ]; then
+            dnf install -y $(find "$(readlink -f "$OUT")" -name '*.noarch.rpm' | sort)
+          else
+            apt-get install -y --no-install-recommends $(find "$(readlink -f "$OUT")" -name '*_all.deb' | sort)
+          fi
+        fi
