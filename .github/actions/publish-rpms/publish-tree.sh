@@ -24,8 +24,10 @@
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
 #   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none.
-#               quick also places a noarch package in the quick set's architecture trees of its release
-#               (fedora/<release>/<arch>, from release-matrix/quick.txt), never in fedora/<release>/noarch: see below
+#               quick places a noarch package in fedora/<release>/noarch, served to every architecture, unless some
+#               architecture view cannot install it or an arch package of its source pins it exactly where the run did
+#               not build that package (noarch-views.py place); such a one goes into the quick set's architecture trees
+#               of its release alone (fedora/<release>/<arch>, from release-matrix/quick.txt): see below
 #   CATCH_UP    'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel holds
 #               (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every package of
 #               <rpm dir> whose path the tree already holds is judged: a noarch or source package is dropped from what is

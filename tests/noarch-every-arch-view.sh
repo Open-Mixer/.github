@@ -17,7 +17,7 @@
 #     by a copy of the actions) is refused, naming the package and both views' newest builds, and nothing is signed;
 #   - a full run (MATRIX_SET=full) of the same packages passes the check.
 #
-#   noarch-every-arch-view.sh   in a Fedora container with rpm-build rpm-sign createrepo_c python3-rpm gnupg2 pinentry findutils zstd dnf5
+#   noarch-every-arch-view.sh   in a Fedora container with rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils zstd dnf5
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 actions=${NOARCH_VIEW_ACTIONS:-$here/.github/actions}
