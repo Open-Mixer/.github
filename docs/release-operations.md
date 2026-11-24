@@ -357,7 +357,7 @@ pulled copy and pushes nothing.
 ## The quick set and the full matrix
 
 A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
-for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists such a release (`rpm 44`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases.
+for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
