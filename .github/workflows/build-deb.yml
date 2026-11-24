@@ -496,6 +496,8 @@ jobs:
       - id: publish
         uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
         with:
+          # the channel's own deb/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
+          served-url: ${{ inputs.base-url }}/deb
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
@@ -554,6 +556,8 @@ jobs:
         if: inputs.staged
         uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
         with:
+          # the channel's own deb/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
+          served-url: ${{ inputs.base-url }}/deb
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ format('staged {0}', github.sha) }}
@@ -580,6 +584,8 @@ jobs:
         if: ${{ !inputs.staged }}
         uses: Open-Mixer/.github/.github/actions/publish-debs@openmixer-v1
         with:
+          # the channel's own deb/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
+          served-url: ${{ inputs.base-url }}/deb
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
