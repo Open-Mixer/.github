@@ -351,6 +351,8 @@ jobs:
         include: ${{ fromJSON(needs.preflight.outputs.cells) }}
     env:
       RELEASE_TAG: ${{ inputs.source-ref || (github.ref_type == 'tag' && github.ref_name || '') }}
+      # a pull request into devel builds against the staging channel too (devel -> staging -> prod): see add-openmixer below
+      STAGING_FOR_DEVEL: ${{ github.event_name == 'pull_request' && github.base_ref == 'devel' }}
     steps:
       - name: Install the build tools
         env:
@@ -384,13 +386,16 @@ jobs:
 
       # for the build only: the source exists in this container and is never a dependency of a release
       # staged or staging: the staging channel beside it, at a higher priority, so the build takes what the wave staged
+      # a pull request into devel (STAGING_FOR_DEVEL): the same staging channel, because a lower level merged into devel
+      # is staged (its release.yml, staged: true, from devel) and never in the real channel; an unpublished staging channel
+      # is skipped with a notice, as for the first layer of a wave
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
-        if: inputs.channel-deps || inputs.staged || inputs.staging
+        if: inputs.channel-deps || inputs.staged || inputs.staging || env.STAGING_FOR_DEVEL == 'true'
         with:
           base-url: ${{ inputs.base-url }}
           release-package: ${{ inputs.release-package }}
-          staging: ${{ inputs.staged || inputs.staging }}
-          staging-bootstrap: ${{ inputs.staging-bootstrap }}
+          staging: ${{ inputs.staged || inputs.staging || env.STAGING_FOR_DEVEL == 'true' }}
+          staging-bootstrap: ${{ inputs.staging-bootstrap || (env.STAGING_FOR_DEVEL == 'true' && !inputs.staged && !inputs.staging) }}
 
       # a staged snapshot or a dry run (a run not at a release tag) is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
       # floor, above the staged build of any earlier commit, and is not pruned behind a published <version> by the installability gate

@@ -63,6 +63,7 @@ jobs:
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
+      - run: tests/devel-pr-staging.sh
       - run: tests/add-openmixer-release-package.sh
       - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
