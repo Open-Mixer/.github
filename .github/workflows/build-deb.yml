@@ -318,6 +318,17 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
+      # a release builds only a commit our own verify passed: the commit checked out, the one every tag path (a tool or
+      # a hand tag) builds, must carry a success cluster/verify status; absent, pending or red is refused by name.
+      # Our cluster verifies every merge to main.
+      # bootstrap-only builds a sibling's commit its entry names, not this checkout, and is not judged here.
+      - name: Check the commit carries a green cluster/verify
+        if: (github.ref_type == 'tag' || inputs.source-ref != '') && !inputs.bootstrap-only
+        uses: Open-Mixer/.github/.github/actions/verified-at-sha@openmixer-v1
+        with:
+          repository: ${{ inputs.source-repository || github.repository }}
+          token: ${{ github.token }}
+
       # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
       - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
