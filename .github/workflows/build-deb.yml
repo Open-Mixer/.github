@@ -145,6 +145,10 @@ on:
         type: string
         default: ''
         description: 'Tag of source-repository to build and release, v<version>; empty means the tag the caller was run on'
+      source-commit:
+        type: string
+        default: ''
+        description: 'A full 40-character commit of source-repository to build, untagged (a unit dry run of a member''s devel tip, release-unit.yml); a dry run only: never with source-ref, publish, staged, staging or bootstrap-only'
       source-sha:
         description: 'With source-ref: the commit that tag must resolve to; each checkout is asserted against it. Empty skips the check.'
         required: false
@@ -294,6 +298,26 @@ jobs:
             [[ $SOURCE_REF =~ ^v[0-9] ]] || no "bootstrap-only needs source-ref v<version>, the version of the package it releases"
           }
 
+      - name: A source commit is a dry run of another repository's commit
+        if: inputs.source-commit != ''
+        env:
+          COMMIT: ${{ inputs.source-commit }}
+          SOURCE_REPOSITORY: ${{ inputs.source-repository }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          PUBLISH: ${{ inputs.publish }}
+          STAGED: ${{ inputs.staged }}
+          STAGING: ${{ inputs.staging }}
+          ONLY: ${{ inputs.bootstrap-only }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          no() { echo "::error::$*"; exit 1; }
+          [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || no "source-commit '$COMMIT' is not a full 40-character commit"
+          [ -n "$SOURCE_REPOSITORY" ] || no "source-commit names a commit of source-repository, and source-repository is empty"
+          [ -z "$SOURCE_REF" ] || no "source-commit and source-ref exclude each other: source-ref releases a tag"
+          [ "$PUBLISH" != true ] && [ "$STAGED" != true ] && [ "$STAGING" != true ] && [ "$ONLY" != true ] ||
+            no "source-commit is a dry run: no publish, staged, staging or bootstrap-only"
+          [ "$REF_TYPE" != tag ] || no "source-commit never runs on a tag: a tag publishes"
+
       - name: Read the stage
         env:
           STAGE: ${{ inputs.stage }}
@@ -305,7 +329,7 @@ jobs:
         if: ${{ !inputs.bootstrap-only }}
         with:
           repository: ${{ inputs.source-repository || github.repository }}
-          ref: ${{ inputs.source-ref && format('refs/tags/{0}', inputs.source-ref) || '' }}
+          ref: ${{ inputs.source-ref && format('refs/tags/{0}', inputs.source-ref) || inputs.source-commit }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: ${{ inputs.source-repository == '' }}
@@ -364,7 +388,7 @@ jobs:
         if: ${{ !inputs.bootstrap-only }}
         with:
           repository: ${{ inputs.source-repository || github.repository }}
-          ref: ${{ inputs.source-ref && format('refs/tags/{0}', inputs.source-ref) || '' }}
+          ref: ${{ inputs.source-ref && format('refs/tags/{0}', inputs.source-ref) || inputs.source-commit }}
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: ${{ inputs.source-repository == '' }}
