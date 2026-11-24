@@ -144,9 +144,11 @@ which proves itself first on planted trees: every way of publishing red, the all
 So `build-rpm.yml` and `build-deb.yml` have `publish-release` (the tag condition alone, sign true, staging false), and
 `publish`, which stages (`staged: true`, `staging: 'true'`) or assembles the unsigned tree (`sign: 'false'`). The package
 workflows (surge-xt, pugl-nanovg, clap, rncbc-v1, mod-host-protocol), `release-package.yml` and `promote-staged.yml` have
-a publishing job under the tag condition and a `-dry-run` job beside it under its negation. Limit: a script of the
-repository itself (not of an action directory) that does the `git push` or the upload is invisible to the gate; the
-shared workflows have none, and a caller repository's own scripts are not scanned (Open-Mixer/.github#132).
+a publishing job under the tag condition and a `-dry-run` job beside it under its negation. A script of the
+repository that a `run:` step names (from the root, `./`, `$GITHUB_WORKSPACE/`), and every script that one names in turn,
+is read as the step's own (ruled 2026-11-24, Open-Mixer/.github#132: follow the script, rather than confine publishers to
+action directories, so a caller repository's scripts are covered the day it runs the gate). Not followed: a path built
+from an expression, and tests (`tests/`, `test*`, `selftest*`), as in an action directory.
 
 `publish-fedora.yml` and `publish-freereac.yml` are removed: they republished an existing tag by hand, which this
 rule forbids. A new Fedora release gets the packages by re-running the tag run of each repository (in dependency
