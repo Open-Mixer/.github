@@ -590,9 +590,27 @@ until the full matrix publishes. A quick release never builds an aarch64 rpm, so
 aarch64 machine: in `fedora/<release>/noarch`, which dnf reads on every architecture, it did (omx-dsp-contract 0.32.1
 needs omx-dsp-devel 0.32.1, which no aarch64 tree served, and the aarch64 cells refused it). So, with `MATRIX_SET=quick`:
 
-- `publish-rpms` places a `noarch` package in `fedora/<release>/<arch>` for each architecture `quick.txt` names for its
-  release (`x86_64` for fc44 and fc45), never in `fedora/<release>/noarch`; a release with no quick rpm cell is refused.
-  A repository directory serves a `noarch` package like any other, and dnf takes the newest of the two directories. An
+- `publish-rpms` places a `noarch` package that NEEDS an architecture in `fedora/<release>/<arch>` for each
+  architecture `quick.txt` names for its release (`x86_64` for fc45); a release with no quick rpm cell is refused. A
+  repository directory serves a `noarch` package like any other, and dnf takes the newest of the two directories. A
+  `noarch` package needs an architecture when its `Requires`, followed through the packages of the run built from the
+  same source rpm, reach an arch package (omx-dsp-contract -> omx-dsp-devel), or when an arch package of that source pins
+  it exactly (`= %{version}-%{release}`) and some architecture tree of the release serves that package and the run did
+  not build it there (omx-clap-libs -> omx-clap-contract, the #62 case).
+- **Every other `noarch` package goes into `fedora/<release>/noarch`, served to every architecture** (Open-Mixer/.github#267).
+  Placing every `noarch` package in the quick trees starved aarch64 of packages that need nothing of it: from omx-contract
+  3.20.0 on, `omx-contract-devel` (which requires only `omx-contract-data`, noarch, same source) went into
+  `fedora/45/x86_64` alone, the aarch64 view (`fedora/45/aarch64` + `fedora/45/noarch`) kept serving 3.19.1, and an
+  aarch64 build needing `omx-contract-devel >= 3.21.0` found no match (run 45459465038, job 138685304544, against
+  x86_64's job 138685304854 which installed 3.21.0).
+- **A publish never leaves the newest build of a `noarch` package different across the architecture views.** After
+  placing, `publish-tree.sh` reads every architecture view of the release (`fedora/<release>/<arch>` with
+  `fedora/<release>/noarch`, for each architecture directory the release holds) and, for every `noarch` package name the
+  run published, compares the newest build each view serves. A difference is refused, naming the package, the release and
+  each view's newest version, unless the newest build needs an architecture as above, judged on the tree (its own
+  architecture tree and `noarch`, the same source rpm), or the lower view's tree serves an arch package pinning the older
+  build exactly. A refused run pushes nothing. `noarch-views.py report <tree>` lists the same differences for the whole
+  channel. An
   `all` deb needs nothing new: a quick release builds only the quick set's suites, and each of them is a quick cell on
   every architecture it serves.
 - `channel-installability` judges the quick cells alone (`--cell RELEASE/ARCH`, filled from `quick.txt` by `run.sh`

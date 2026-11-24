@@ -244,6 +244,11 @@ jobs:
         shell: bash
         run: tests/noarch-pin-matrix-arches.sh
 
+      - name: A quick release's noarch package that needs no architecture reaches every architecture view
+        if: matrix.kind == 'rpm'
+        shell: bash
+        run: tests/noarch-every-arch-view.sh
+
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
     runs-on: ubuntu-latest

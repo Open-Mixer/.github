@@ -111,8 +111,11 @@ core "$work/r4c" 0.32.4 aarch64
 CU=true publish "$work/r4c" > "$work/log" 2>&1 || { cat "$work/log"; fail "the catch-up of aarch64 was refused"; }
 grep -q '^dropped omx-clap-contract-0.32.4-1.fc45.noarch.rpm ' "$work/log" || { cat "$work/log"; fail "the catch-up did not drop the served contract"; }
 served aarch64/omx-clap-libs-0.32.4-1.fc45.aarch64.rpm || fail "the catch-up's aarch64 package is not placed"
-cmp -s "$tree/fedora/45/aarch64/omx-clap-contract-0.32.4-1.fc45.noarch.rpm" "$tree/fedora/45/x86_64/omx-clap-contract-0.32.4-1.fc45.noarch.rpm" ||
-    { cat "$work/log"; fail "aarch64 did not get the contract 0.32.4 the quick tree serves, byte for byte"; }
+# the quick release found no aarch64 omx-clap-libs to leave behind, so its contract went into fedora/45/noarch and the
+# aarch64 view has served it since (.github#267): the catch-up needs no copy of it
+served noarch/omx-clap-contract-0.32.4-1.fc45.noarch.rpm ||
+    { cat "$work/log"; fail "the quick release with no aarch64 omx-clap-libs to leave behind did not serve its contract from fedora/45/noarch"; }
+[ ! -e "$tree/fedora/45/aarch64/omx-clap-contract-0.32.4-1.fc45.noarch.rpm" ] || fail "the catch-up copied a contract fedora/45/noarch already serves aarch64"
 ok "the catch-up of the missing architecture publishes on the issue's channel"
 
 # ---- 5. a noarch nothing of its source pins exactly: a run of one architecture publishes it
