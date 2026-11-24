@@ -3,7 +3,7 @@
 name: clap-headers DEBs
 
 # Builds clap-headers from the pin of .github/pins.txt for every Debian release and publishes it into deb/ of the
-# Pages repository. libomx-clap-core-dev Depends on clap-headers, so the -dev package installs only where this
+# Pages repository. libomx-clap-dev Depends on clap-headers, so the -dev package installs only where this
 # package is served: Debian carries no CLAP header package. Released by a tag, once per pin: the package carries the
 # version of actions/deb-deps/clap-headers/changelog, and a published version is never rebuilt with new bytes, so
 # a moved pin needs a new changelog entry with it.
