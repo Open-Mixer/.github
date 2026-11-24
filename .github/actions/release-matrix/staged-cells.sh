@@ -10,30 +10,49 @@
 #                                              cell, or noarch / src of a quick Fedora release;
 #                                         deb  <dir>/<suite>/<name>_<version>_<arch>.deb: <suite> and <arch> a quick
 #                                              cell, or all of a quick Debian release
-#   staged-cells.sh arches deb            the quick set's Debian architectures, space separated (the staging skeleton)
+#   staged-cells.sh arches deb [<dir>]    the staging skeleton's Debian architectures, space separated: the quick set's,
+#                                         and with MATRIX_SET=full those of the arch-specific debs of <dir> too
+#
+# THE RUN'S SET (MATRIX_SET, which the publish step already has from matrix-set): empty or quick, the quick set above,
+# the default. full, a staged promotion candidate that asked for the full matrix (.github#273, the owner's build-once
+# ruling 2026-11-24): a package passes when its release is one the run built (RELEASES for rpm, SUITES for deb, space
+# separated, the preflight's releases), any architecture of it; a release the run did not build is still refused by
+# file and cell. Any other MATRIX_SET, or full with no releases named, is exit 2: a set that cannot be read never
+# widens the check.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
-usage='usage: staged-cells.sh check rpm|deb <dir> | arches deb'
+usage='usage: staged-cells.sh check rpm|deb <dir> | arches deb [<dir>]'
 cells() { # <kind>: "<release> <arch>" per quick cell
     awk -v k="$1" '$1 == k && NF == 3 {print $2, $3}' "$here/quick.txt"
 }
+run_set=${MATRIX_SET:-quick}
+case $run_set in quick | full) ;; *) echo "staged-cells: MATRIX_SET is '$run_set', not quick or full" >&2; exit 2 ;; esac
+run_releases() { # <kind>: the releases the run built, one per line
+    if [ "$1" = rpm ]; then printf '%s\n' "${RELEASES:-}"; else printf '%s\n' "${SUITES:-}"; fi | tr -s ' ,' '\n' | sed '/^$/d'
+}
 in_set() { # <kind> <release> <arch>
-    cells "$1" | grep -qxF -- "$2 $3"
+    if [ "$run_set" = full ]; then run_releases "$1" | grep -qxF -- "$2"; else cells "$1" | grep -qxF -- "$2 $3"; fi
 }
 release_in_set() { # <kind> <release>
-    cells "$1" | awk '{print $1}' | grep -qxF -- "$2"
+    if [ "$run_set" = full ]; then run_releases "$1" | grep -qxF -- "$2"; else cells "$1" | awk '{print $1}' | grep -qxF -- "$2"; fi
 }
 
 case ${1:-} in
 arches)
     [ "${2:-}" = deb ] || { echo "$usage" >&2; exit 2; }
-    cells deb | awk '{print $2}' | sort -u | tr '\n' ' ' | sed 's/ $//'
+    {
+        cells deb | awk '{print $2}'
+        if [ "$run_set" = full ] && [ -n "${3:-}" ]; then
+            find "$3" -name '*.deb' | sed 's/.*_//; s/\.deb$//' | grep -vx all || true
+        fi
+    } | sort -u | tr '\n' ' ' | sed 's/ $//'
     echo
     ;;
 check)
     kind=${2:-} dir=${3:-}
     case $kind in rpm | deb) ;; *) echo "$usage" >&2; exit 2 ;; esac
     [ -d "$dir" ] || { echo "staged-cells: no directory $dir" >&2; exit 2; }
+    [ "$run_set" = quick ] || [ -n "$(run_releases "$kind" | tr -d '\n')" ] || { echo "staged-cells: MATRIX_SET=full names no release the run built ($([ "$kind" = rpm ] && echo RELEASES || echo SUITES) is empty)" >&2; exit 2; }
     bad=()
     if [ "$kind" = rpm ]; then
         while IFS= read -r -d '' f; do
@@ -57,11 +76,12 @@ check)
             esac
         done < <(find "$dir" -name '*.deb' -print0 | sort -z)
     fi
+    if [ "$run_set" = full ]; then what="the full matrix it asked for, the releases it built ($(run_releases "$kind" | paste -sd, -))"; else what="the tested platforms, the quick set ($(cells "$kind" | paste -sd, -))"; fi
     if [ "${#bad[@]}" -gt 0 ]; then
-        echo "::error::a staged run publishes the tested platforms alone, the quick set ($(cells "$kind" | paste -sd, -)): refused ${bad[*]}" >&2
+        echo "::error::a staged run publishes $what alone: refused ${bad[*]}" >&2
         exit 1
     fi
-    echo "staged-cells: every $kind package of $dir is of a tested platform ($(cells "$kind" | paste -sd, -))"
+    echo "staged-cells: every $kind package of $dir is of $what"
     ;;
 *)
     echo "$usage" >&2

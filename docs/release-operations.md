@@ -169,8 +169,9 @@ written once there. So a staged run builds and publishes the quick set by defaul
 whose caller's matrix holds no quick cell, and takes the quick set whatever `OMX_RELEASE_MATRIX` says. **Superseded for
 promotion candidates (owner's build-once ruling, 2026-11-24; .github#273):** a staged run whose caller passes
 `matrix: full` explicitly builds the full matrix, so the promotion finds every release and architecture it promotes
-(the staging publish's per-cell check below does not take that set yet, #273's known gap); the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
-package of any other cell, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
+and its staging publish takes every architecture of the releases it built (`staged-cells.sh` reads the run's
+`MATRIX_SET`; the deb skeleton adds the architectures built); the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
+package of a cell outside the run's set, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
 and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
 ### Where it is

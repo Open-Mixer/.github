@@ -136,7 +136,8 @@ runs:
         fi
         find "$RPM_DIR" -name '*.rpm' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no RPM under $RPM_DIR"; exit 1; }
-        # the testing channel carries the tested platforms alone (owner ruling 2026-11-23): nothing of another cell is staged
+        # the testing channel carries the run's set alone: the tested platforms by default (owner ruling 2026-11-23), every
+        # architecture of the releases built for a promotion candidate told full (.github#273); nothing outside it is staged
         [ "$STAGING" != true ] || "$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" check rpm "$RPM_DIR"
 
     - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
