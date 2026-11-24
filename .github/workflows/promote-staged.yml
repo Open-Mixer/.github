@@ -11,7 +11,9 @@ name: Promote a staged version
 # channel root alone, creates the GitHub release of the tag from the promoted files. It never creates the tag. Nothing
 # is rebuilt and no package is signed: what the layers above were built against is what ships. Any run that is not a
 # tag push (a dispatch of the caller) is a dry run: it finds, checks and assembles from the version and commit inputs
-# and publishes nothing.
+# and publishes nothing. A tag push whose commit has no staged build of the version stands down, green: the repository's
+# release.yml publishes it, and build-rpm.yml and build-deb.yml stand down when it has one (one publisher per tag,
+# docs/release-operations.md, actions/staged-holds).
 #
 # It refuses, before anything is written:
 #   - a staged tree that lacks the build for any release or architecture of the matrix, or a source package, or that
@@ -138,6 +140,8 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       short: ${{ steps.commit.outputs.short }}
       commit: ${{ steps.commit.outputs.commit }}
+      # false when a tag push finds no staged build of its commit: release.yml publishes the tag, and this run stands down
+      promote: ${{ steps.holds.outputs.holds != 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -163,8 +167,27 @@ jobs:
             echo "version=$IN_VERSION" >> "$GITHUB_OUTPUT"; echo "commit=$IN_COMMIT" >> "$GITHUB_OUTPUT"
           fi
 
+      # one publisher per tag (docs/release-operations.md, .github#130): a tag push whose commit has no staged build of
+      # the version is the repository's release.yml's to publish; the promotion stands down, green, and says so
+      - id: holds
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+        uses: Open-Mixer/.github/.github/actions/staged-holds@openmixer-v1
+        with:
+          kind: ${{ inputs.rpm && 'rpm' || 'deb' }}
+          version: ${{ steps.ver.outputs.version }}
+          commit: ${{ steps.ver.outputs.commit }}
+          names: ${{ inputs.binary-names || inputs.package-name }}
+          channel: ${{ inputs.target-repo }}
+
+      - name: release.yml publishes this tag
+        if: steps.holds.outputs.holds == 'false'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          echo "::notice::no staged build of $VERSION of $GITHUB_SHA: release.yml publishes it; this promotion stands down"
+
       - id: rpm
-        if: inputs.rpm
+        if: inputs.rpm && steps.holds.outputs.holds != 'false'
         uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
         with:
           kind: rpm
@@ -180,7 +203,7 @@ jobs:
           vouch: 'false'
 
       - id: deb
-        if: inputs.deb
+        if: inputs.deb && steps.holds.outputs.holds != 'false'
         uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
         with:
           kind: deb
@@ -197,6 +220,7 @@ jobs:
 
       - id: commit
         name: The commit is on the default branch
+        if: steps.holds.outputs.holds != 'false'
         env:
           RPM_COMMIT: ${{ steps.rpm.outputs.commit }}
           DEB_COMMIT: ${{ steps.deb.outputs.commit }}
@@ -218,12 +242,26 @@ jobs:
           echo "promoting $VERSION of $full"
           { echo "short=$short"; echo "commit=$full"; } >> "$GITHUB_OUTPUT"
 
+  # One publisher per tag (.github#130): the publish jobs need this one, so a tag push whose commit has no staged build
+  # (find said promote false: release.yml publishes it) skips them; it publishes nothing itself.
+  promote-go:
+    name: The promotion publishes this tag
+    needs: find
+    if: ${{ needs.find.outputs.promote == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          VERSION: ${{ needs.find.outputs.version }}
+          COMMIT: ${{ needs.find.outputs.commit }}
+        run: echo "promoting $VERSION of $COMMIT"
+
   # The staged RPMs go to rpm/ of the channel through publish-rpms, as a release's do. They are already signed, so the
   # publish places them as they are and signs only the metadata; the tree is compared with the staged checksums before
   # the job ends.
   rpm:
     name: Promote the RPMs
-    needs: find
+    needs: [find, promote-go]
     outputs:
       pushed: ${{ steps.publish.outputs.commit }}
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
@@ -350,7 +388,7 @@ jobs:
 
   deb:
     name: Promote the DEBs
-    needs: [find, rpm]
+    needs: [find, promote-go, rpm]
     outputs:
       pushed: ${{ steps.publish.outputs.commit }}
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}

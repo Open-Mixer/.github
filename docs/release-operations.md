@@ -307,6 +307,26 @@ is pushed or released. A promoted package keeps the version string of its staged
 (`<version>-<release>.git<commit time>.<sha>`, `<version>+git<commit time>.<sha>`), because its bytes are the same. The staged copies stay under
 `staging/` until the purge. `tests/promote-staged.sh` and `tests/promote-publish.sh` hold the proofs.
 
+#### One publisher per tag
+
+**RULED (2026-11-24, .github#130):** the push of `v<version>` starts both a repository's `release.yml` (build-rpm.yml,
+build-deb.yml) and its `promote.yml` (promote-staged.yml), and exactly ONE of them publishes the version. Which one is
+decided by the same question asked at the start of each: does the staging tree of the channel hold a build of this
+version of the commit the tag is on (`actions/staged-holds`)?
+
+- It does, and the repository has a workflow that calls promote-staged.yml: the promotion publishes. build-rpm.yml and
+  build-deb.yml stand down before their release preflight: they plan no cell, build nothing, publish nothing, and say
+  `promote-staged.yml publishes it` in a notice. The run is green: standing down is the correct outcome, not a fault.
+- It does not: the release workflows publish, as a tag always did, and the promotion's find job stands down with a
+  notice (`no staged build of <version> of <commit>: release.yml publishes it`); its publish jobs do not run.
+- A repository with no promote caller always releases from its tag, staged or not: no workflow is left to publish.
+
+A staged build that the promotion then refuses (a tested cell missing, a signature it cannot vouch for) leaves the
+version unpublished and the promotion red, by name: the release workflows do not take over, because the layers above
+were built against the staged bytes. A dispatch is a dry run of either and decides nothing. A distinct tag pattern for
+promotion was rejected: the tag is the release in both paths, and a second pattern is a second thing to remember.
+`tests/one-publisher.sh` holds the proof that a tag starts exactly one publisher in every case.
+
 ### A build-dependency cycle: the bootstrap input
 
 Two libraries of a wave can need each other's packages to build (plugin-hostd-protocol needs omx-clap-contract, while

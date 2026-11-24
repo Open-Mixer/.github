@@ -219,7 +219,8 @@ jobs:
       releases: ${{ steps.matrix.outputs.releases }}
       cells: ${{ steps.matrix.outputs.cells }}
       first-arch: ${{ steps.matrix.outputs.first-arch }}
-      count: ${{ steps.matrix.outputs.count }}
+      # the promotion publishes this tag (staged-holds below): no cell is planned, so nothing builds or publishes
+      count: ${{ steps.promoted.outputs.holds == 'true' && '0' || steps.matrix.outputs.count }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
@@ -308,8 +309,31 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
+      # one publisher per tag (docs/release-operations.md, .github#130): when staging holds a build of this version of
+      # the tag's commit and the repository calls promote-staged.yml, the promotion publishes it and this run stands down
+      # before the preflight (whose already-served check would refuse the version the promotion just published)
+      - id: promoted
+        if: ${{ inputs.publish && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && inputs.source-ref == '' && !inputs.bootstrap-only }}
+        uses: Open-Mixer/.github/.github/actions/staged-holds@openmixer-v1
+        with:
+          kind: rpm
+          version: ${{ github.ref_name }}
+          commit: ${{ github.sha }}
+          names: ${{ inputs.binary-names || inputs.package-name }}
+          channel: ${{ inputs.target-repo }}
+          token: ${{ secrets.PAGES_TOKEN }}
+          promoter: .
+
+      - name: The promotion publishes this tag
+        if: steps.promoted.outputs.holds == 'true'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "::notice::staging holds the build of $TAG of $GITHUB_SHA and this repository calls promote-staged.yml: promote-staged.yml publishes it; this run builds and publishes nothing"
+
       # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
-      - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
+      - if: steps.promoted.outputs.holds != 'true'
+        uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
           publish: ${{ inputs.publish || inputs.staged }}
           require-tag: ${{ !inputs.staged }}
