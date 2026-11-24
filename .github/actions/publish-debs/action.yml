@@ -128,13 +128,14 @@ runs:
         if [ "$STAGING" = true ]; then
           { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
             echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"
-            echo "SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb)"; } >> "$GITHUB_ENV"
+            echo "SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb "$DEB_DIR")"; } >> "$GITHUB_ENV"
         else
           echo "DEB_TREE=deb" >> "$GITHUB_ENV"
         fi
         find "$DEB_DIR" -name '*.deb' | sort | tee /tmp/collected.txt
         test -s /tmp/collected.txt || { echo "::error::no DEB under $DEB_DIR"; exit 1; }
-        # the testing channel carries the tested platforms alone (owner ruling 2026-11-23): nothing of another cell is staged
+        # the testing channel carries the run's set alone: the tested platforms by default (owner ruling 2026-11-23), every
+        # architecture of the releases built for a promotion candidate told full (.github#273); nothing outside it is staged
         [ "$STAGING" != true ] || "$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" check deb "$DEB_DIR"
 
     - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1

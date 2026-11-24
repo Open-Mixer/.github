@@ -165,10 +165,13 @@ tags. The staging channel is per wave and is purged after the pass.
 TESTED platforms — Fedora 45 x86_64 (the stage box's platform) and Zynthian (Debian trixie arm64) — as soon as their
 tests pass; every other cell of the matrix goes to the real channel only when all tests pass (the tag release)." The
 tested platforms are the quick set (`.github/actions/release-matrix/quick.txt`, "The quick set and the full matrix"),
-written once there. So a staged run builds and publishes the quick set and nothing else: `matrix.sh` refuses a staged
-run told `matrix: full`, and one whose caller's matrix holds no quick cell, and takes the quick set whatever
-`OMX_RELEASE_MATRIX` says; the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
-package of any other cell, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
+written once there. So a staged run builds and publishes the quick set by default: `matrix.sh` refuses a staged run
+whose caller's matrix holds no quick cell, and takes the quick set whatever `OMX_RELEASE_MATRIX` says. **Superseded for
+promotion candidates (owner's build-once ruling, 2026-11-24; .github#273):** a staged run whose caller passes
+`matrix: full` explicitly builds the full matrix, so the promotion finds every release and architecture it promotes
+and its staging publish takes every architecture of the releases it built (`staged-cells.sh` reads the run's
+`MATRIX_SET`; the deb skeleton adds the architectures built); the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
+package of a cell outside the run's set, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
 and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
 ### Where it is

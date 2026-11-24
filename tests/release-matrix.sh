@@ -11,7 +11,8 @@
 #   - which jobs each run renders, by name, with matrix.sh run as the runner runs it: a caller that passes nothing
 #     builds the full matrix on a tag and the quick set on a tag while OMX_RELEASE_MATRIX is quick; a
 #     workflow_dispatch builds the quick set, and the full matrix when the variable or the input says full; a staged
-#     run builds the quick set whatever the variable says, and is refused told full or with no quick cell; a pull
+#     run builds the quick set whatever the variable says, the full matrix only when its matrix input says full (a
+#     promotion candidate, #273), and is refused with no quick cell; a pull
 #     request builds the full matrix whatever the variable says; a caller built for x86_64 alone has no quick deb
 #     cell and builds its own full deb matrix;
 #   - a matrix or a variable that is neither quick nor full fails the first job;
@@ -159,6 +160,9 @@ cases = [
     # the testing channel carries the tested platforms alone (owner ruling 2026-11-23, .github#233): the variable never widens a staged run
     ("a staged run with OMX_RELEASE_MATRIX=full", {"staged": True}, "workflow_dispatch", "branch", "full", "quick", QUICK),
     ("a staged run with matrix: quick", {"staged": True, "matrix": "quick"}, "workflow_dispatch", "branch", "full", "quick", QUICK),
+    # a promotion candidate (#273, owner's build-once ruling 2026-11-24): told full explicitly, a staged run builds every cell
+    ("a staged promotion candidate, matrix: full", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", None, "full", FULL),
+    ("a staged promotion candidate, matrix: full, while the wave is open", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", "quick", "full", FULL),
     ("a workflow_dispatch dry run", {}, "workflow_dispatch", "branch", None, "quick", QUICK),
     ("a workflow_dispatch dry run with matrix: full", {"matrix": "full"}, "workflow_dispatch", "branch", None, "full", FULL),
     ("a pull request", {}, "pull_request", "branch", None, "full", FULL),
@@ -227,11 +231,9 @@ for what, inputs, var, word in (("matrix: fast", {"matrix": "fast"}, None, "matr
         assert got is None and word in log, f"{kind}: {what} is not refused by name: {got} {log}"
 print("ok   a matrix or a variable that is neither quick nor full fails the first job, by name")
 
-# a staged run never leaves the tested platforms (owner ruling 2026-11-23, .github#233): told full, or given a caller
-# whose releases hold no quick cell, its first job fails by name instead of staging another cell
+# a staged run never leaves the tested platforms unless its matrix input says full (owner ruling 2026-11-23, .github#233;
+# #273): given a caller whose releases hold no quick cell, its first job fails by name instead of staging another cell
 for what, kind, inputs, var, word in (
-        ("a staged run with matrix: full", "rpm", {"staged": True, "matrix": "full"}, None, "a staged run builds the tested platforms alone"),
-        ("a staged run with matrix: full", "deb", {"staged": True, "matrix": "full"}, "quick", "a staged run builds the tested platforms alone"),
         ("a staged run of a caller with no quick cell (fc44 alone)", "rpm", {"staged": True, "fedora-versions": '["44"]'}, None, "no tested platform"),
         ("a staged run of a caller with no quick cell (fc44 alone), OMX_RELEASE_MATRIX=full", "rpm", {"staged": True, "fedora-versions": '["44"]'}, "full", "no tested platform")):
     got, log = run(kind, inputs, "workflow_dispatch", "branch", var)
@@ -239,7 +241,26 @@ for what, kind, inputs, var, word in (
 # the dry run that is not staged keeps its fallback: no quick cell builds the caller's full matrix
 got, log = run("rpm", {"fedora-versions": '["44"]'}, "workflow_dispatch", "branch", None)
 assert got is not None and got.set == "full", f"a dry run with no quick cell: {got} {log}"
-print("ok   a staged run is the tested platforms or nothing: matrix: full and a caller with no quick cell are refused by name")
+print("ok   a staged run is the tested platforms or nothing unless told full: a caller with no quick cell is refused by name")
+
+# SABOTAGE (#273), on a copy of the action: (1) the old refusal of matrix: full on a staged run put back: the promotion
+# candidate's first job fails; (2) a staged run with no matrix input made full: the staged default is no longer quick
+import shutil
+real_act = act
+for label, old, new, inputs, want in (
+        ("the staged full refusal put back", 'staged=${STAGED:-}\n',
+         'staged=${STAGED:-}\nif [ "$staged" = true ] && [ "${MATRIX:-}" = full ]; then echo "::error::refused" >&2; exit 2; fi\n',
+         {"staged": True, "matrix": "full"}, ("full", FULL)),
+        ("a staged run made full by default", 'set=quick source="a staged run', 'set=full source="a staged run',
+         {"staged": True}, ("quick", QUICK))):
+    sab = f"{tmp}/sab-act"; shutil.rmtree(sab, ignore_errors=True); shutil.copytree(real_act, sab)
+    src = open(f"{sab}/matrix.sh").read(); assert src.count(old) == 1, f"sabotage setup: {label}"
+    open(f"{sab}/matrix.sh", "w").write(src.replace(old, new, 1))
+    act = sab
+    got, log = run("rpm", inputs, "workflow_dispatch", "branch", None)
+    act = real_act
+    assert got is None or (got.set, got.jobs) != (want[0], want[1]["rpm"]), f"sabotage ({label}) went unseen: {got} {log}"
+print("ok   sabotage: the staged full refusal put back, and a staged default made full, each break their arm")
 
 # ---- the callers in this repository
 lib = yaml.safe_load(open(f"{here}/.github/workflows/release-c-lib.yml"))
