@@ -50,6 +50,10 @@ skip_if_never_published() {
     shift 2
     for url in "$@"; do served "$url" || absent+=("$url"); done
     [ "${#absent[@]}" -gt 0 ] || return 0
+    # a pull request into devel builds against staging and nothing else (devel -> staging -> prod, .github#270)
+    if [ "${STAGING_FOR_DEVEL:-false}" = true ]; then
+        die "a pull request into devel builds against the staging channel, and $tree serves no staging repository (${absent[*]} answered 404): it never falls back to the real channel"
+    fi
     if [ "${STAGING_BOOTSTRAP:-false}" != true ]; then
         die "${absent[*]} answered 404: the staging channel $tree serves no index for this machine. A staged build never falls back to the real channel; only the first layer of a wave, before anything was staged, passes staging-bootstrap: true"
     fi

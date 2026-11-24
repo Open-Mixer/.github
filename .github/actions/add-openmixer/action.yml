@@ -15,6 +15,10 @@ description: Add the OpenMixer repository to a Fedora or Debian container by ins
 # index that answers 404 fails the step, naming the URL. Only with staging-bootstrap true is a staging channel never
 # published (its index and its key both 404) skipped, with a notice: the first layer of a wave, whose build job comes
 # before anything was staged.
+# A PULL REQUEST INTO DEVEL adds the OpenMixer staging channel whatever staging says, and strictly: devel -> staging ->
+# prod, a lower level merged into devel is staged (its release.yml dispatched staged from devel), never in the real
+# channel, so such a run builds and tests against staging, and a staging channel absent or purged REFUSES it by name
+# (staging-bootstrap never applies to it): a green that never saw staging is a false signal (.github#270).
 
 inputs:
   base-url:
@@ -71,12 +75,14 @@ runs:
           apt-get update -qq
         fi
 
-    - if: inputs.staging == 'true'
+    - if: inputs.staging == 'true' || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release')
       shell: bash
       env:
         BASE_URL: ${{ inputs.base-url }}
         SUITE: ${{ inputs.suite }}
-        STAGING_BOOTSTRAP: ${{ inputs.staging-bootstrap }}
+        # a pull request into devel never skips an absent staging channel
+        STAGING_FOR_DEVEL: ${{ startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release' }}
+        STAGING_BOOTSTRAP: ${{ inputs.staging-bootstrap == 'true' && !(startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') }}
       run: |
         set -euo pipefail
         "$GITHUB_ACTION_PATH/add-staging.sh"
