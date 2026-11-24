@@ -6,8 +6,10 @@
 # channel, so the next level's pull request CI must see staging or it builds against the last release instead (the
 # blocker: omx-clap-core's devel pull request and a release-unit dry run installed omx-contract 3.19.1/3.21.0 from the
 # channel, not the wave's build). build-rpm.yml and build-deb.yml: the build job's add-openmixer step, its condition and
-# its staging and staging-bootstrap inputs, evaluated for each kind of run. Nothing else changes: a pull request into
-# any other branch, a tag and a plain dispatch see the real channel only, as before.
+# its staging and staging-bootstrap inputs, evaluated for each kind of run. A staging channel absent or purged REFUSES
+# a pull request into devel by name (add-staging.sh, strict, names the URL that answered 404): staging-bootstrap is
+# never true for one, not even when the caller passes it, so it never builds against the real channel silently. Nothing
+# else changes: a pull request into any other branch, a tag and a plain dispatch see the real channel only, as before.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 python3 -I - "$here/../.github/workflows/build-rpm.yml" "$here/../.github/workflows/build-deb.yml" <<'PY'
@@ -58,8 +60,11 @@ for wf in sys.argv[1:]:
                    "inputs.base-url": "", "inputs.release-package": "openmixer-release"}
     cases = [
         # name, event, base_ref, inputs, want add, want staging, want staging-bootstrap
-        ("a pull request into devel", "pull_request", "devel", {}, True, True, True),
-        ("a pull request into devel with channel-deps", "pull_request", "devel", {"inputs.channel-deps": True}, True, True, True),
+        # staging-bootstrap False: an absent or purged staging channel refuses the run by name, never a silent fallback
+        ("a pull request into devel", "pull_request", "devel", {}, True, True, False),
+        ("a pull request into devel with channel-deps", "pull_request", "devel", {"inputs.channel-deps": True}, True, True, False),
+        ("a pull request into devel whose caller passes staging-bootstrap", "pull_request", "devel",
+         {"inputs.staging-bootstrap": True}, True, True, False),
         ("a pull request into main with channel-deps", "pull_request", "main", {"inputs.channel-deps": True}, True, False, False),
         ("a pull request into main", "pull_request", "main", {}, False, None, None),
         ("a push of a tag", "push", "", {"inputs.channel-deps": True}, True, False, False),
