@@ -61,7 +61,7 @@ outputs:
     description: "'quick' or 'full'"
     value: ${{ steps.matrix.outputs.set }}
   rpm:
-    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45", "runner": "ubuntu-latest"}'
+    description: 'the rpm cells, a JSON array: {"fedora": "45", "arch": "x86_64", "image": "fedora:45@sha256:<digest>", "runner": "ubuntu-latest"}; each image pinned by its images.txt digest'
     value: ${{ steps.matrix.outputs.rpm }}
   rpm-count:
     description: how many rpm cells; 0 skips the job

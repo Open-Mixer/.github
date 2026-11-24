@@ -1,0 +1,9 @@
+# The container image of every check cell, pinned by digest (.github#248): the one place a cell's image is declared.
+# check-matrix.sh writes each cell's image as <image>@<digest> from this list and refuses a cell whose image has no
+# line here, so a caller's container.image: ${{ matrix.cell.image }} follows a move here without a change of its own.
+# One image per line: the image as check-matrix names it, then the digest of its multi-architecture index
+# (skopeo inspect --raw docker://docker.io/library/<image> | sha256sum). Resolved 2026-11-24. A retired release
+# (bookworm, owner ruling 2026-11-16) has no line, so a cell of it is refused here too.
+fedora:44 sha256:15da97ed9aa94dd3d92c3925eb89520f6c80e07ea7ee24cba848d1f8b6912b3e
+fedora:45 sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
+debian:trixie sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6

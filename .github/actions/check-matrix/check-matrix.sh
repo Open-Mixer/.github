@@ -37,6 +37,13 @@ set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 matrix_sh=$here/../release-matrix/matrix.sh
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# the digest of every cell image, declared once (images.txt, .github#248)
+declare -A digest=()
+while read -r img d _; do
+    [ -n "$img" ] && [ "${img#\#}" = "$img" ] || continue
+    [[ $d =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::images.txt: $img has '$d', not sha256:<64 hex>" >&2; exit 2; }
+    digest[$img]=$d
+done < "$here/images.txt"
 
 for r in "${ARM_RUNNER:?}" "${X86_RUNNER:?}"; do
     [[ $r =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::runner '$r' is not a runner label" >&2; exit 2; }
@@ -68,6 +75,15 @@ with_runner() { # the cells with a runner each: ARM_RUNNER for a cell of an ARM_
     done
     sed -E "s/(\"image\":\"[^\"]+\")\}/\1,\"runner\":\"$X86_RUNNER\"}/g; s/(\"image\":\"[^\"]+\"),\"arm\":1\}/\1,\"runner\":\"$ARM_RUNNER\"}/g" <<< "$cells"
 }
+pinned() { # the cells with each image as <image>@<digest>; an image images.txt has no digest for is refused
+    local cells=$1 img
+    while IFS= read -r img; do
+        [ -n "$img" ] || continue
+        [ -n "${digest[$img]:-}" ] || { echo "::error::the cell image $img has no digest in check-matrix/images.txt: add its line" >&2; exit 2; }
+        cells=${cells//\"image\":\"$img\"/\"image\":\"$img@${digest[$img]}\"}
+    done < <(grep -oE '"image":"[^"@]+"' <<< "$cells" | sed 's/^"image":"//; s/"$//' | sort -u)
+    printf '%s' "$cells"
+}
 shown() { # <kind> <cells json>: the cells as a notice shows them, fc<release> <arch> or <suite> <arch>
     grep -oE '"(fedora|suite)":"[^"]+","arch":"[^"]+"' <<< "$2" |
         sed -E 's/"fedora":"([^"]+)","arch":"([^"]+)"/fc\1 \2/; s/"suite":"([^"]+)","arch":"([^"]+)"/\1 \2/' | paste -sd, - | sed 's/,/, /g' || true
@@ -88,7 +104,7 @@ for kind in rpm deb; do
     else
         got=$whole
     fi
-    json[$kind]=$(with_runner "$(with_image "$(field cells "$got")")")
+    json[$kind]=$(pinned "$(with_runner "$(with_image "$(field cells "$got")")")")
     count[$kind]=$(field count "$got")
     n=$((n + count[$kind]))
     inner=${json[$kind]#[} inner=${inner%]}
