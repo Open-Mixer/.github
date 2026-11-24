@@ -3,7 +3,7 @@
 name: public-sources-check
 # The checks every OpenMixer repository runs on what it publishes, from this repository and nowhere else:
 #   - its pull request's own commits carry no attribution line (commit-message-check);
-#   - (commit-identity: true) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
+#   - (unless commit-identity: false) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
 #     by GitHub (commit-identity-check);
 #   - (fedora-workflows: true) no workflow names a Fedora release outside allowed-fedora (fedora-workflow-check);
 #   - no tracked file points into a private repository (private-refs-check); like the commit message check and the
@@ -18,16 +18,16 @@ name: public-sources-check
 #     public-sources:
 #       uses: Open-Mixer/.github/.github/workflows/public-sources-check.yml@openmixer-v1
 #       with:
-#         commit-identity: true      # optional, off by default; author-email / committer-email override the house pair
+#         commit-identity: false     # optional, ON by default (.github#190); author-email / committer-email override the house pair
 #         fedora-workflows: true     # optional, off by default; allowed-fedora (default "45") is the list of releases a workflow may name
 #         runner: arc-freemixer      # optional: a private repository's own runners (default ubuntu-latest)
 on:
   workflow_call:
     inputs:
       commit-identity:
-        description: run commit-identity-check on pull requests (every commit authored and committed by the house emails and verified). Off by default so moving openmixer-v1 turns no caller red; a repository whose open pull requests are clean passes true
+        description: run commit-identity-check on pull requests (every commit authored and committed by the house emails and verified). On everywhere (.github#190); false only for a repository whose history is not the house's to sign
         type: boolean
-        default: false
+        default: true
       author-email:
         description: the author email commit-identity-check expects; empty takes the action's default
         type: string
