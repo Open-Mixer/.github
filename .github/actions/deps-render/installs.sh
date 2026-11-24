@@ -25,7 +25,7 @@ install_files() { ls "$1"/.github/workflows/*.yml "$1"/.github/workflows/*.yaml 
   "$1"/.github/actions/*/action.yaml 2>/dev/null || true; }
 
 # install_names <file>: NR<TAB>name for every package an install line names. A shell line continues on the next when it
-# ends in a backslash; a comment line is not read; quotes and $(...) are one word; a word after `install` is a package
+# ends in a backslash, a folded YAML scalar (>, >-) on every line it folds; a comment line is not read; quotes and $(...) are one word; a word after `install` is a package
 # unless it is an option (and -o, -t, -c and -x take the next word as their value).
 install_names() { awk '
   function flush(   i, c, n, w, q, d, t, nt, s, mgr, name) {
@@ -60,6 +60,16 @@ install_names() { awk '
     }
     logical = ""
   }
+  # a folded YAML scalar (run: >-) is one logical line: each line at least as indented as its first joins it
+  fold {
+    if ($0 ~ /^[ \t]*$/) next
+    match($0, /^[ \t]*/)
+    if (find < 0) find = RLENGTH
+    if (RLENGTH >= find) { if (logical == "") start = NR; logical = logical " " $0; next }
+    fold = 0
+    if (logical ~ /(dnf5?|yum|apt-get|apt)[ \t].*install/) flush(); else logical = ""
+  }
+  /:[ \t]*>[-+]?[ \t]*$/ { fold = 1; find = -1; logical = ""; next }
   /^[ \t]*#/ { if (logical == "") next }
   {
     line = $0
@@ -179,6 +189,12 @@ EOF
   ln=$(( $(wc -l < "$S/i/.github/workflows/ci.yml") - 1 )); out="$(chk)"
   if grep -qF ".github/workflows/ci.yml:$ln: omx-clap-core-devel:" <<<"$out"; then echo "installs${nodeps:+ ($nodeps)}: a continued line: red, by its first line"
   else echo "installs${nodeps:+ ($nodeps)}: a continued line: STAYED GREEN or not by name"; echo "$out"; fail=1; fi
+  # a folded scalar (run: >-) is one command: a package on its third line is read, and named by the scalar's first line
+  mki; printf '      - run: >-\n          dnf install -y\n          gcc omx-contract-devel\n          plugin-qualification-db-write\n      - run: true\n' >> "$S/i/.github/workflows/ci.yml"
+  ln=$(( $(wc -l < "$S/i/.github/workflows/ci.yml") - 3 )); out="$(chk)"
+  if grep -qF ".github/workflows/ci.yml:$ln: plugin-qualification-db-write:" <<<"$out" && ! grep -q 'omx-contract-devel' <<<"$out"; then
+    echo "installs${nodeps:+ ($nodeps)}: a folded scalar: red, by its first line"
+  else echo "installs${nodeps:+ ($nodeps)}: a folded scalar: STAYED GREEN or not by name"; echo "$out"; fail=1; fi
   # packaging/ci-only.txt: a row with its reason makes the install green; a row with no reason, a row the packaging
   # declares already and a row no install line names are red
   mki; printf '      - run: dnf install -y omx-plugins-clap\n' >> "$S/i/.github/workflows/ci.yml"
