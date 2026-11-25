@@ -345,6 +345,8 @@ jobs:
           exempt: ${{ inputs.bump-exempt }}
           target: ${{ inputs.target-repo }}
           token: ${{ github.token }}
+          # the caller's workflow file: its bump-exempt at the merge base is the value the pull request is judged by
+          caller-workflow: ${{ github.workflow_ref }}
 
       # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
       - id: preflight

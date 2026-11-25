@@ -338,7 +338,8 @@ bumprun() { # bumprun <kind> <version> [extra exempt globs] -> status; log in $t
     [ -z "${3:-}" ] && exempt=$(python3 -I -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print((d.get("on") or d[True])["workflow_call"]["inputs"]["bump-exempt"]["default"])' \
         "$root/.github/workflows/build-$1.yml") || exempt=${3:-}
     python3 -I "$step" "$root" "$root/.github/workflows/build-$1.yml" preflight uses=devel-bump-check "$t/bump-$1.sh" \
-        kind="$1" version="$2" name=omx-a base="$base" packages=omx-a releases= exempt="$exempt" target=Open-Mixer/open-mixer.github.io token=gh-run-token
+        kind="$1" version="$2" name=omx-a base="${PRBASE:-$base}" packages=omx-a releases= exempt="$exempt" target=Open-Mixer/open-mixer.github.io \
+        token=gh-run-token caller-workflow="${CALLER:-}"
     (cd "$g" && RECORD=$base STATE=$t/state PATH=$t/pbin:$PATH bash "$t/bump-$1.sh") > "$t/bump.out" 2>&1
 }
 # R2: the default exempt list is .github/** alone; README.md and docs/ ship in packages (%doc README.md), so they
@@ -369,6 +370,28 @@ bumprun deb 1.2.0 && { cat "$t/bump.out"; fail "build-deb.yml: a pull request in
 grep -q 'deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb' "$t/bump.out" || { cat "$t/bump.out"; fail "build-deb.yml: the bump refusal does not name the served deb"; }
 grep -qF '::error::src/a.c changes the package in this pull request (merge-base..head), and the served v1.2.0 has no build record' "$t/bump.out" || { cat "$t/bump.out"; fail "build-deb.yml: the red without a record does not name src/a.c"; }
 bumprun rpm 1.3.0 || { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel carrying a new version was refused"; }
+# G1: a pull request is judged by the bump-exempt its caller workflow has at the merge base, not by a value it changes
+# itself. The caller is .github/workflows/release.yml (absent at the base: the default, empty).
+caller=Open-Mixer/omx-a/.github/workflows/release.yml@refs/pull/7/merge
+relyml() { mkdir -p "$g/.github/workflows"; printf 'on: {push: {branches: [devel]}, pull_request: {}}\njobs:\n  rpm:\n    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1\n    with:\n      package-name: omx-a\n      bump-exempt: %s\n' "'$1'" > "$g/.github/workflows/release.yml"; }
+gitc checkout -q -b widen "$base"; relyml 'tools/**'; mkdir -p "$g/tools"; echo t > "$g/tools/x.py"; gitc add -A; gitc commit -q -m widen-and-change
+CALLER=$caller bumprun rpm 1.2.0 'tools/**' && { cat "$t/bump.out"; fail "a pull request widening bump-exempt to cover its own tools/x.py passed"; }
+grep -qF "bump-exempt is '' at the merge base and 'tools/**' at the head" "$t/bump.out" || { cat "$t/bump.out"; fail "the refusal does not show both bump-exempt values"; }
+grep -qF "::error::tools/x.py changes the package since $base" "$t/bump.out" || { cat "$t/bump.out"; fail "the refusal does not name tools/x.py under the base value"; }
+gitc checkout -q -b widen-only "$base"; relyml 'tools/**'; gitc add -A; gitc commit -q -m widen-only; X=$(gitc rev-parse HEAD)
+CALLER=$caller bumprun rpm 1.2.0 'tools/**' || { cat "$t/bump.out"; fail "a pull request that only widens bump-exempt (.github/ alone) was refused"; }
+grep -qF "bump-exempt is '' at the merge base and 'tools/**' at the head" "$t/bump.out" || { cat "$t/bump.out"; fail "the pass of a widening pull request does not show both values"; }
+gitc checkout -q -b after-widen "$X"; mkdir -p "$g/tools"; echo t > "$g/tools/x.py"; gitc add -A; gitc commit -q -m tools-after
+PRBASE=$X CALLER=$caller bumprun rpm 1.2.0 'tools/**' || { cat "$t/bump.out"; fail "once the wider bump-exempt is on the base, a pull request changing tools/ was refused"; }
+grep -q 'at the merge base and' "$t/bump.out" && { cat "$t/bump.out"; fail "equal bump-exempt values were reported as different"; }
+python3 -I - "$root" <<'PY2' || fail "a workflow's bump check is not told the caller's workflow file"
+import sys, yaml
+for kind in ("rpm", "deb"):
+    st = [x for x in yaml.safe_load(open(f"{sys.argv[1]}/.github/workflows/build-{kind}.yml"))["jobs"]["preflight"]["steps"]
+          if "/actions/devel-bump-check@" in str(x.get("uses", ""))][0]
+    assert st["with"].get("caller-workflow") == "${{ github.workflow_ref }}", kind
+PY2
+echo "a pull request is judged by the bump-exempt at its merge base; widening it alone passes, and the wider value holds once on the base: ok"
 echo "a pull request into devel changing a package at a published version is refused by name; .github/ alone, a repository's own exempt paths and a bump pass: ok"
 
 # ---- 9. a real promotion is tied to the devel commit that built it (F6c). The staging publish of a merge to devel records
