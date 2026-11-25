@@ -84,6 +84,18 @@ CATCH_UP=true run true tag v1.2.3 foo true rpm 44 && fail "catch-up with republi
 grep -q 'catch-up and republish' "$tmp/out" || { cat "$tmp/out"; fail "catch-up with republish is not refused by name"; }
 : > "$tmp/asked"; CATCH_UP=true run false tag v1.2.3 foo || fail "a dry-run catch-up was refused"
 ! grep -q git/trees "$tmp/asked" || fail "a dry-run catch-up read the tree"
+# a merge to devel (devel-version, require-tag false): its check runs first and a catch-up never skips it (F6a). The
+# tree's foo 1.2.3 is served; a merge to devel carrying it with catch-up set must not take the catch-up branch.
+rundevel() { # rundevel <devel version> [catch-up]
+  PATH=$tmp/bin:$PATH PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
+    REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=44 CATCH_UP=${2:-false} \
+    DEVEL_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1
+}
+rundevel 1.2.3 true && { cat "$tmp/out"; fail "a merge to devel with catch-up set skipped its version check"; }
+grep -q 'a merge to devel never catches up' "$tmp/out" || { cat "$tmp/out"; fail "catch-up on a merge to devel is not refused by name"; }
+rundevel 1.2.9 true && { cat "$tmp/out"; fail "a merge to devel of a new version passed with catch-up set"; }
+grep -q 'catch-up of' "$tmp/out" && { cat "$tmp/out"; fail "a merge to devel took the catch-up branch"; }
+echo "ok   a merge to devel never takes catch-up, and its version check runs first"
 # sabotage: already-served.sh without the per-release filter refuses the fc45 release again
 mkdir -p "$tmp/sab"
 sed '/^  if \[ -n "\${RELEASES:-}" \]; then$/,/^  fi$/d' "$act/already-served.sh" > "$tmp/sab/already-served.sh"
@@ -92,4 +104,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 26 arms"
+echo "ok   release-preflight-served: 28 arms"

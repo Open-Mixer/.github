@@ -120,16 +120,9 @@ runs:
 
         # Moving old tags (a history rewrite) re-runs their release workflows. A version the channel already serves
         # is never published again: the same NEVRA / deb version would be refused by dnf and apt, or worse, replaced.
-        if [ "${CATCH_UP:-false}" = true ]; then
-          echo "::notice::catch-up of $TAG: the version is served, so the already-served check does not run; the plan holds only the cells the channel lacks, and the publish refuses to write any file the channel holds"
-        elif [ "$REQUIRE_TAG" = true ] && [ -n "$PACKAGES" ] && [ "$REPUBLISH" != true ]; then
-          code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/tree.json -w '%{http_code}' \
-            -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")
-          [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether $TAG is already served"; exit 1; }
-          [ "$(jq -r '.truncated' /tmp/tree.json)" != true ] || echo "::warning::the tree of $TARGET is truncated; the already-served check is partial"
-          jq -r '.tree[].path' /tmp/tree.json | "$GITHUB_ACTION_PATH/already-served.sh" "$TAG" $PACKAGES
-        elif [ -n "${DEVEL_VERSION:-}" ]; then
+        # a merge to devel is judged first: no other input (catch-up, a tag's check) ever stands in for its version check
+        if [ -n "${DEVEL_VERSION:-}" ]; then
+          [ "${CATCH_UP:-false}" != true ] || { echo "::error::a merge to devel never catches up: it builds v$DEVEL_VERSION once, every cell, or not at all"; exit 1; }
           [ -n "$PACKAGES" ] || { echo "::error::a merge to devel names no packages: cannot tell whether v$DEVEL_VERSION is published"; exit 1; }
           [ "$REPUBLISH" != true ] || { echo "::error::a merge to devel never republishes: a published version is never built again"; exit 1; }
           code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/tree.json -w '%{http_code}' \
@@ -138,4 +131,13 @@ runs:
           [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether v$DEVEL_VERSION is published"; exit 1; }
           [ "$(jq -r '.truncated' /tmp/tree.json)" != true ] || { echo "::error::the tree of $TARGET is truncated: a merge to devel cannot prove v$DEVEL_VERSION unpublished"; exit 1; }
           jq -r '.tree[].path' /tmp/tree.json | STAGING=true "$GITHUB_ACTION_PATH/already-served.sh" "v$DEVEL_VERSION" $PACKAGES
+        elif [ "${CATCH_UP:-false}" = true ]; then
+          echo "::notice::catch-up of $TAG: the version is served, so the already-served check does not run; the plan holds only the cells the channel lacks, and the publish refuses to write any file the channel holds"
+        elif [ "$REQUIRE_TAG" = true ] && [ -n "$PACKAGES" ] && [ "$REPUBLISH" != true ]; then
+          code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/tree.json -w '%{http_code}' \
+            -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")
+          [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether $TAG is already served"; exit 1; }
+          [ "$(jq -r '.truncated' /tmp/tree.json)" != true ] || echo "::warning::the tree of $TARGET is truncated; the already-served check is partial"
+          jq -r '.tree[].path' /tmp/tree.json | "$GITHUB_ACTION_PATH/already-served.sh" "$TAG" $PACKAGES
         fi
