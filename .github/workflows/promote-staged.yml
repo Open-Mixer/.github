@@ -25,6 +25,11 @@ name: Promote a staged version
 # The promoted packages keep the version string of the staged build (<release>.git<commit time>.<sha> and +git<commit time>.<sha>): the bytes
 # are the same, so the name is. The staged files stay under staging/ until the wave's purge (purge-staging.yml).
 #
+# The REAL package a merge to devel staged (<version>-<release>, <version>[-<revision>]: .github#289) names no commit. The
+# merge recorded the commit that built it (staging/<kind>/built/<name>/<version>.commit), and it is promoted only from
+# that commit or one descending from it that carries the same version; the install checks then require that real
+# version (docs/release-operations.md, "A merge to devel publishes the real package to staging").
+#
 # The caller, in the repository that owns the version:
 #
 #   on:
@@ -68,6 +73,10 @@ on:
         type: string
         default: ''
         description: 'A dry run only: the commit of the staged build, short or full. A tag push uses the commit the tag is on'
+      bump-exempt:
+        type: string
+        default: ''
+        description: 'Globs, space separated, added to the paths that change no package (.github/** alone by default, package-paths.sh), as the build workflows take them: a real build is promoted only from a commit with no other change since the devel commit that built it'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -138,6 +147,9 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       short: ${{ steps.commit.outputs.short }}
       commit: ${{ steps.commit.outputs.commit }}
+      # 'true' when the promoted build is the real package a merge to devel staged (collect.py: commit real), so the
+      # install checks take <version>-<release> with no .git and the deb <version> with no +git (.github#289)
+      real: ${{ steps.commit.outputs.real }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -163,6 +175,108 @@ jobs:
             echo "version=$IN_VERSION" >> "$GITHUB_OUTPUT"; echo "commit=$IN_COMMIT" >> "$GITHUB_OUTPUT"
           fi
 
+      # THE REAL PACKAGE IS PROMOTED ONLY FROM THE DEVEL COMMIT THAT BUILT IT (.github#289). Its name holds no commit, so
+      # the staging publish of the merge to devel recorded it: staging/<kind>/built/<name>/<version>.commit
+      # (publish-rpms/record-built.sh). With a record, every kind this run promotes must hold one, all naming the same
+      # commit, and the promotion's commit (the tag's, or the dry run's input) is read out for the version check below.
+      # Without one, the staged build is a snapshot named by its commit, as before.
+      - id: built
+        name: Read the commit that built the real package
+        env:
+          NAME: ${{ inputs.package-name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          RUN_COMMIT: ${{ steps.ver.outputs.commit }}
+          RPM: ${{ inputs.rpm }}
+          DEB: ${{ inputs.deb }}
+          CHANNEL: ${{ inputs.target-repo }}
+          DIR: ${{ runner.temp }}/channel
+        run: |
+          set -euo pipefail
+          [ -d "$DIR/.git" ] || git clone --quiet --depth 1 "https://github.com/$CHANNEL" "$DIR"
+          built='' have='' lack=''
+          for kind in rpm deb; do
+            on=$RPM; [ "$kind" = rpm ] || on=$DEB
+            [ "$on" = true ] || continue
+            rec=staging/$kind/built/$NAME/$VERSION.commit
+            if [ -f "$DIR/$rec" ]; then
+              c=$(cat "$DIR/$rec")
+              [[ $c =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$c', not a full commit"; exit 1; }
+              [ -z "$built" ] || [ "$built" = "$c" ] || { echo "::error::the real $NAME $VERSION was built by $built for one kind and by $c for the other: one version, one build"; exit 1; }
+              built=$c have="$have $kind"
+            else
+              lack="$lack $kind"
+            fi
+          done
+          [ -n "$built" ] || { echo "no record of a real build of $NAME $VERSION: a snapshot is promoted by its commit"; exit 0; }
+          for kind in $lack; do
+            echo "::error::staging/$kind holds no record of the commit that built $NAME $VERSION, and staging/${have# } does ($built): the real build of both kinds comes from one merge to devel"
+          done
+          [ -z "$lack" ] || exit 1
+          [ -n "$RUN_COMMIT" ] || { echo "::error::the real $NAME $VERSION was built by $built, and this run names no commit to promote"; exit 1; }
+          full=$(git rev-parse --verify --quiet "$RUN_COMMIT^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $RUN_COMMIT"; exit 1; }
+          tree=$RUNNER_TEMP/promoted-tree; rm -rf "$tree"; mkdir -p "$tree"
+          git archive "$full" -- packaging debian 2>/dev/null | tar -x -C "$tree" || true
+          echo "the real $NAME $VERSION was built by $built; the promotion is of $full"
+          { echo "commit=$built"; echo "full=$full"; echo "tree=$tree"; } >> "$GITHUB_OUTPUT"
+
+      # the version the promotion's commit carries, read as the build read it
+      - id: rpmver
+        if: steps.built.outputs.commit != '' && inputs.rpm
+        uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
+        with:
+          kind: rpm
+          dir: ${{ steps.built.outputs.tree }}
+      - id: debver
+        if: steps.built.outputs.commit != '' && inputs.deb
+        uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
+        with:
+          kind: deb
+          dir: ${{ steps.built.outputs.tree }}
+
+      # what changed from the build to the promotion's commit that can change a package (the one definition: package-paths)
+      - id: paths
+        if: steps.built.outputs.commit != ''
+        uses: Open-Mixer/.github/.github/actions/package-paths@openmixer-v1
+        with:
+          base: ${{ steps.built.outputs.commit }}
+          head: ${{ steps.built.outputs.full }}
+          exempt: ${{ inputs.bump-exempt }}
+
+      # the tie: the promotion's commit carries the version, is the devel commit that built it or descends from it, and
+      # changes no package since it
+      - id: tie
+        name: The promotion's commit is the build's, or descends from it, at the same version
+        if: steps.built.outputs.commit != ''
+        env:
+          NAME: ${{ inputs.package-name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILT: ${{ steps.built.outputs.commit }}
+          FULL: ${{ steps.built.outputs.full }}
+          RPMV: ${{ steps.rpmver.outputs.version }}
+          DEBV: ${{ steps.debver.outputs.version }}
+          COUNT: ${{ steps.paths.outputs.count }}
+          PATHS: ${{ steps.paths.outputs.paths }}
+        run: |
+          set -euo pipefail
+          for v in "rpm:$RPMV" "deb:$DEBV"; do
+            [ -z "${v#*:}" ] || [ "${v#*:}" = "$VERSION" ] ||
+              { echo "::error::$FULL carries ${v#*:} in its ${v%%:*} packaging, and the real build promoted is $NAME $VERSION"; exit 1; }
+          done
+          [ -n "$RPMV$DEBV" ] || { echo "::error::$FULL carries no version: the real $NAME $VERSION is promoted only from a commit that carries it"; exit 1; }
+          git cat-file -e "$BUILT^{commit}" 2>/dev/null || git fetch -q origin "$BUILT" 2>/dev/null ||
+            { echo "::error::$GITHUB_REPOSITORY has no commit $BUILT, which built the real $NAME $VERSION"; exit 1; }
+          git merge-base --is-ancestor "$BUILT" "$FULL" ||
+            { echo "::error::$FULL does not descend from $BUILT, the devel commit that built the real $NAME $VERSION: it is not promoted"; exit 1; }
+          [ -n "$COUNT" ] || { echo "::error::what changed since $BUILT was not read: the real $NAME $VERSION is not promoted"; exit 1; }
+          if [ "$COUNT" != 0 ]; then
+            while IFS= read -r p; do
+              [ -z "$p" ] || echo "::error::$p changes the package since $BUILT, the devel commit that built the real $NAME $VERSION: $FULL is not the build being promoted"
+            done <<< "$PATHS"
+            exit 1
+          fi
+          echo "$FULL is $BUILT or descends from it, at $VERSION, and changes no package since"
+          echo "real=true" >> "$GITHUB_OUTPUT"
+
       - id: rpm
         if: inputs.rpm
         uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
@@ -173,7 +287,7 @@ jobs:
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
           arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
-          commit: ${{ steps.ver.outputs.commit }}
+          commit: ${{ steps.built.outputs.commit != '' && 'real' || steps.ver.outputs.commit }}
           channel: ${{ inputs.target-repo }}
           channel-dir: ${{ runner.temp }}/channel
           out: ${{ runner.temp }}/found-rpm
@@ -189,7 +303,7 @@ jobs:
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
           arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
-          commit: ${{ steps.ver.outputs.commit }}
+          commit: ${{ steps.built.outputs.commit != '' && 'real' || steps.ver.outputs.commit }}
           channel: ${{ inputs.target-repo }}
           channel-dir: ${{ runner.temp }}/channel
           out: ${{ runner.temp }}/found-deb
@@ -201,22 +315,41 @@ jobs:
           RPM_COMMIT: ${{ steps.rpm.outputs.commit }}
           DEB_COMMIT: ${{ steps.deb.outputs.commit }}
           VERSION: ${{ steps.ver.outputs.version }}
+          RUN_COMMIT: ${{ steps.ver.outputs.commit }}
+          TIED: ${{ steps.tie.outputs.real }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -o pipefail
           short=${RPM_COMMIT:-$DEB_COMMIT}
           [ -n "$short" ] || { echo "::error::nothing to promote: both rpm and deb are off"; exit 1; }
+          real=false
+          # the real package a merge to devel staged names no commit (one build per version, .github#289): it is promoted
+          # only on the tie above (the recorded devel commit, the same version, that commit or a descendant); the
+          # promotion's own commit is then checked like any other
+          if [ "$short" = real ]; then
+            [ "${TIED:-}" = true ] || { echo "::error::the staged build is the real package, and no devel commit that built it is tied to this promotion"; exit 1; }
+            for c in "$RPM_COMMIT" "$DEB_COMMIT"; do
+              case $c in
+                ''|real) ;;
+                *) echo "::error::the staged RPMs are of '$RPM_COMMIT' and the staged DEBs of '$DEB_COMMIT': one is the real package of a merge to devel, the other a snapshot"; exit 1 ;;
+              esac
+            done
+            [ -n "${RUN_COMMIT:-}" ] || { echo "::error::the staged build is the real package of a merge to devel, and this run names no commit"; exit 1; }
+            full=$(git rev-parse --verify --quiet "$RUN_COMMIT^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $RUN_COMMIT"; exit 1; }
+            RPM_COMMIT='' DEB_COMMIT='' real=true
+          fi
           if [ -n "$RPM_COMMIT" ] && [ -n "$DEB_COMMIT" ] && [ "${RPM_COMMIT#"$DEB_COMMIT"}" = "$RPM_COMMIT" ] && [ "${DEB_COMMIT#"$RPM_COMMIT"}" = "$DEB_COMMIT" ]; then
             echo "::error::the staged RPMs are of $RPM_COMMIT and the staged DEBs of $DEB_COMMIT: name one commit both were built from"; exit 1
           fi
-          full=$(git rev-parse --verify --quiet "$short^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $short"; exit 1; }
+          # a real build keeps short=real (the jobs below collect it by that name) and is promoted at the run's commit
+          [ "$real" = true ] || full=$(git rev-parse --verify --quiet "$short^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $short"; exit 1; }
           git merge-base --is-ancestor "$full" "origin/$DEFAULT_BRANCH" ||
             { echo "::error::$full is not on $DEFAULT_BRANCH of $GITHUB_REPOSITORY: a staged build of a commit that never landed is not promoted"; exit 1; }
           if at=$(git rev-parse --verify --quiet "refs/tags/v$VERSION^{commit}"); then
             [ "$at" = "$full" ] || { echo "::error::v$VERSION is on $at, and the staged build is of $full"; exit 1; }
           fi
           echo "promoting $VERSION of $full"
-          { echo "short=$short"; echo "commit=$full"; } >> "$GITHUB_OUTPUT"
+          { echo "short=$short"; echo "commit=$full"; echo "real=$real"; } >> "$GITHUB_OUTPUT"
 
   # The staged RPMs go to rpm/ of the channel through publish-rpms, as a release's do. They are already signed, so the
   # publish places them as they are and signs only the metadata; the tree is compared with the staged checksums before
@@ -540,6 +673,7 @@ jobs:
         env:
           VERSION: ${{ needs.find.outputs.version }}
           SHORT: ${{ needs.find.outputs.short }}
+          REAL: ${{ needs.find.outputs.real }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
           BASE_URL: ${{ inputs.base-url }}
@@ -556,7 +690,15 @@ jobs:
             rel=$(rpm -q --qf '%{RELEASE}' "$bin")
             repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
             echo "$bin $VERSION-$rel from $repo"
-            case $rel in *.git*".$SHORT"* | *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
+            if [ "$REAL" = true ]; then
+              # the real package a merge to devel staged: the version itself, a release with no snapshot stamp
+              ver=$(rpm -q --qf '%{VERSION}' "$bin")
+              if [ "$ver" != "$VERSION" ] || [ "${rel#*.git}" != "$rel" ]; then
+                echo "::error::$bin $ver-$rel is not the real $VERSION promoted"; exit 1
+              fi
+            else
+              case $rel in *.git*".$SHORT"* | *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
+            fi
             case $repo in openmixer-staging*) echo "::error::$bin came from the staging channel, not the channel root"; exit 1 ;; esac
           done
 
@@ -582,6 +724,7 @@ jobs:
         env:
           VERSION: ${{ needs.find.outputs.version }}
           SHORT: ${{ needs.find.outputs.short }}
+          REAL: ${{ needs.find.outputs.real }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
           URL: ${{ inputs.base-url }}/deb
@@ -592,15 +735,20 @@ jobs:
             ok=
             for try in $(seq 1 20); do
               apt-get update -qq || true
-              # the staged build of the commit, <version>+git<commit time>.<short>, never the newest
-              pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git" -v s="$SHORT" 'index($3, v) == 1 {r = substr($3, length(v) + 1); sub(/^[0-9]+\./, "", r); if (index(r, s) == 1) {print $3; exit}}')
+              if [ "$REAL" = true ]; then
+                # the real package a merge to devel staged: <version> or <version>-<revision>, never a +git or ~git build
+                pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION" '($3 == v || index($3, v "-") == 1) && $3 !~ /[+~]git/ {print $3; exit}')
+              else
+                # the staged build of the commit, <version>+git<commit time>.<short>, never the newest
+                pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git" -v s="$SHORT" 'index($3, v) == 1 {r = substr($3, length(v) + 1); sub(/^[0-9]+\./, "", r); if (index(r, s) == 1) {print $3; exit}}')
+              fi
               if [ -n "$pinned" ] && apt-get install -y --no-install-recommends "$bin=$pinned"; then
                 dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
                 ok=1; break
               fi
-              echo "attempt $try: $bin $VERSION+git$SHORT is not installable yet"; sleep 30
+              echo "attempt $try: $bin ${pinned:-$VERSION} is not installable yet"; sleep 30
             done
-            [ -n "$ok" ] || { echo "::error::$bin $VERSION+git$SHORT does not install from $URL in a clean debian $SUITE"; exit 1; }
+            [ -n "$ok" ] || { echo "::error::$bin $VERSION ($([ "$REAL" = true ] && echo real || echo "+git$SHORT")) does not install from $URL in a clean debian $SUITE"; exit 1; }
           done
 
   # Last, and only after the channel serves the bytes and they install: the GitHub release of the tag that started

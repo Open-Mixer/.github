@@ -45,6 +45,33 @@ inputs:
       cells the channel lacks for this version and the publish refuses to write any file the channel holds. With
       republish it is refused: a catch-up never rewrites a served file, and republish does.
     default: 'false'
+  devel-version:
+    description: >-
+      The version a merge to devel publishes to the staging channel (its spec's Version, or its debian/changelog's), with
+      require-tag false: the already-served check runs for v<devel-version> over the channel root AND staging, and a
+      version either holds publishes nothing, green (the output skip is true, a ::notice:: names the served files), ONLY
+      when no path since the commit that built it (staging/<kind>/built/<name>/<version>.commit) changes a package
+      (package-paths.sh, with exempt); any other path is red, each named with the served version, and so is a served
+      version with no such record. The pull request into devel is red for the same change (devel-bump-check).
+      A merge to devel builds the real package once; a change after a published build is a new version (.github#289).
+      Empty for every other run.
+    default: ''
+  name:
+    description: the source package, whose built/ record a merge to devel of a served version is judged by
+    default: ''
+  before:
+    description: "a merge to devel: github.event.before, the change a served version with no build record is judged by"
+    default: ''
+  exempt:
+    description: globs the repository adds to the paths that change no package (.github/**, package-paths.sh)
+    default: ''
+  staged-version:
+    description: >-
+      The version a dispatched staged run snapshots (its spec's Version, or its debian/changelog's), with require-tag
+      false: the channel root and staging are read for a REAL build of v<staged-version> (already-served.sh REAL_ONLY),
+      and one is refused by name. A snapshot of a published version is retired: the version is bumped on devel
+      (.github#289). Empty for every other run, a merge to devel included.
+    default: ''
   gpg-key:
     default: ''
   gpg-passphrase:
@@ -52,10 +79,16 @@ inputs:
   pages-token:
     default: ''
 
+outputs:
+  skip:
+    description: "'true' when a merge to devel carries a version published already: the caller builds and publishes nothing"
+    value: ${{ steps.check.outputs.skip || 'false' }}
+
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: check
+      shell: bash
       env:
         PUBLISH: ${{ inputs.publish }}
         TARGET: ${{ inputs.target }}
@@ -70,6 +103,11 @@ runs:
         KIND: ${{ inputs.kind }}
         RELEASES: ${{ inputs.releases }}
         CATCH_UP: ${{ inputs.catch-up }}
+        DEVEL_VERSION: ${{ inputs.devel-version }}
+        STAGED_VERSION: ${{ inputs.staged-version }}
+        NAME: ${{ inputs.name }}
+        EXEMPT: ${{ inputs.exempt }}
+        BEFORE: ${{ inputs.before }}
       run: |
         set -euo pipefail
         if [ "$PUBLISH" != true ] || { [ "$REQUIRE_TAG" = true ] && [ "$REF_TYPE" != tag ]; }; then
@@ -112,13 +150,56 @@ runs:
 
         # Moving old tags (a history rewrite) re-runs their release workflows. A version the channel already serves
         # is never published again: the same NEVRA / deb version would be refused by dnf and apt, or worse, replaced.
-        if [ "${CATCH_UP:-false}" = true ]; then
-          echo "::notice::catch-up of $TAG: the version is served, so the already-served check does not run; the plan holds only the cells the channel lacks, and the publish refuses to write any file the channel holds"
-        elif [ "$REQUIRE_TAG" = true ] && [ -n "$PACKAGES" ] && [ "$REPUBLISH" != true ]; then
+        # tree <what> <strict>: the paths of the channel tree, one a line, in /tmp/tree.paths; a truncated tree is refused when strict (a
+        # merge to devel and a staged run must prove the version unpublished), a warning otherwise (a tag's check)
+        tree() {
+          local code
           code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/tree.json -w '%{http_code}' \
             -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")
-          [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether $TAG is already served"; exit 1; }
-          [ "$(jq -r '.truncated' /tmp/tree.json)" != true ] || echo "::warning::the tree of $TARGET is truncated; the already-served check is partial"
-          jq -r '.tree[].path' /tmp/tree.json | "$GITHUB_ACTION_PATH/already-served.sh" "$TAG" $PACKAGES
+          [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether $1 is published"; exit 1; }
+          if [ "$(jq -r '.truncated' /tmp/tree.json)" = true ]; then
+            [ "$2" != strict ] || { echo "::error::the tree of $TARGET is truncated: cannot prove $1 unpublished"; exit 1; }
+            echo "::warning::the tree of $TARGET is truncated; the already-served check is partial"
+          fi
+          jq -r '.tree[].path' /tmp/tree.json > /tmp/tree.paths
+        }
+        # a merge to devel is judged first: no other input (catch-up, a tag's check) ever stands in for its version check
+        if [ -n "${DEVEL_VERSION:-}" ]; then
+          [ "${CATCH_UP:-false}" != true ] || { echo "::error::a merge to devel never catches up: it builds v$DEVEL_VERSION once, every cell, or not at all"; exit 1; }
+          [ -n "$PACKAGES" ] || { echo "::error::a merge to devel names no packages: cannot tell whether v$DEVEL_VERSION is published"; exit 1; }
+          [ "$REPUBLISH" != true ] || { echo "::error::a merge to devel never republishes: a published version is never built again"; exit 1; }
+          tree "v$DEVEL_VERSION" strict
+          rc=0; STAGING=true ON_SERVED=notice "$GITHUB_ACTION_PATH/already-served.sh" "v$DEVEL_VERSION" $PACKAGES < /tmp/tree.paths || rc=$?
+          case $rc in
+            0) echo "skip=false" >> "$GITHUB_OUTPUT" ;;
+            3) ;;
+            *) exit "$rc" ;;
+          esac
+          if [ "$rc" = 3 ]; then
+            # served: green only when nothing that can change a package changed, since the recorded build, or, with no
+            # record (a version published before the records), in this push itself (../package-paths/served-change.sh)
+            [ -n "$NAME" ] && [ -n "$KIND" ] || { echo "::error::v$DEVEL_VERSION is published, and the preflight names no package-name and kind to read the record of its build by"; exit 1; }
+            rec=staging/$KIND/built/$NAME/$DEVEL_VERSION.commit built=''
+            if grep -qxF "$rec" /tmp/tree.paths; then
+              code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/built.commit -w '%{http_code}' \
+                -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github.raw" \
+                "https://api.github.com/repos/$TARGET/contents/$rec")
+              [ "$code" = 200 ] || { echo "::error::$rec of $TARGET answered HTTP $code: cannot tell what changed since the build of v$DEVEL_VERSION"; exit 1; }
+              built=$(tr -d '[:space:]' < /tmp/built.commit)
+              [[ $built =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$built', not a full commit"; exit 1; }
+            fi
+            "$GITHUB_ACTION_PATH/../package-paths/served-change.sh" "$DEVEL_VERSION" "$rec" "$built" "${BEFORE:-}" "this push (github.event.before..HEAD)"
+            echo "::notice::v$DEVEL_VERSION is published already: this merge to devel builds and publishes nothing"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        elif [ -n "${STAGED_VERSION:-}" ]; then
+          [ -n "$PACKAGES" ] || { echo "::error::a staged run names no packages: cannot tell whether v$STAGED_VERSION is published"; exit 1; }
+          tree "v$STAGED_VERSION" strict
+          STAGING=true REAL_ONLY=true "$GITHUB_ACTION_PATH/already-served.sh" "v$STAGED_VERSION" $PACKAGES < /tmp/tree.paths
+        elif [ "${CATCH_UP:-false}" = true ]; then
+          echo "::notice::catch-up of $TAG: the version is served, so the already-served check does not run; the plan holds only the cells the channel lacks, and the publish refuses to write any file the channel holds"
+        elif [ "$REQUIRE_TAG" = true ] && [ -n "$PACKAGES" ] && [ "$REPUBLISH" != true ]; then
+          tree "$TAG" partial
+          "$GITHUB_ACTION_PATH/already-served.sh" "$TAG" $PACKAGES < /tmp/tree.paths
         fi

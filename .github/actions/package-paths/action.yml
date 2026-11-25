@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: package-paths
+description: The paths changed between two commits that can change a package (package-paths.sh, the one exempt definition)
+
+inputs:
+  base:
+    description: the earlier commit
+    required: true
+  head:
+    description: the later commit
+    default: HEAD
+  exempt:
+    description: globs, space separated, the repository adds to the exempt default (.github/**)
+    default: ''
+
+outputs:
+  paths:
+    description: the paths that can change a package, one a line; empty when none
+    value: ${{ steps.paths.outputs.paths }}
+  count:
+    description: how many
+    value: ${{ steps.paths.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - id: paths
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        HEAD_REF: ${{ inputs.head }}
+        EXEMPT: ${{ inputs.exempt }}
+      run: |
+        set -euo pipefail
+        git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE" ||
+          { echo "::error::this checkout has no commit $BASE and cannot fetch it"; exit 1; }
+        # the exempt list never covers a packaged file (package-paths.sh --check)
+        "$GITHUB_ACTION_PATH/package-paths.sh" --check
+        out=$(git diff --name-only "$BASE" "$HEAD_REF" | "$GITHUB_ACTION_PATH/package-paths.sh")
+        { echo "count=$(printf '%s' "$out" | grep -c . || true)"; echo "paths<<PACKAGE_PATHS_EOF"; printf '%s\n' "$out"; echo "PACKAGE_PATHS_EOF"; } >> "$GITHUB_OUTPUT"
+        printf '%s\n' "$out" | sed 's/^/changes a package: /' | grep -v '^changes a package: $' || echo "no path since $BASE changes a package"

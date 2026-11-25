@@ -179,7 +179,8 @@ def check(path, kind):
         # is a dry run (not at a release tag); it no longer spells a separator itself
         w = steps[bld[0]]["with"]
         assert "separator" not in w, f"{path}: the build step still spells a separator; separator.sh chooses it"
-        assert w.get("staged") == "${{ inputs.staged }}" and w.get("dry-run") == "${{ env.RELEASE_TAG == '' }}", \
+        # a merge to devel is staged too (.github#289)
+        assert w.get("staged") == "${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}" and w.get("dry-run") == "${{ env.RELEASE_TAG == '' }}", \
             f"{path}: the staged DEB snapshot separator: the build step does not pass staged and dry-run to the action"
         import os, subprocess
         sh = os.path.join(os.path.dirname(os.path.abspath(path)), "..", "actions", "build-deb", "separator.sh")
@@ -189,9 +190,9 @@ def check(path, kind):
 
     # the install check: from staging after a staged publish, from the real channel alone after a release
     v = jobs["verify"]
-    ok_stage = O(publish=O(result="success"), publish_release=O(result="skipped"))
-    ok_rel = O(publish=O(result="skipped"), publish_release=O(result="success"))
-    ok_none = O(publish=O(result="success"), publish_release=O(result="skipped"))
+    ok_stage = O(publish=O(result="success"), publish_release=O(result="skipped"), preflight=O(outputs=O(skip="false")))
+    ok_rel = O(publish=O(result="skipped"), publish_release=O(result="success"), preflight=O(outputs=O(skip="false")))
+    ok_none = O(publish=O(result="success"), publish_release=O(result="skipped"), preflight=O(outputs=O(skip="false")))
     assert ev(v["if"], staged, needs=ok_stage), f"{path}: no install check after a staged publish"
     assert ev(v["if"], tag, needs=ok_rel, ref_type="tag"), f"{path}: no install check after a release"
     assert not ev(v["if"], dry, needs=ok_none), f"{path}: an install check on a dry run"
@@ -242,7 +243,8 @@ for wf in "$here/.github/workflows/build-rpm.yml" "$here/.github/workflows/build
 import json, re, sys
 m, wf = json.loads(sys.argv[1]), sys.argv[2]
 assert re.search(r"inputs\.staged\b", m["if"]) and "inputs.staging" in m["if"], f"{wf}: the precheck does not run for staged and for staging: {m['if']}"
-want = {"STAGED": "inputs.staged", "STAGING": "inputs.staging", "PUBLISH": "inputs.publish",
+# a merge to devel is staged too (.github#289)
+want = {"STAGED": "(inputs.staged||(github.event_name=='push'&&github.ref=='refs/heads/devel'))", "STAGING": "inputs.staging", "PUBLISH": "inputs.publish",
         "SOURCE_REPOSITORY": "inputs.source-repository", "SOURCE_REF": "inputs.source-ref", "REF_TYPE": "github.ref_type"}
 for k, v in want.items():
     assert m["env"].get(k, "").replace(" ", "") == "${{" + v + "}}", f"{wf}: precheck env {k} is {m['env'].get(k)!r}"

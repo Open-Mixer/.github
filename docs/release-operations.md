@@ -174,6 +174,98 @@ and its staging publish takes every architecture of the releases it built (`stag
 package of a cell outside the run's set, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
 and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
+### A merge to devel publishes the real package to staging
+
+**RULED (owner, 2026-11-25, .github#289):** development happens in devel. A merge to devel builds the RPMs and DEBs once
+and publishes them to the staging channel at once, where the devel box (omx) and the staging box (omx2) install them.
+Staging keeps testing, devel starts the next cycle at once, and promotion to the channel root later copies the same
+files. The devel build is the real package at its real version, never a pre-release.
+
+- **The trigger.** The caller's release workflow runs on `push: {branches: [devel]}` beside its tags. trigger-gate
+  lets a push limited to tags, to `devel`, or to both through, and refuses any other branch filter.
+- **What the build does.** build-rpm.yml and build-deb.yml treat a push to `refs/heads/devel` as a staged run. It
+  builds against the staging channel and publishes to it, never to the channel root. It builds the full matrix, because
+  promotion copies this one build to every cell.
+- **The version.** It builds the tree's own version with no tag and no snapshot suffix: `build-rpm.sh -r` and
+  `build-deb.sh -r` give `<name>-<version>-<release>.fcNN` and `<name>_<version>`, the NEVRA a release of that version
+  has. A dispatched staged run keeps its `+git` snapshot.
+- **A version is built once.** The preflight reads the version with the packaging tool (`tree-version`: `rpmspec -q
+  --srpm --qf '%{VERSION}'` of the spec, macros expanded, or `dpkg-parsechangelog -S Version` without the Debian
+  revision). When the channel root or staging (of that kind) holds it already, `release-preflight` reads the commit that
+  built it, `staging/<kind>/built/<name>/<version>.commit`, and the paths changed from it to HEAD:
+  - none that can change a package (`package-paths.sh`: only `.github/**`, plus `bump-exempt`): the merge publishes
+    NOTHING and stays green, a `::notice::` names the served version and files, the output `skip` is `true`, and the
+    build, publish and verify jobs skip on it;
+  - any other path: RED, each path named with the served version. A change that reached devel without its bump (a
+    pull request that raced another, a direct push) is never lost behind a green skip;
+  - no record (a version published before this model): the push itself is judged, `github.event.before..HEAD`:
+    exempt paths alone are green with a notice that names the missing record, any packaged path is red by name until
+    the version is bumped, and an all-zero or unreachable `before` is red by name. No record is seeded and no bump
+    wave is needed. (`package-paths/served-change.sh`, the one judge of the preflight and of `devel-bump-check`.)
+  No published version is rebuilt, and no epoch is used.
+- **The missing bump is red on the pull request first.** `devel-bump-check` judges a pull request into devel the same
+  way: when its head version is published, in the channel root or staging, every path changed since the recorded
+  build that can change a package is refused, named with the served file; with no record, the pull request's own
+  change (`merge-base(base, head)..head`) is judged the same way, exempt paths alone passing with a notice. Which paths change a package has one definition, `package-paths.sh` (the `package-paths` action):
+  everything but `.github/**`. README.md and `docs/` are NOT exempt: packages ship them (`%doc README.md` in
+  omx-contract and omx-dsp). A repository adds globs through `bump-exempt` only for paths it shows its packages do not
+  install, and a glob that covers one is refused by every reader of the list (`package-paths.sh --check`: the
+  preflight, the pull request's check and the promotion), naming the glob and the file: anything under `packaging/`
+  or `debian/`, a `%doc` or `%license` file of the spec's `%files` sections, a `debian/*.docs` entry, the source of a
+  `debian/*.install` entry, or every path (`**`, `*`). A pull request cannot widen its own exemption over packaged
+  files. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
+  `PAGES_TOKEN`.
+- **A snapshot of a published version is retired.** A dispatched staged run (`staged: true`, not a merge to devel)
+  still builds a `+git` snapshot of the tree's version, but the preflight reads that version (`staged-version`) and
+  refuses it when the channel root or staging holds a REAL build of it (`already-served.sh` with `STAGING=true
+  REAL_ONLY=true`: a name carrying `.git`, `+git` or `~git` is a snapshot and does not count), naming the file. Bump
+  the version on devel instead.
+- **The install check** takes the staged package of exactly that version.
+- **A file the channel holds is refused, never kept.** The staging publish of a merge to devel passes `refuse-served`
+  to `publish-rpms` and `publish-debs` (`REFUSE_SERVED=true` for `publish-tree.sh`): every package whose file the tree
+  already holds (the same file name; for a deb, in the same suite) is named and refuses the run before anything is
+  placed or signed. A release keeps a served file and says `kept`; a merge to devel has built its version once, so a
+  second build of it is an error, not a no-op.
+- **One publish per repository and kind at a time.** The publish job of a merge to devel runs in the concurrency group
+  `devel-publish-<owner>/<repo>-rpm` (or `-deb`) with `cancel-in-progress: false`, not in the channel's `live` group:
+  another repository's release never waits behind it, and `channel-push` repeats a push that lost a race on the new
+  tip. GitHub keeps at most one run RUNNING and one PENDING per group: when a third merge to the same repository
+  arrives while one publishes and one waits, the waiting one is cancelled and the newest takes its place. The
+  cancelled merge's version is then not staged; it was superseded by a newer version (each merge that changes a
+  package carries its own bump), and if that version must be staged anyway, rerun the cancelled run's failed jobs.
+- **Promotion copies it, from the commit that built it.** The real package's name holds no commit, so the staging
+  publish of the merge to devel records the full commit beside it: `staging/<kind>/built/<package-name>/<version>.commit`
+  (`built-commit` and `built-name` of `publish-rpms` and `publish-debs`, `record-built.sh`; a record naming another
+  commit is refused). The name is ONE key for both kinds, the caller's `package-name`, which every reader uses too: never
+  the spec's Name or the deb Source (plugin-db-qualification builds `plugin-qualification-records` RPMs from the deb
+  source `plugin-db-qualification`). The kind stays in the path because each kind publishes in a run of its own. `promote-staged`'s find job reads it for every kind it promotes (one record missing, or two naming
+  different commits, is refused) and promotes the real build only when the promotion's commit (the tag's, or the dry
+  run's input) carries the same version in its spec and changelog (`tree-version`), is that commit or descends from
+  it (`git merge-base --is-ancestor`), AND changes no package since it: every path from the build to it that can change
+  a package (`package-paths`, the same definition and `bump-exempt` as the build) is refused by name, because a
+  descendant with package changes is not the build being promoted. It then asks `collect.py` for `--commit real`, which no commit sha selects, and
+  the install checks require that real version (no `.git`, no `+git`). Promotion copies its bytes, checked checksum
+  for checksum.
+- **When one kind published and the other failed.** build-rpm.yml and build-deb.yml are two workflows of the
+  caller, each with its own preflight, and each preflight reads only its own half of the channel (`kind`): the RPMs a
+  merge published never make its failed DEB half a skip, nor the other way round. So:
+  1. **A failure outside the code** (a runner, the network, a lost push race past its retries): rerun the failed jobs
+     of the failed workflow, `gh run rerun <run id> --failed` (or "Re-run failed jobs"). The rerun builds and
+     publishes the same commit, its preflight finds its own kind unpublished, `refuse-served` refuses nothing of
+     the other kind, and `record-built.sh` records the same commit for it.
+  2. **A failure in the code** (the DEB does not build, its install check fails): fix forward. The pull request
+     into devel carries the fix AND a version bump (`devel-bump-check` refuses it otherwise), and its merge builds
+     and stages the new version, both kinds, from one commit.
+  3. **The half-published old version is never promoted.** `promote-staged` refuses it: the kind that failed holds
+     no build of it and no `built/` record, and a later merge that publishes that kind from another commit leaves two
+     records naming different commits, which the find job refuses too. It stays in staging until the purge.
+- **Tests.**
+  - `tests/devel-push-staging.sh`: the workflow conditions for each kind of run, the version read, the refusal of a
+    served file, the skip and the pull request's bump check, the promotion's checksums, its tie to the devel commit and
+    its install checks, and trigger-gate.
+  - `tests/build-devel-real.sh`: the real NEVRA (Fedora container).
+  - `tests/devel-pr-staged-install.sh`: the next layer takes the staged build.
+
 ### Where it is
 
 The staging channel is a second dnf tree and a second apt tree in the same channel repository

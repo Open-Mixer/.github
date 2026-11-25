@@ -84,7 +84,10 @@ for kind, (path, rel_in, key) in WF.items():
     assert len(ms) == 1 and ms[0].get("id") == "matrix" and "if" not in ms[0], f"{path}: the first job does not ask release-matrix once, always"
     assert ms[0]["uses"] == "Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1", ms[0]["uses"]
     w = {k: str(v).replace(" ", "") for k, v in ms[0]["with"].items()}
-    assert w == {"kind": kind, "matrix": "${{inputs.matrix}}", "wave": "${{vars.OMX_RELEASE_MATRIX}}", "staged": "${{inputs.staged}}",
+    # a merge to devel is staged, and builds the full matrix: promotion copies that one build to every cell (.github#289)
+    devel = "(github.event_name=='push'&&github.ref=='refs/heads/devel')"
+    assert w == {"kind": kind, "matrix": "${{%s&&'full'||inputs.matrix}}" % devel, "wave": "${{vars.OMX_RELEASE_MATRIX}}",
+                 "staged": "${{(inputs.staged||%s)}}" % devel,
                  "source-ref": "${{inputs.source-ref}}", "releases": "${{inputs.%s}}" % rel_in, "arches": "${{inputs.arch-matrix}}",
                  # a catch-up (tests/catch-up-plan.sh): the packages, and the channel whose cells.tsv it subtracts
                  "catch-up": "${{inputs.catch-up}}", "names": "${{inputs.binary-names||inputs.package-name}}",
@@ -127,7 +130,9 @@ def run(kind, inputs, event, ref_type, var):
     if p.returncode:
         return None, p.stdout + p.stderr
     out = O(l.rstrip("\n").split("=", 1) for l in open(env["GITHUB_OUTPUT"]))
-    steps = O(matrix=O(outputs=out))
+    # the devel step reads a merge to devel's version and the preflight says whether it is published (skip, .github#289);
+    # none of these runs is one
+    steps = O(matrix=O(outputs=out), devel=O(outputs=O(version="")), preflight=O(outputs=O(skip="")))
     pre = d["jobs"]["preflight"]
     needs = O(preflight=O(outputs=O({k: ev(v, full, event, ref_type, var, steps=steps) for k, v in pre["outputs"].items()})))
     names = {}

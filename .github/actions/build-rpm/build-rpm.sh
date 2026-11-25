@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 # Build the RPMs of a tree from a tarball of it.
 #
-#   build-rpm.sh [-C <tree>] [-t <release tag>] [-n] <output dir>
+#   build-rpm.sh [-C <tree>] [-t <release tag> | -r] [-n] <output dir>
 #
 # The spec is the tree's only packaging/*.spec and the version is its own. With -t the tag must be
 # v<version> and the tree must be that tag's commit; without it the build is a snapshot: the release
@@ -11,21 +11,26 @@
 # above the build of an earlier one (a short sha alone sorts by chance). The spec's %changelog is generated from git (commit subjects since the previous
 # tag, .github/actions/changelog/changelog.sh); the version is the spec's. BuildRequires must be installed. -n skips
 # %check (rpmbuild --nocheck): a sibling built for another repository's tests (wave-deps), whose own CI runs its tests.
+# -r builds the spec's own version at HEAD with no tag and no snapshot stamp: a merge to devel builds the real package,
+# once, and that build is what the staging channel serves and promotion copies to the channel root (.github#289).
 set -euo pipefail
 
 tree=.
 tag=
+real=
 check=()
-while getopts C:t:n opt; do
+while getopts C:t:rn opt; do
     case $opt in
         C) tree=$OPTARG ;;
         t) tag=$OPTARG ;;
+        r) real=1 ;;
         n) check=(--nocheck) ;;
         *) exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
-out=$(readlink -m "${1:?usage: build-rpm.sh [-C <tree>] [-t <release tag>] [-n] <output dir>}")
+out=$(readlink -m "${1:?usage: build-rpm.sh [-C <tree>] [-t <release tag> | -r] [-n] <output dir>}")
+[ -z "$tag" ] || [ -z "$real" ] || { echo "-t and -r exclude each other" >&2; exit 2; }
 tree=$(readlink -f "$tree")
 
 specs=("$tree"/packaging/*.spec)
@@ -51,6 +56,8 @@ if [ -n "$tag" ]; then
     [ "$(git -C "$tree" rev-parse "$tag^{commit}")" = "$(git -C "$tree" rev-parse HEAD)" ] ||
         { echo "the tree is not at $tag" >&2; exit 1; }
     ref=$tag
+elif [ -n "$real" ]; then
+    ref=HEAD
 else
     sed -i "s/^Release: *\([0-9][0-9]*\)%{?dist}/Release: \1.git$stamp%{?dist}/" "$spec"
     ref=HEAD

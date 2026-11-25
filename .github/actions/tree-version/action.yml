@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: tree-version
+description: Read the version a tree packages with its packaging tool (rpmspec, dpkg-parsechangelog), never a text match
+
+# tree-version.sh beside this file says what is read and refused. The tool is installed when the runner lacks it: the
+# preflight jobs of build-rpm.yml and build-deb.yml run on the host of an ubuntu runner, promote-staged's find job too.
+
+inputs:
+  kind:
+    description: "'rpm' (the one packaging/*.spec) or 'deb' (debian/changelog, without the revision)"
+    required: true
+  dir:
+    description: the tree to read
+    default: '.'
+
+outputs:
+  version:
+    description: the version, e.g. 1.2.0
+    value: ${{ steps.read.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        DIR: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        if [ "$KIND" = rpm ]; then tool=rpmspec apt=rpm dnf=rpm-build; else tool=dpkg-parsechangelog apt=dpkg-dev dnf=dpkg-dev; fi
+        if ! command -v "$tool" >/dev/null; then
+          sudo=; [ "$(id -u)" = 0 ] || sudo=sudo
+          if command -v apt-get >/dev/null; then
+            $sudo apt-get update -qq && $sudo apt-get install -y -qq --no-install-recommends "$apt" >/dev/null
+          elif command -v dnf >/dev/null; then
+            $sudo dnf install -y -q "$dnf"
+          fi
+          command -v "$tool" >/dev/null || { echo "::error::$tool is not on this runner and could not be installed: the $KIND version is read with it"; exit 1; }
+        fi
+        v=$("$GITHUB_ACTION_PATH/tree-version.sh" "$KIND" "$DIR")
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+        echo "the tree packages $KIND version $v"

@@ -122,7 +122,8 @@ cat > "$t/wf.py" <<'PY'
 import re, sys, yaml
 d = yaml.safe_load(open(sys.argv[1])); jobs = d["jobs"]
 TAG = "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))"
-text = lambda j: yaml.safe_dump(jobs[j])
+# no line wrapping: a wrapped dump splits a phrase the asserts below search for
+text = lambda j: yaml.safe_dump(jobs[j], width=10**9)
 def uses(j, what): return [s for s in jobs[j]["steps"] if f"/{what}@" in s.get("uses", "")]
 for j in jobs:
     assert not re.search(r"rpmbuild|dpkg-buildpackage|debuild|\bmock\b|workflows/build-(rpm|deb)\.yml|actions/(rpm|deb)-deps@|rpmsign|--addsign", text(j)), \
