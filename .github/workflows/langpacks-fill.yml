@@ -109,10 +109,8 @@ jobs:
       - name: Add the OpenMixer channel
         if: steps.pr.outputs.kept != 'true'
         uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
-        with:
-          staging: 'true'
       - if: steps.pr.outputs.kept != 'true'
-        run: dnf install -y --setopt=install_weak_deps=False omx-contract omx-contract-data
+        run: dnf install -y --setopt=install_weak_deps=False 'omx-contract >= 0.23.2' 'omx-contract-data >= 0.23.2'
       - if: steps.pr.outputs.kept != 'true'
         uses: Open-Mixer/.github/.github/actions/langpacks@openmixer-v1
         with:
