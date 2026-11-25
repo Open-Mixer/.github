@@ -35,6 +35,8 @@ runs:
         set -euo pipefail
         git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE" ||
           { echo "::error::this checkout has no commit $BASE and cannot fetch it"; exit 1; }
+        # the exempt list never covers a packaged file (package-paths.sh --check)
+        "$GITHUB_ACTION_PATH/package-paths.sh" --check
         out=$(git diff --name-only "$BASE" "$HEAD_REF" | "$GITHUB_ACTION_PATH/package-paths.sh")
         { echo "count=$(printf '%s' "$out" | grep -c . || true)"; echo "paths<<PACKAGE_PATHS_EOF"; printf '%s\n' "$out"; echo "PACKAGE_PATHS_EOF"; } >> "$GITHUB_OUTPUT"
         printf '%s\n' "$out" | sed 's/^/changes a package: /' | grep -v '^changes a package: $' || echo "no path since $BASE changes a package"

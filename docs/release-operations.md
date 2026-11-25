@@ -209,7 +209,11 @@ files. The devel build is the real package at its real version, never a pre-rele
   change (`merge-base(base, head)..head`) is judged the same way, exempt paths alone passing with a notice. Which paths change a package has one definition, `package-paths.sh` (the `package-paths` action):
   everything but `.github/**`. README.md and `docs/` are NOT exempt: packages ship them (`%doc README.md` in
   omx-contract and omx-dsp). A repository adds globs through `bump-exempt` only for paths it shows its packages do not
-  install. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
+  install, and a glob that covers one is refused by every reader of the list (`package-paths.sh --check`: the
+  preflight, the pull request's check and the promotion), naming the glob and the file: anything under `packaging/`
+  or `debian/`, a `%doc` or `%license` file of the spec's `%files` sections, a `debian/*.docs` entry, the source of a
+  `debian/*.install` entry, or every path (`**`, `*`). A pull request cannot widen its own exemption over packaged
+  files. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
   `PAGES_TOKEN`.
 - **A snapshot of a published version is retired.** A dispatched staged run (`staged: true`, not a merge to devel)
   still builds a `+git` snapshot of the tree's version, but the preflight reads that version (`staged-version`) and

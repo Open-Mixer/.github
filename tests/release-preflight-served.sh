@@ -100,7 +100,7 @@ gitr init -q; gitr add -A; gitr commit -q -m built; A=$(gitr rev-parse HEAD); ec
 mkdir -p "$repo/.github"; echo w > "$repo/.github/ci.yml"; gitr add -A; gitr commit -q -m workflow; B=$(gitr rev-parse HEAD)
 echo c > "$repo/src/a.c"; gitr commit -q -am code; C=$(gitr rev-parse HEAD); gitr checkout -q "$B"
 rundevel() { # rundevel <devel version> [catch-up] [releases]
-  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT='' BEFORE=${BEFORE:-} PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
+  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT=${EXEMPT_IN:-} BEFORE=${BEFORE:-} PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
     REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=${3-44} CATCH_UP=${2:-false} \
     DEVEL_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1; local rc=$?; cd "$here"; return $rc
 }
@@ -130,6 +130,9 @@ BEFORE=0000000000000000000000000000000000000000 rundevel 1.2.3 && { cat "$tmp/ou
 : > "$tmp/gh-out"; BEFORE=$A rundevel 1.2.3 || { cat "$tmp/out"; fail "a push changing .github/ alone at a served version with no record is red"; }
 grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "a push changing .github/ alone at a served version with no record does not skip"; }
 grep -q '::notice::v1.2.3 is served and staging/rpm/built/foo/1.2.3.commit does not record the commit that built it; this push (github.event.before..HEAD) changes no package' "$tmp/out" || { cat "$tmp/out"; fail "the green skip does not name the missing record"; }
+# GATE: a bump-exempt over every path is refused by the preflight before it judges anything
+EXEMPT_IN='**' BEFORE=$A rundevel 1.2.3 && { cat "$tmp/out"; fail "the preflight took bump-exempt '**'"; }
+grep -qF "::error::bump-exempt glob '**' covers every path" "$tmp/out" || { cat "$tmp/out"; fail "the preflight's refusal of '**' is not named"; }
 gitr checkout -q "$C"
 BEFORE=$B rundevel 1.2.3 && { cat "$tmp/out"; fail "a push changing src/ at a served version with no record skipped green"; }
 grep -q '::error::src/a.c changes the package in this push (github.event.before..HEAD), and the served v1.2.3 has no build record' "$tmp/out" || { cat "$tmp/out"; fail "the red of a push without a record does not name src/a.c"; }
@@ -167,4 +170,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 43 arms"
+echo "ok   release-preflight-served: 44 arms"

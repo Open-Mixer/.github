@@ -460,7 +460,7 @@ find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built,
      done
      full=$(outv full "$o")
      python3 -I "$step" "$root" "$pw" find id=paths "$t/f-paths.sh" base="$built" head="$full" exempt="${EXTRA_EXEMPT:-}"
-     GITHUB_OUTPUT=$t/f-paths-out bash "$t/f-paths.sh" > /dev/null || exit $?
+     : > "$t/f-paths-out"; GITHUB_OUTPUT=$t/f-paths-out bash "$t/f-paths.sh" || exit $?
      COUNT=$(outv count "$t/f-paths-out") PATHS=$(sed -n '/^paths<<PACKAGE_PATHS_EOF$/,/^PACKAGE_PATHS_EOF$/p' "$t/f-paths-out" | sed '1d;$d') \
      BUILT=$built FULL=$full bash "$t/f-tie.sh") > "$t/f.out" 2>&1
 }
@@ -476,6 +476,8 @@ grep -q 'carries 1.3.0' "$t/f.out" || { cat "$t/f.out"; fail "the refusal of a b
 find_real "$E" && { cat "$t/f.out"; fail "promote-staged took a descendant at 1.2.0 that changes the package for the build of $A"; }
 for p in src/a.c README.md; do grep -q "::error::$p changes the package since $A" "$t/f.out" || { cat "$t/f.out"; fail "the refusal of a changed descendant does not name $p"; }; done
 EXTRA_EXEMPT='src/** README.md' find_real "$E" || { cat "$t/f.out"; fail "the paths a repository exempts refused the promotion"; }
+EXTRA_EXEMPT="**" find_real "$B" && { cat "$t/f.out"; fail "the promotion took bump-exempt '**'"; }
+grep -qF "covers every path" "$t/f.out" || { cat "$t/f.out"; fail "the promotion's refusal of bump-exempt '**' is not named"; }
 rm "$ch/staging/deb/built/omx-a/1.2.0.commit"
 find_real "$B" && { cat "$t/f.out"; fail "promote-staged took a real build whose deb half records no commit"; }
 grep -q 'staging/deb holds no record' "$t/f.out" || { cat "$t/f.out"; fail "the missing deb record is not refused by name"; }
@@ -554,6 +556,28 @@ for c in 1.2.0+git1700000000.0123abc 1.2.0~git1700000000.0123abc 1.2.0-1+git1 1.
     devcheck "$c" && { cat "$t/vdev.out"; fail "build-deb.yml: the install check of a merge to devel of 1.2.0 took the candidate $c"; }
 done
 echo "build-deb.yml's install check takes 1.2.0 and 1.2.0-<revision> for a merge to devel of 1.2.0, and no other build: ok"
+
+# ---- 12. bump-exempt never covers a packaged file (GATE): package-paths.sh --check, which every reader of the exempt
+#      list runs (served-change.sh for the preflight and the pull request, the package-paths action for the promotion),
+#      refuses a glob over packaging/, debian/, a %doc or %license file of the spec, a debian/*.docs or *.install entry,
+#      or every path, naming the glob and the packaged file it covers.
+pp=$root/.github/actions/package-paths/package-paths.sh
+gt=$t/gate; rm -rf "$gt"; mkdir -p "$gt/packaging" "$gt/debian" "$gt/docs" "$gt/src"
+printf 'Name: omx-a\nVersion: 1.2.0\nRelease: 1\nSummary: t\nLicense: MIT\n%%description\nt\n%%files\n%%license LICENSE\n%%doc README.md docs/\n/usr/bin/omx-a\n%%changelog\n' > "$gt/packaging/omx-a.spec"
+printf 'NEWS\n' > "$gt/debian/omx-a.docs"; printf 'share/omx/* usr/share/omx\n' > "$gt/debian/omx-a.install"; echo c > "$gt/debian/control"
+gate() { (cd "$gt" && EXEMPT=$1 bash "$pp" --check < /dev/null) > "$t/gate.out" 2>&1; }
+for g in '**' '*' 'docs/**' 'README.md' '*.md' 'packaging/**' 'debian/*' 'NEWS' 'LICENSE' 'share/**' 'tools/** README.md'; do
+    gate "$g" && { cat "$t/gate.out"; fail "package-paths.sh accepted bump-exempt '$g', which covers a packaged file"; }
+    grep -q '::error::bump-exempt' "$t/gate.out" || { cat "$t/gate.out"; fail "the refusal of '$g' does not name the glob"; }
+done
+gate '*.md' || true; grep -qF "::error::bump-exempt glob '*.md' covers README.md" "$t/gate.out" || { cat "$t/gate.out"; fail "the refusal does not name the packaged file the glob covers"; }
+gate '**' || true; grep -qF "covers every path" "$t/gate.out" || { cat "$t/gate.out"; fail "a glob over every path is not refused as such"; }
+for g in '' 'tools/**' 'ci/** tools/*.py'; do
+    gate "$g" || { cat "$t/gate.out"; fail "package-paths.sh refused bump-exempt '$g', which covers no packaged file"; }
+done
+grep -q '"$here/package-paths.sh" --check' "$root/.github/actions/package-paths/served-change.sh" || fail "served-change.sh does not check the exempt list"
+grep -q '"$GITHUB_ACTION_PATH/package-paths.sh" --check' "$root/.github/actions/package-paths/action.yml" || fail "the package-paths action does not check the exempt list"
+echo "bump-exempt is refused, by glob and packaged file, over packaging/, debian/, %doc, %license, deb docs and install entries, or everything: ok"
 
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"
