@@ -118,6 +118,24 @@ for wf in wfs:
         if add != want_add: fails.append(f"{wf}: {name}: add-openmixer runs={add}, want {want_add}")
     if str(step["with"].get("staging-bootstrap")) != "${{ inputs.staging-bootstrap }}":
         fails.append(f"{wf}: staging-bootstrap is {step['with'].get('staging-bootstrap')}, not the caller's input as it is")
+    # a pull request into devel builds its own repository only: a lower layer is the staging channel's published
+    # package, never rebuilt from source, so contract-bootstrap (a sibling built at a named commit) does not run for it
+    boots = [s for s in build["steps"] if str(s.get("uses", "")).startswith("Open-Mixer/.github/.github/actions/contract-bootstrap@")]
+    if len(boots) != 1:
+        fails.append(f"{wf}: {len(boots)} contract-bootstrap steps in the build job")
+    else:
+        entry = "o/r@" + "0" * 40 + ":p-contract"
+        for name, event, base, bootstrap, want in [
+            ("a pull request into devel naming a bootstrap", "pull_request", "devel", entry, False),
+            ("a pull_request_target into devel naming a bootstrap", "pull_request_target", "devel", entry, False),
+            ("a pull request into main naming a bootstrap", "pull_request", "main", entry, True),
+            ("a dispatch naming a bootstrap", "workflow_dispatch", "", entry, True),
+            ("a pull request into devel naming none", "pull_request", "devel", "", False),
+        ]:
+            ctx = {"github.event_name": event, "github.base_ref": base, "inputs.bootstrap": bootstrap}
+            run = truthy(ev(boots[0]["if"], ctx))
+            if run != want:
+                fails.append(f"{wf}: {name}: contract-bootstrap runs={run}, want {want} (a devel pull request never rebuilds a lower layer from source)")
 if fails:
     print("\n".join(f"FAIL: {f}" for f in fails), file=sys.stderr)
     sys.exit(1)

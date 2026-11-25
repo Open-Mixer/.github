@@ -400,8 +400,10 @@ jobs:
 
       # bootstrap (Open-Mixer/.github#230): a sibling's -contract data packages, each built alone at its named commit;
       # installed here for the build and never released, or, with bootstrap-only, the release itself
+      # a pull request into devel builds its own repository only: the lower layers are the staging channel's published
+      # packages (add-openmixer added it), never rebuilt from source, so no bootstrap runs for it
       - uses: Open-Mixer/.github/.github/actions/contract-bootstrap@openmixer-v1
-        if: inputs.bootstrap != ''
+        if: inputs.bootstrap != '' && !(startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')
         with:
           kind: rpm
           entries: ${{ inputs.bootstrap }}
