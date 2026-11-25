@@ -374,15 +374,15 @@ bumprun rpm 1.3.0 || { cat "$t/bump.out"; fail "build-rpm.yml: a pull request in
 # itself. The caller is .github/workflows/release.yml (absent at the base: the default, empty).
 caller=Open-Mixer/omx-a/.github/workflows/release.yml@refs/pull/7/merge
 relyml() { mkdir -p "$g/.github/workflows"; printf 'on: {push: {branches: [devel]}, pull_request: {}}\njobs:\n  rpm:\n    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1\n    with:\n      package-name: omx-a\n      bump-exempt: %s\n' "'$1'" > "$g/.github/workflows/release.yml"; }
-gitc checkout -q -b widen "$base"; relyml 'tools/**'; mkdir -p "$g/tools"; echo t > "$g/tools/x.py"; gitc add -A; gitc commit -q -m widen-and-change
-CALLER=$caller bumprun rpm 1.2.0 'tools/**' && { cat "$t/bump.out"; fail "a pull request widening bump-exempt to cover its own tools/x.py passed"; }
-grep -qF "bump-exempt is '' at the merge base and 'tools/**' at the head" "$t/bump.out" || { cat "$t/bump.out"; fail "the refusal does not show both bump-exempt values"; }
-grep -qF "::error::tools/x.py changes the package since $base" "$t/bump.out" || { cat "$t/bump.out"; fail "the refusal does not name tools/x.py under the base value"; }
-gitc checkout -q -b widen-only "$base"; relyml 'tools/**'; gitc add -A; gitc commit -q -m widen-only; X=$(gitc rev-parse HEAD)
-CALLER=$caller bumprun rpm 1.2.0 'tools/**' || { cat "$t/bump.out"; fail "a pull request that only widens bump-exempt (.github/ alone) was refused"; }
-grep -qF "bump-exempt is '' at the merge base and 'tools/**' at the head" "$t/bump.out" || { cat "$t/bump.out"; fail "the pass of a widening pull request does not show both values"; }
-gitc checkout -q -b after-widen "$X"; mkdir -p "$g/tools"; echo t > "$g/tools/x.py"; gitc add -A; gitc commit -q -m tools-after
-PRBASE=$X CALLER=$caller bumprun rpm 1.2.0 'tools/**' || { cat "$t/bump.out"; fail "once the wider bump-exempt is on the base, a pull request changing tools/ was refused"; }
+gitc checkout -q -b widen "$base"; relyml 'tests/**'; mkdir -p "$g/tests"; echo t > "$g/tests/x.sh"; gitc add -A; gitc commit -q -m widen-and-change
+CALLER=$caller bumprun rpm 1.2.0 'tests/**' && { cat "$t/bump.out"; fail "a pull request widening bump-exempt to cover its own tests/x.sh passed"; }
+grep -qF "bump-exempt is '' at the merge base and 'tests/**' at the head" "$t/bump.out" || { cat "$t/bump.out"; fail "the refusal does not show both bump-exempt values"; }
+grep -qF "::error::tests/x.sh changes the package since $base" "$t/bump.out" || { cat "$t/bump.out"; fail "the refusal does not name tests/x.sh under the base value"; }
+gitc checkout -q -b widen-only "$base"; relyml 'tests/**'; gitc add -A; gitc commit -q -m widen-only; X=$(gitc rev-parse HEAD)
+CALLER=$caller bumprun rpm 1.2.0 'tests/**' || { cat "$t/bump.out"; fail "a pull request that only widens bump-exempt (.github/ alone) was refused"; }
+grep -qF "bump-exempt is '' at the merge base and 'tests/**' at the head" "$t/bump.out" || { cat "$t/bump.out"; fail "the pass of a widening pull request does not show both values"; }
+gitc checkout -q -b after-widen "$X"; mkdir -p "$g/tests"; echo t > "$g/tests/x.sh"; gitc add -A; gitc commit -q -m tools-after
+PRBASE=$X CALLER=$caller bumprun rpm 1.2.0 'tests/**' || { cat "$t/bump.out"; fail "once the wider bump-exempt is on the base, a pull request changing tests/ was refused"; }
 grep -q 'at the merge base and' "$t/bump.out" && { cat "$t/bump.out"; fail "equal bump-exempt values were reported as different"; }
 python3 -I - "$root" <<'PY2' || fail "a workflow's bump check is not told the caller's workflow file"
 import sys, yaml
@@ -468,7 +468,7 @@ import sys, yaml
 steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["find"]["steps"]
 p = [s for s in steps if s.get("id") == "paths"][0]
 assert "/actions/package-paths@" in p["uses"]
-assert p["with"] == {"base": "${{ steps.built.outputs.commit }}", "head": "${{ steps.built.outputs.full }}", "exempt": "${{ steps.exemptbase.outputs.value }}"}, p["with"]
+assert p["with"] == {"base": "${{ steps.built.outputs.commit }}", "head": "${{ steps.built.outputs.full }}", "exempt": "${{ steps.exemptbase.outputs.value }}", "at": "${{ steps.built.outputs.commit }}"}, p["with"]
 eb = [s for s in steps if s.get("id") == "exemptbase"][0]
 assert "/actions/base-exempt@" in eb["uses"] and eb["with"]["commit"] == "${{ steps.built.outputs.commit }}" \
     and eb["with"]["caller-workflow"] == "${{ github.workflow_ref }}" and eb["with"]["called"] == "promote-staged.yml" \
@@ -630,6 +630,31 @@ grep -q '"$here/package-paths.sh" --check' "$root/.github/actions/package-paths/
 # shellcheck disable=SC2016 # literal text of the action
 grep -q '"$GITHUB_ACTION_PATH/package-paths.sh" --check' "$root/.github/actions/package-paths/action.yml" || fail "the package-paths action does not check the exempt list"
 echo "bump-exempt is refused, by glob and packaged file, over packaging/, debian/, %doc, %license, deb docs and install entries, or everything: ok"
+# #296: beyond packaged files, a glob may cover only the allow-list of TRACKED files (git ls-files at the judged commit,
+# CHECK_AT): .github/**, tests/** when no package ships it, docs that are not %doc/%license or debian/*.docs. A glob over
+# a build source (src/**, *.c, include/**, CMakeLists.txt, meson.build, Makefile) is refused, naming glob and file.
+ga=$t/allow; rm -rf "$ga"; mkdir -p "$ga/packaging" "$ga/src" "$ga/include" "$ga/tests" "$ga/docs" "$ga/.github/workflows" "$ga/debian"
+printf 'Name: omx-a\nVersion: 1.2.0\nRelease: 1\nSummary: t\nLicense: MIT\n%%description\nt\n%%files\n%%doc README.md\n/usr/bin/omx-a\n' > "$ga/packaging/omx-a.spec"
+for f in src/a.c include/a.h CMakeLists.txt meson.build Makefile tests/t.sh docs/x.md README.md .github/workflows/ci.yml debian/control; do echo x > "$ga/$f"; done
+gita() { git -C "$ga" -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false "$@"; }
+gita init -q; gita add -A; gita commit -q -m tree; at=$(gita rev-parse HEAD)
+echo y > "$ga/src/b.c"   # untracked at the judged commit: not read
+allow() { (cd "$ga" && CHECK_AT=$at EXEMPT=$1 bash "$pp" --check < /dev/null) > "$t/allow.out" 2>&1; }
+for g in 'src/**' '*.c' 'CMakeLists.txt' 'meson.build' 'include/**' 'Makefile' 'tests/** src/a.c'; do
+    allow "$g" && { cat "$t/allow.out"; fail "package-paths.sh accepted bump-exempt '$g', which covers a tracked build source"; }
+    grep -q "::error::bump-exempt glob '[^']*' covers [^ ]*, a tracked file outside the allow-list" "$t/allow.out" || { cat "$t/allow.out"; fail "the refusal of '$g' does not name the glob and the tracked file"; }
+done
+allow '*.c' || true; grep -qF "::error::bump-exempt glob '*.c' covers src/a.c, a tracked file outside the allow-list" "$t/allow.out" || { cat "$t/allow.out"; fail "the *.c refusal does not name src/a.c"; }
+for g in '.github/**' 'tests/**' 'docs/x.md' 'docs/**' 'nothing/**'; do
+    allow "$g" || { cat "$t/allow.out"; fail "package-paths.sh refused bump-exempt '$g', which covers only allow-listed files"; }
+done
+printf 'tests/* usr/share/omx-a/tests\n' > "$ga/debian/omx-a.install"; gita add -A; gita commit -q -m ship-tests; at=$(gita rev-parse HEAD)
+allow 'tests/**' && { cat "$t/allow.out"; fail "package-paths.sh accepted bump-exempt 'tests/**' where debian/*.install ships tests"; }
+grep -qF 'CHECK_AT=${EXEMPT_AT:-} "$here/package-paths.sh" --check' "$root/.github/actions/package-paths/served-change.sh" || fail "served-change.sh does not judge the list at the commit it was read at"
+grep -qF 'EXEMPT_AT=$from' "$root/.github/actions/release-preflight/action.yml" || fail "the preflight does not name the commit the list was read at"
+grep -qF 'EXEMPT_AT=$CHANGE_BASE' "$root/.github/actions/devel-bump-check/action.yml" || fail "the pull request check does not name the commit the list was read at"
+grep -qF 'at: ${{ steps.built.outputs.commit }}' "$pw" || fail "the promotion does not judge the list at the build"
+echo "bump-exempt covers only .github/**, unshipped tests/** and uninstalled docs among the tracked files: ok"
 
 # ---- 13. the caller is told when a merge to devel was skipped (G2, .github#297): both reusable workflows declare the
 #      workflow_call outputs skipped and devel-version, mapped from the preflight job's own outputs, so a caller's post-build

@@ -199,8 +199,8 @@ runs:
             if [ -n "${CALLER:-}" ]; then
               if [ -n "$built" ]; then from=$built fromlabel="the build"; else from=${BEFORE:-} fromlabel="github.event.before"; fi
               got=$("$GITHUB_ACTION_PATH/../devel-bump-check/base-exempt.sh" "$from" "$CALLER" "build-$KIND.yml" "${EXEMPT:-}" "$fromlabel" "HEAD") || { printf '%s\n' "$got"; exit 1; }
-              EXEMPT=$(sed -n 's/^value=//p' <<< "$got") judged=$(sed -n 's/^differs=//p' <<< "$got")
-              export EXEMPT
+              EXEMPT=$(sed -n 's/^value=//p' <<< "$got") judged=$(sed -n 's/^differs=//p' <<< "$got") EXEMPT_AT=$from
+              export EXEMPT EXEMPT_AT
               [ -z "$judged" ] || echo "::notice::$judged: this push is judged by the value at $fromlabel; a changed bump-exempt takes effect once a build or push starts from it"
             fi
             "$GITHUB_ACTION_PATH/../package-paths/served-change.sh" "$DEVEL_VERSION" "$rec" "$built" "${BEFORE:-}" "this push (github.event.before..HEAD)" || {

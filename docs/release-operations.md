@@ -228,7 +228,11 @@ files. The devel build is the real package at its real version, never a pre-rele
   install, and a glob that covers one is refused by every reader of the list (`package-paths.sh --check`: the
   preflight, the pull request's check and the promotion), naming the glob and the file: anything under `packaging/`
   or `debian/`, a `%doc` or `%license` file of the spec's `%files` sections, a `debian/*.docs` entry, the source of a
-  `debian/*.install` entry, or every path (`**`, `*`). A pull request cannot widen its own exemption over packaged
+  `debian/*.install` entry, or every path (`**`, `*`). Beyond packaged files, a glob may cover only an allow-list of the
+  TRACKED files at the commit the list was read at (`git ls-files` there, .github#296): `.github/**`, `tests/**` when
+  no package ships it, and docs (`docs/`, `doc/`, `*.md`, `*.rst`, `*.adoc`) that are not `%doc`, `%license` or
+  `debian/*.docs` entries. A glob over a build source (`src/**`, `*.c`, `include/**`, `CMakeLists.txt`, `meson.build`,
+  `Makefile`) is refused, naming the glob and the file. A pull request cannot widen its own exemption over packaged
   files, nor change the value it is judged by: `devel-bump-check` reads `bump-exempt` from the caller's workflow file
   (`github.workflow_ref`) at the merge base, and when the head's value differs it judges with the base value, naming
   both (`exempt-at.py`, .github#292). A pull request that only widens `bump-exempt` and changes `.github/**` passes;

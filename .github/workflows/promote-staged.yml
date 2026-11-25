@@ -254,6 +254,8 @@ jobs:
           base: ${{ steps.built.outputs.commit }}
           head: ${{ steps.built.outputs.full }}
           exempt: ${{ steps.exemptbase.outputs.value }}
+          # judged on the tracked files of the build, where the value was read (.github#296)
+          at: ${{ steps.built.outputs.commit }}
 
       # the tie: the promotion's commit carries the version, is the devel commit that built it or descends from it, and
       # changes no package since it

@@ -24,7 +24,8 @@ else
         { echo "::error::v$version is served, $rec does not record the commit that built it, and $label cannot be read (its base is '${base:-none}'): bump the version"; exit 1; }
     from=$base since="in $label, and the served v$version has no build record ($rec)"
 fi
-"$here/package-paths.sh" --check
+# the exempt list is judged on the tree it was read at (EXEMPT_AT, base-exempt.sh), else the checkout (.github#296)
+CHECK_AT=${EXEMPT_AT:-} "$here/package-paths.sh" --check
 changed=$(git diff --name-only "$from" HEAD | "$here/package-paths.sh")
 if [ -n "$changed" ]; then
     while IFS= read -r p; do echo "::error::$p changes the package $since: bump the version"; done <<< "$changed"

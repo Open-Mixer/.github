@@ -10,6 +10,9 @@ inputs:
   head:
     description: the later commit
     default: HEAD
+  at:
+    description: the commit the exempt list was read at, whose tracked files the list is judged on (.github#296); empty judges the checkout
+    default: ''
   exempt:
     description: globs, space separated, the repository adds to the exempt default (.github/**)
     default: ''
@@ -31,6 +34,7 @@ runs:
         BASE: ${{ inputs.base }}
         HEAD_REF: ${{ inputs.head }}
         EXEMPT: ${{ inputs.exempt }}
+        CHECK_AT: ${{ inputs.at }}
       run: |
         set -euo pipefail
         git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin "$BASE" ||
