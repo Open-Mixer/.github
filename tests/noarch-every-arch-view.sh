@@ -131,6 +131,12 @@ for f in "$tree"/fedora/45/x86_64/omx-contract-*3.21.0*.rpm; do
     [ "$(rpm -qp --qf '%{SIGPGP:pgpsig}%{RSAHEADER:pgpsig}' "$f" 2>/dev/null | sed 's/(none)//g')" = "" ] || fail "the refused run signed $(basename "$f")"
 done
 ok "check: the old placement is refused, naming omx-contract-devel and each view (aarch64 3.19.1, x86_64 3.21.0); nothing signed"
+# a frozen release (release-matrix/frozen.txt) is never judged: the same skewed tree passes once fedora/45 is listed
+if "$actions/publish-rpms/noarch-views.py" check "$tree" omx-contract-devel 2> "$work/log"; then cat "$work/log"; fail "the skewed tree passed the check with the real frozen list"; fi
+grep -q 'refused fedora/45: omx-contract-devel' "$work/log" || { cat "$work/log"; fail "the direct check does not refuse the skewed fedora/45"; }
+printf 'rpm 45\n' > "$work/frozen45.txt"
+PROMOTE_FROZEN="$work/frozen45.txt" "$actions/publish-rpms/noarch-views.py" check "$tree" omx-contract-devel 2> "$work/log" || { cat "$work/log"; fail "a skew in a frozen release refused the check"; }
+ok "check: a skew in a frozen release (rpm 45 listed) is not judged; unlisted, the same tree is refused"
 
 # ---- 3. a full run of the same packages passes the check (every noarch package in fedora/45/noarch)
 restore
