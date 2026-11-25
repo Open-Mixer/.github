@@ -8,9 +8,11 @@
 #
 # The exception mechanism is the --lint argument (the action's `lint-workflow` input): the file name of the
 # repository's one lint workflow. That file may carry any trigger. Every other workflow is refused when it has
-#   push: with branches, branches-ignore, paths, paths-ignore, no filter at all, or a tags-ignore without tags;
+#   push: with branches other than exactly [devel], branches-ignore, paths, paths-ignore, no filter at all, or a
+#   tags-ignore without tags;
 #   pull_request, pull_request_target, merge_group: always.
-# A push that names `tags:` and no branch or path filter is the release and passes. workflow_dispatch, workflow_call,
+# A push that names `tags:`, `branches: [devel]` or both, and no other filter, is the release and passes: a merge to
+# devel publishes its packages to the staging channel (owner, 2026-11-25; .github#289). workflow_dispatch, workflow_call,
 # schedule, repository_dispatch, release and the rest pass.
 # Output: one `TRIGGER-REFUSED <file>: <trigger>` per refusal then a summary line and exit 1; clean prints
 # `TRIGGER-GATE OK <n> workflows`. Reading no workflow is a failure, and so is a file that does not parse.
@@ -55,8 +57,10 @@ for f in files:
             refused.append((name, t))
     if "push" in trig:
         p = trig["push"]
-        tags_only = isinstance(p, dict) and p.get("tags") and not any(k in p for k in ("branches", "branches-ignore", "paths", "paths-ignore"))
-        if not tags_only:
+        # the release: tags, and/or the branch devel itself (a merge to devel publishes to staging), no other filter
+        release = isinstance(p, dict) and (p.get("tags") or p.get("branches") == ["devel"]) \
+            and p.get("branches", ["devel"]) == ["devel"] and not any(k in p for k in ("branches-ignore", "paths", "paths-ignore"))
+        if not release:
             refused.append((name, "push"))
 if bad_parse:
     sys.exit(2)
@@ -88,6 +92,19 @@ self_test() {
   expect 1 "pull_request on a workflow that is not the lint"; rm "$w/pr.yml"
   printf 'on:\n  push:\n    branches: [main]\njobs: {}\n' > "$w/pb.yml"
   expect 1 "push with branches"; rm "$w/pb.yml"
+  # a merge to devel publishes to the staging channel (owner, 2026-11-25; .github#289): the release workflow's push
+  # may name the branch devel beside its tags, and devel alone
+  printf 'on:\n  push:\n    tags: ["v*"]\n    branches: [devel]\njobs: {}\n' > "$w/rel.yml"
+  expect 0 "the release on tags and on a push to devel"
+  printf 'on:\n  push:\n    branches: [devel]\njobs: {}\n' > "$w/rel.yml"
+  expect 0 "a push to devel alone"
+  printf 'on:\n  push:\n    tags: ["v*"]\n    branches: [devel, main]\njobs: {}\n' > "$w/rel.yml"
+  expect 1 "a push to devel and to another branch"
+  printf 'on:\n  push:\n    branches: ["dev*"]\njobs: {}\n' > "$w/rel.yml"
+  expect 1 "a branch pattern that is not devel itself"
+  printf 'on:\n  push:\n    branches: [devel]\n    paths: ["a"]\njobs: {}\n' > "$w/rel.yml"
+  expect 1 "a push to devel with a paths filter"
+  printf 'on:\n  push:\n    tags: ["v*"]\njobs: {}\n' > "$w/rel.yml"
   printf 'on: push\njobs: {}\n' > "$w/ps.yml"
   expect 1 "push with no filter"; rm "$w/ps.yml"
   printf 'on:\n  push:\n    tags: ["v*"]\n    paths: ["a"]\njobs: {}\n' > "$w/pp.yml"

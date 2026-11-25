@@ -7,7 +7,8 @@ description: Fail when a workflow other than the repository's one lint workflow 
 # workflow_dispatch, workflow_call, schedule, repository_dispatch and release, plus at most ONE cheap lint workflow
 # per repository. The exception is named by the `lint-workflow` input (the file name under .github/workflows/): the
 # calling repository's one lint workflow calls this action with its own name, and that is the only file allowed the
-# four refused triggers. A push limited to tags (`push: {tags: [...]}`, no branches or paths) is the release and passes.
+# four refused triggers. A push limited to tags, to the branch devel, or to both (`push: {tags: [...], branches: [devel]}`, no other filter) is the
+# release and passes: a merge to devel publishes its packages to the staging channel (owner, 2026-11-25; .github#289).
 # The caller has checked the repository out. The action first proves the check goes red on each planted failure.
 
 inputs:
