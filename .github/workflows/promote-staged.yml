@@ -73,6 +73,10 @@ on:
         type: string
         default: ''
         description: 'A dry run only: the commit of the staged build, short or full. A tag push uses the commit the tag is on'
+      bump-exempt:
+        type: string
+        default: ''
+        description: 'Globs, space separated, added to the paths that change no package (.github/** alone by default, package-paths.sh), as the build workflows take them: a real build is promoted only from a commit with no other change since the devel commit that built it'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -229,7 +233,17 @@ jobs:
           kind: deb
           dir: ${{ steps.built.outputs.tree }}
 
-      # the tie: the promotion's commit carries the version and is the devel commit that built it, or descends from it
+      # what changed from the build to the promotion's commit that can change a package (the one definition: package-paths)
+      - id: paths
+        if: steps.built.outputs.commit != ''
+        uses: Open-Mixer/.github/.github/actions/package-paths@openmixer-v1
+        with:
+          base: ${{ steps.built.outputs.commit }}
+          head: ${{ steps.built.outputs.full }}
+          exempt: ${{ inputs.bump-exempt }}
+
+      # the tie: the promotion's commit carries the version, is the devel commit that built it or descends from it, and
+      # changes no package since it
       - id: tie
         name: The promotion's commit is the build's, or descends from it, at the same version
         if: steps.built.outputs.commit != ''
@@ -240,6 +254,8 @@ jobs:
           FULL: ${{ steps.built.outputs.full }}
           RPMV: ${{ steps.rpmver.outputs.version }}
           DEBV: ${{ steps.debver.outputs.version }}
+          COUNT: ${{ steps.paths.outputs.count }}
+          PATHS: ${{ steps.paths.outputs.paths }}
         run: |
           set -euo pipefail
           for v in "rpm:$RPMV" "deb:$DEBV"; do
@@ -251,7 +267,14 @@ jobs:
             { echo "::error::$GITHUB_REPOSITORY has no commit $BUILT, which built the real $NAME $VERSION"; exit 1; }
           git merge-base --is-ancestor "$BUILT" "$FULL" ||
             { echo "::error::$FULL does not descend from $BUILT, the devel commit that built the real $NAME $VERSION: it is not promoted"; exit 1; }
-          echo "$FULL is $BUILT or descends from it, at $VERSION"
+          [ -n "$COUNT" ] || { echo "::error::what changed since $BUILT was not read: the real $NAME $VERSION is not promoted"; exit 1; }
+          if [ "$COUNT" != 0 ]; then
+            while IFS= read -r p; do
+              [ -z "$p" ] || echo "::error::$p changes the package since $BUILT, the devel commit that built the real $NAME $VERSION: $FULL is not the build being promoted"
+            done <<< "$PATHS"
+            exit 1
+          fi
+          echo "$FULL is $BUILT or descends from it, at $VERSION, and changes no package since"
           echo "real=true" >> "$GITHUB_OUTPUT"
 
       - id: rpm

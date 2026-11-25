@@ -414,10 +414,13 @@ setv() { printf 'Name: omx-a\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLice
          printf 'omx-a (%s-1) trixie; urgency=medium\n\n  * t\n\n -- T <t@example.org>  Tue, 25 Nov 2026 12:00:00 +0000\n' "$1" > "$r/debian/changelog"; }
 setv 1.1.0; gitr init -q -b main; gitr add -A; gitr commit -q -m root
 gitr checkout -q -b devel; setv 1.2.0; gitr commit -q -am devel-1.2.0; A=$(gitr rev-parse HEAD)
-gitr checkout -q main; echo x > "$r/x"; gitr add -A; gitr commit -q -m main-side; gitr merge -q --no-ff -m merge devel; B=$(gitr rev-parse HEAD)
+gitr checkout -q main; mkdir -p "$r/.github"; echo x > "$r/.github/ci.yml"; gitr add -A; gitr commit -q -m main-side; gitr merge -q --no-ff -m merge devel; B=$(gitr rev-parse HEAD)
 gitr checkout -q -b other main~1; setv 1.2.0; gitr commit -q -am unrelated-1.2.0; C=$(gitr rev-parse HEAD)
 gitr checkout -q main; gitr merge -q --no-ff -m merge-other other; CM=$(gitr rev-parse HEAD)
-gitr checkout -q -b bump "$B"; setv 1.3.0; gitr commit -q -am bump; D=$(gitr rev-parse HEAD); gitr checkout -q main
+gitr checkout -q -b bump "$B"; setv 1.3.0; gitr commit -q -am bump; D=$(gitr rev-parse HEAD)
+# R3: E descends from B at 1.2.0 and changes the package (src/a.c, README.md): it is not the build being promoted
+gitr checkout -q -b more "$B"; mkdir -p "$r/src"; echo c > "$r/src/a.c"; echo r > "$r/README.md"; gitr add -A; gitr commit -q -m more; E=$(gitr rev-parse HEAD)
+gitr checkout -q main
 gitr update-ref refs/remotes/origin/main "$CM"
 ch=$t/promo-channel; rm -rf "$ch"; mkdir -p "$ch/.git" "$ch/staging/rpm/built/omx-a" "$ch/staging/deb/built/omx-a"
 echo "$A" > "$ch/staging/rpm/built/omx-a/1.2.0.commit"; echo "$A" > "$ch/staging/deb/built/omx-a/1.2.0.commit"
@@ -425,6 +428,15 @@ pw=$root/.github/workflows/promote-staged.yml
 python3 -I "$step" "$root" "$pw" find id=built "$t/f-built.sh"
 python3 -I "$step" "$root" "$pw" find id=tie "$t/f-tie.sh"
 python3 -I "$step" "$root" "$pw" find id=commit "$t/f-commit.sh"
+python3 -I - "$pw" <<'PY2' || fail "promote-staged's paths step is not package-paths from the build to the promotion, with the caller's bump-exempt"
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["find"]["steps"]
+p = [s for s in steps if s.get("id") == "paths"][0]
+assert "/actions/package-paths@" in p["uses"]
+assert p["with"] == {"base": "${{ steps.built.outputs.commit }}", "head": "${{ steps.built.outputs.full }}", "exempt": "${{ inputs.bump-exempt }}"}, p["with"]
+tie = [s for s in steps if s.get("id") == "tie"][0]
+assert tie["env"]["COUNT"] == "${{ steps.paths.outputs.count }}" and tie["env"]["PATHS"] == "${{ steps.paths.outputs.paths }}"
+PY2
 outv() { sed -n "s/^$1=//p" "$2" | tail -n1; }
 find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built, version and tie steps; log in $t/f.out
     local o=$t/f-gh; : > "$o"; rm -rf "$t/promo-tree"
@@ -438,7 +450,11 @@ find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built,
         GITHUB_OUTPUT=$t/f-$k-out bash "$t/f-$k.sh" > /dev/null || exit $?
         export "${k^^}V=$(outv version "$t/f-$k-out")"
      done
-     BUILT=$built FULL=$(outv full "$o") bash "$t/f-tie.sh") > "$t/f.out" 2>&1
+     full=$(outv full "$o")
+     python3 -I "$step" "$root" "$pw" find id=paths "$t/f-paths.sh" base="$built" head="$full" exempt="${EXTRA_EXEMPT:-}"
+     GITHUB_OUTPUT=$t/f-paths-out bash "$t/f-paths.sh" > /dev/null || exit $?
+     COUNT=$(outv count "$t/f-paths-out") PATHS=$(sed -n '/^paths<<PACKAGE_PATHS_EOF$/,/^PACKAGE_PATHS_EOF$/p' "$t/f-paths-out" | sed '1d;$d') \
+     BUILT=$built FULL=$full bash "$t/f-tie.sh") > "$t/f.out" 2>&1
 }
 command -v dpkg-parsechangelog >/dev/null || cp "$t/bin/dpkg-parsechangelog" "$t/pbin/"
 mv "$t/pbin/rpm" "$t/pbin/rpm.stub"   # the find job reads the spec with the real rpmspec
@@ -449,6 +465,9 @@ find_real "$C" && { cat "$t/f.out"; fail "promote-staged took an unrelated commi
 grep -q "does not descend from $A" "$t/f.out" || { cat "$t/f.out"; fail "the refusal of an unrelated commit does not name the devel commit"; }
 find_real "$D" && { cat "$t/f.out"; fail "promote-staged took a descendant carrying 1.3.0 for the real 1.2.0"; }
 grep -q 'carries 1.3.0' "$t/f.out" || { cat "$t/f.out"; fail "the refusal of a bumped descendant does not name its version"; }
+find_real "$E" && { cat "$t/f.out"; fail "promote-staged took a descendant at 1.2.0 that changes the package for the build of $A"; }
+for p in src/a.c README.md; do grep -q "::error::$p changes the package since $A" "$t/f.out" || { cat "$t/f.out"; fail "the refusal of a changed descendant does not name $p"; }; done
+EXTRA_EXEMPT='src/** README.md' find_real "$E" || { cat "$t/f.out"; fail "the paths a repository exempts refused the promotion"; }
 rm "$ch/staging/deb/built/omx-a/1.2.0.commit"
 find_real "$B" && { cat "$t/f.out"; fail "promote-staged took a real build whose deb half records no commit"; }
 grep -q 'staging/deb holds no record' "$t/f.out" || { cat "$t/f.out"; fail "the missing deb record is not refused by name"; }

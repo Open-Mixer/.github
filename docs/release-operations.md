@@ -231,8 +231,10 @@ files. The devel build is the real package at its real version, never a pre-rele
   (`built-commit` of `publish-rpms` and `publish-debs`, `record-built.sh`; a record naming another commit is
   refused). `promote-staged`'s find job reads it for every kind it promotes (one record missing, or two naming
   different commits, is refused) and promotes the real build only when the promotion's commit (the tag's, or the dry
-  run's input) carries the same version in its spec and changelog (`tree-version`) AND is that commit or descends from
-  it (`git merge-base --is-ancestor`). It then asks `collect.py` for `--commit real`, which no commit sha selects, and
+  run's input) carries the same version in its spec and changelog (`tree-version`), is that commit or descends from
+  it (`git merge-base --is-ancestor`), AND changes no package since it: every path from the build to it that can change
+  a package (`package-paths`, the same definition and `bump-exempt` as the build) is refused by name, because a
+  descendant with package changes is not the build being promoted. It then asks `collect.py` for `--commit real`, which no commit sha selects, and
   the install checks require that real version (no `.git`, no `+git`). Promotion copies its bytes, checked checksum
   for checksum.
 - **When one kind published and the other failed.** build-rpm.yml and build-deb.yml are two workflows of the
