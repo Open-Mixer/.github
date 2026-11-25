@@ -214,7 +214,9 @@ files. The devel build is the real package at its real version, never a pre-rele
   ```
 
   in general `if: needs.<call>.outputs.skipped != 'true'`; otherwise it goes red on a merge that rightly published
-  nothing.
+  nothing. The output is a string: quote `'true'`. trigger-gate (`check.sh`, which the callers run over their
+  workflows) refuses any other comparison (`!= true`, `== true`, `"true"`, which is no string in GitHub's expression
+  grammar) and a bare test in an `if:`, naming file, job and expression (.github#299).
 - **The missing bump is red on the pull request first.** `devel-bump-check` judges a pull request into devel the same
   way: when its head version is published, in the channel root or staging, every path changed since the recorded
   build that can change a package is refused, named with the served file; with no record, the pull request's own

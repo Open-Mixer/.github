@@ -14,13 +14,18 @@
 # A push that names `tags:`, `branches: [devel]` or both, and no other filter, is the release and passes: a merge to
 # devel publishes its packages to the staging channel (owner, 2026-11-25; .github#289). workflow_dispatch, workflow_call,
 # schedule, repository_dispatch, release and the rest pass.
+# A caller's guard on a merge to devel that published nothing (.github#297) is checked too: an expression that reads
+# needs.<job>.outputs.skipped, <job> calling build-rpm.yml or build-deb.yml, compares it with the quoted string 'true'
+# (== or !=, either side); any other comparison (true unquoted, "true", which is no string in GitHub's grammar) and an
+# `if:` that tests it bare are refused, naming file, job and expression: the output is a string, and an unquoted true
+# compares it with a boolean, so the guard never skips.
 # Output: one `TRIGGER-REFUSED <file>: <trigger>` per refusal then a summary line and exit 1; clean prints
 # `TRIGGER-GATE OK <n> workflows`. Reading no workflow is a failure, and so is a file that does not parse.
 set -euo pipefail
 
 gate() {  # gate <lint-file> <root>
   python3 - "$1" "$2" <<'PY'
-import glob, os, sys
+import glob, os, re, sys
 try:
     import yaml
 except ImportError:
@@ -55,6 +60,29 @@ for f in files:
     for t in BAD:
         if t in trig:
             refused.append((name, t))
+    # the skipped output of a build-rpm.yml / build-deb.yml call is compared with the quoted 'true' alone (.github#297)
+    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    calls = {j for j, b in jobs.items() if isinstance(b, dict) and re.search(r"/workflows/build-(rpm|deb)\.yml(@|$)", str(b.get("uses", "")))}
+    if calls:
+        ref = re.compile(r"needs\.(%s)\.outputs\.skipped\b" % "|".join(re.escape(c) for c in sorted(calls)))
+        def walk(node, job, key):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    walk(v, job, k)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v, job, key)
+            elif isinstance(node, str):
+                for m in ref.finditer(node):
+                    # an operand: a quoted string (\x27 single, \x22 double) or a bare word
+                    after = re.match(r"\s*(==|!=)\s*(\x27[^\x27]*\x27|\x22[^\x22]*\x22|[^\s)&|]+)", node[m.end():])
+                    before = re.search(r"(\x27[^\x27]*\x27|\x22[^\x22]*\x22|[^\s(&|!]+)\s*(==|!=)\s*$", node[:m.start()])
+                    operand = after.group(2) if after else before.group(1) if before else None
+                    if operand == "'true'" or (operand is None and key != "if"):
+                        continue
+                    refused.append((name, "job %s: %s (compare outputs.skipped with the quoted 'true')" % (job, node.strip())))
+        for j, b in jobs.items():
+            walk(b, j, None)
     if "push" in trig:
         p = trig["push"]
         # the release: tags, and/or the branch devel itself (a merge to devel publishes to staging), no other filter
@@ -113,6 +141,24 @@ self_test() {
   expect 1 "merge_group"; rm "$w/mg.yml"
   printf 'on:\n  pull_request_target:\njobs: {}\n' > "$w/prt.yml"
   expect 1 "pull_request_target"; rm "$w/prt.yml"
+  # a caller's guard on a skipped merge to devel (.github#297) compares needs.<call>.outputs.skipped with the quoted
+  # string 'true': GitHub's outputs are strings, so an unquoted true compares a string with a boolean and never skips
+  sk() {  # sk <if expression>: a caller whose install check reads the skipped output of its build-rpm.yml call
+    printf 'on: [workflow_dispatch]\njobs:\n  rpm:\n    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1\n  check:\n    needs: rpm\n    if: %s\n    runs-on: ubuntu-latest\n    steps: [{run: "true"}]\n' "$1" > "$w/sk.yml"
+  }
+  sk "needs.rpm.outputs.skipped != 'true'"; expect 0 "a quoted guard on outputs.skipped"
+  sk "\${{ 'true' == needs.rpm.outputs.skipped && false }}"; expect 0 "a quoted guard written the other way round"
+  sk "needs.rpm.outputs.skipped != true"; expect 1 "an unquoted != true on outputs.skipped"
+  grep -qF "TRIGGER-REFUSED sk.yml: job check: needs.rpm.outputs.skipped != true" "$t/out" || { echo "self-test FAILED: the unquoted guard is not named with file, job and expression"; cat "$t/out"; exit 1; }
+  sk "needs.rpm.outputs.skipped == true"; expect 1 "an unquoted == true on outputs.skipped"
+  # GitHub's expression grammar has single-quoted strings only: "true" is not a string literal there (actionlint
+  # refuses it as well)
+  sk "needs.rpm.outputs.skipped != \"true\""; expect 1 "a double-quoted \"true\" on outputs.skipped"
+  sk "needs.rpm.outputs.skipped"; expect 1 "a bare truthiness test of outputs.skipped"
+  sk "\${{ !needs.rpm.outputs.skipped }}"; expect 1 "a negated truthiness test of outputs.skipped"
+  printf 'on: [workflow_dispatch]\njobs:\n  other:\n    uses: ./.github/workflows/x.yml\n  check:\n    needs: other\n    if: needs.other.outputs.skipped\n    runs-on: ubuntu-latest\n    steps: [{run: "true"}]\n' > "$w/sk.yml"
+  expect 0 "the skipped output of a job that calls neither build-rpm.yml nor build-deb.yml"
+  rm "$w/sk.yml"
   # sabotage: the tag-only release gains a branch filter and must go red
   printf 'on:\n  push:\n    tags: ["v*"]\n    branches: [main]\njobs: {}\n' > "$w/rel.yml"
   expect 1 "sabotage: tag-only fixture given push branches"
