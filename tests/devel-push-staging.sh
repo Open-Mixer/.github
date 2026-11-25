@@ -505,6 +505,31 @@ for want in 'one kind published and the other failed' 'rerun the failed jobs' 'g
 done
 echo "a half-published merge to devel: each kind's rerun reads its own half; the doc gives the rerun, the fix forward and the rule: ok"
 
+# ---- 11. build-deb.yml's install check of a merge to devel matches the staged candidate with its Debian revision
+#      handled (R4): the version read (tree-version) has none, the package has <version>-<revision>; a +git or ~git
+#      build of the version, another version, and a revision that is no Debian revision are not it.
+python3 -I "$step" "$root" "$root/.github/workflows/build-deb.yml" verify "name=Install the staged build of this commit from the staging channel" "$t/vdev.sh"
+cat > "$t/pbin/apt-cache" <<'STUB'
+#!/bin/bash
+case $1 in
+  policy) printf '%s:\n  Installed: (none)\n  Candidate: %s\n' "$2" "$CAND" ;;
+esac
+STUB
+chmod +x "$t/pbin/apt-cache"
+devcheck() { # devcheck <candidate> -> status
+    rm -rf "$t/state"; mkdir -p "$t/state"
+    STATE=$t/state PATH=$t/pbin:$PATH CAND=$1 DEVEL_VERSION=1.2.0 NAME=omx-a BINARIES=omx-a URL=x SUITE=trixie GITHUB_SHA=0123abc0123abc \
+        bash "$t/vdev.sh" > "$t/vdev.out" 2>&1
+}
+for c in 1.2.0 1.2.0-1 1.2.0-2+deb13u1; do
+    devcheck "$c" || { cat "$t/vdev.out"; fail "build-deb.yml: the install check of a merge to devel of 1.2.0 refused the candidate $c"; }
+    grep -qx "install -y --no-install-recommends omx-a=$c" "$t/state/apt.log" || fail "build-deb.yml: $c was not installed"
+done
+for c in 1.2.0+git1700000000.0123abc 1.2.0~git1700000000.0123abc 1.2.0-1+git1 1.2.1 1.2.0.1 1.2.0-; do
+    devcheck "$c" && { cat "$t/vdev.out"; fail "build-deb.yml: the install check of a merge to devel of 1.2.0 took the candidate $c"; }
+done
+echo "build-deb.yml's install check takes 1.2.0 and 1.2.0-<revision> for a merge to devel of 1.2.0, and no other build: ok"
+
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"
 echo "trigger-gate: a push to devel passes, any other branch is refused: ok"

@@ -834,7 +834,18 @@ jobs:
               # dispatch, the real <version> itself for a merge to devel (built once, .github#289), pinned from staging
               cand=$(apt-cache policy "$bin" | awk '/Candidate:/ {print $2}')
               short=$(printf '%s\n' "$cand" | sed -n 's/.*+git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\).*/\1/p')
-              if [ -n "$DEVEL_VERSION" ]; then mine=$([ "$cand" = "$DEVEL_VERSION" ] && echo 1)
+              if [ -n "$DEVEL_VERSION" ]; then
+                # the version read (tree-version) carries no Debian revision, the package may: <version> (native) or
+                # <version>-<revision>; a revision that is no Debian revision (empty, a snapshot stamp) cannot be told
+                # from another build and is refused by name
+                mine=
+                case $cand in
+                  "$DEVEL_VERSION") mine=1 ;;
+                  "$DEVEL_VERSION"-*)
+                    rev=${cand#"$DEVEL_VERSION"-}
+                    if [[ $rev =~ ^[0-9][0-9A-Za-z.+~]*$ ]] && [[ $rev != *git* ]]; then mine=1
+                    else echo "::error::the candidate $bin $cand carries $DEVEL_VERSION with '-$rev', which is no Debian revision of it: not the real $DEVEL_VERSION a merge to devel staged"; exit 1; fi ;;
+                esac
               else mine=$([ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] && echo 1); fi
               if [ -n "$mine" ] && apt-get install -y --no-install-recommends "$bin=$cand"; then
                 dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
