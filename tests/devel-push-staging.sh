@@ -440,6 +440,7 @@ PY2
 outv() { sed -n "s/^$1=//p" "$2" | tail -n1; }
 find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built, version and tie steps; log in $t/f.out
     local o=$t/f-gh; : > "$o"; rm -rf "$t/promo-tree"
+    # shellcheck disable=SC2030 # the stubs are on PATH for this subshell alone
     (cd "$r" && export PATH=$t/pbin:$PATH GITHUB_OUTPUT=$o RUNNER_TEMP=$t NAME=omx-a VERSION=1.2.0 RUN_COMMIT=$1 RPM=${2:-true} DEB=${3:-true} \
         CHANNEL=Open-Mixer/open-mixer.github.io DIR=$ch
      bash "$t/f-built.sh" || exit $?
@@ -518,6 +519,7 @@ STUB
 chmod +x "$t/pbin/apt-cache"
 devcheck() { # devcheck <candidate> -> status
     rm -rf "$t/state"; mkdir -p "$t/state"
+    # shellcheck disable=SC2031 # PATH is set for this command alone
     STATE=$t/state PATH=$t/pbin:$PATH CAND=$1 DEVEL_VERSION=1.2.0 NAME=omx-a BINARIES=omx-a URL=x SUITE=trixie GITHUB_SHA=0123abc0123abc \
         bash "$t/vdev.sh" > "$t/vdev.out" 2>&1
 }

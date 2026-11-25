@@ -100,7 +100,7 @@ gitr init -q; gitr add -A; gitr commit -q -m built; A=$(gitr rev-parse HEAD); ec
 mkdir -p "$repo/.github"; echo w > "$repo/.github/ci.yml"; gitr add -A; gitr commit -q -m workflow; B=$(gitr rev-parse HEAD)
 echo c > "$repo/src/a.c"; gitr commit -q -am code; C=$(gitr rev-parse HEAD); gitr checkout -q "$B"
 rundevel() { # rundevel <devel version> [catch-up] [releases]
-  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT= PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
+  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT='' PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
     REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=${3-44} CATCH_UP=${2:-false} \
     DEVEL_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1; local rc=$?; cd "$here"; return $rc
 }
