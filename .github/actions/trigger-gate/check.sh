@@ -15,8 +15,8 @@
 # devel publishes its packages to the staging channel (owner, 2026-11-25; .github#289). workflow_dispatch, workflow_call,
 # schedule, repository_dispatch, release and the rest pass.
 # A caller's guard on a merge to devel that published nothing (.github#297) is checked too: an expression that reads
-# needs.<job>.outputs.skipped, <job> calling build-rpm.yml or build-deb.yml, compares it with the quoted string 'true'
-# (== or !=, either side); any other comparison (true unquoted, "true", which is no string in GitHub's grammar) and an
+# needs.<job>.outputs.skipped, <job> calling build-rpm.yml or build-deb.yml, in any case and by dot or by index
+# (needs['<job>']['outputs']['skipped']), compares it with the quoted string 'true' (== or !=, either side); any other comparison (true unquoted, "true", which is no string in GitHub's grammar) and an
 # `if:` that tests it bare are refused, naming file, job and expression: the output is a string, and an unquoted true
 # compares it with a boolean, so the guard never skips.
 # Output: one `TRIGGER-REFUSED <file>: <trigger>` per refusal then a summary line and exit 1; clean prints
@@ -64,7 +64,12 @@ for f in files:
     jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
     calls = {j for j, b in jobs.items() if isinstance(b, dict) and re.search(r"/workflows/build-(rpm|deb)\.yml(@|$)", str(b.get("uses", "")))}
     if calls:
-        ref = re.compile(r"needs\.(%s)\.outputs\.skipped\b" % "|".join(re.escape(c) for c in sorted(calls)))
+        # GitHub reads property names case-insensitively, by dot or by index: needs.RPM.Outputs.skipped,
+        # needs['rpm'].outputs['skipped'] and needs['rpm']['outputs']['skipped'] are the same read
+        def prop(n):
+            return r"(?:\s*\.\s*%s\b|\s*\[\s*\x27%s\x27\s*\])" % (n, n)
+        names = "|".join(re.escape(c) for c in sorted(calls))
+        ref = re.compile(r"\bneeds" + prop("(?:%s)" % names) + prop("outputs") + prop("skipped"), re.IGNORECASE)
         def walk(node, job, key):
             if isinstance(node, dict):
                 for k, v in node.items():
@@ -156,6 +161,16 @@ self_test() {
   sk "needs.rpm.outputs.skipped != \"true\""; expect 1 "a double-quoted \"true\" on outputs.skipped"
   sk "needs.rpm.outputs.skipped"; expect 1 "a bare truthiness test of outputs.skipped"
   sk "\${{ !needs.rpm.outputs.skipped }}"; expect 1 "a negated truthiness test of outputs.skipped"
+  # property names are case-insensitive in GitHub's expressions, and a property can be read by index: every spelling
+  # is judged, an unquoted true refused and the quoted 'true' passing
+  for form in "needs.rpm.outputs.Skipped" "Needs.RPM.Outputs.SKIPPED" "needs['rpm'].outputs.skipped" \
+              "needs.rpm.outputs['skipped']" "needs['rpm']['outputs']['skipped']" "needs[ 'Rpm' ][ 'Outputs' ].skipped"; do
+    sk "$form != true"; expect 1 "an unquoted != true on $form"
+    sk "$form != 'true'"; expect 0 "a quoted guard on $form"
+  done
+  # over-strict by design: only the single quoted comparison is taken
+  sk "fromJSON(needs.rpm.outputs.skipped)"; expect 1 "fromJSON of outputs.skipped in an if"
+  sk "needs.rpm.outputs.skipped == 'false'"; expect 1 "a comparison of outputs.skipped with 'false'"
   printf 'on: [workflow_dispatch]\njobs:\n  other:\n    uses: ./.github/workflows/x.yml\n  check:\n    needs: other\n    if: needs.other.outputs.skipped\n    runs-on: ubuntu-latest\n    steps: [{run: "true"}]\n' > "$w/sk.yml"
   expect 0 "the skipped output of a job that calls neither build-rpm.yml nor build-deb.yml"
   rm "$w/sk.yml"
