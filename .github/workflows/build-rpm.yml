@@ -220,15 +220,18 @@ jobs:
       cells: ${{ steps.matrix.outputs.cells }}
       first-arch: ${{ steps.matrix.outputs.first-arch }}
       count: ${{ steps.matrix.outputs.count }}
+      # the version a merge to devel publishes, empty for every other run (.github#289)
+      devel-version: ${{ steps.devel.outputs.version }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
         uses: Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1
         with:
           kind: rpm
-          matrix: ${{ inputs.matrix }}
+          # a merge to devel builds every cell: promotion copies that one build to the channel root (.github#289)
+          matrix: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && 'full' || inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
-          staged: ${{ inputs.staged }}
+          staged: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           source-ref: ${{ inputs.source-ref }}
           releases: ${{ inputs.fedora-versions }}
           arches: ${{ inputs.arch-matrix }}
@@ -241,9 +244,9 @@ jobs:
       # what is staged is never a release: a tag, source-ref or publish builds the release, against the real channel only;
       # a staged run publishes to the staging channel alone, the commit it runs on, of the calling repository
       - name: A staged run publishes to staging only, and staging never builds a release
-        if: inputs.staged || inputs.staging
+        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) || inputs.staging
         env:
-          STAGED: ${{ inputs.staged }}
+          STAGED: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           STAGING: ${{ inputs.staging }}
           PUBLISH: ${{ inputs.publish }}
           SOURCE_REPOSITORY: ${{ inputs.source-repository }}
@@ -266,7 +269,7 @@ jobs:
           NAME: ${{ inputs.package-name }}
           SOURCE_REF: ${{ inputs.source-ref }}
           SOURCE_REPOSITORY: ${{ inputs.source-repository }}
-          STAGED: ${{ inputs.staged }}
+          STAGED: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           STAGING: ${{ inputs.staging }}
         run: |
           no() { echo "::error::$*"; exit 1; }
@@ -308,17 +311,29 @@ jobs:
           got=$(git -c safe.directory="$PWD" rev-parse HEAD)
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
+      # a merge to devel publishes the real package, built once: the version it carries must be published nowhere yet,
+      # neither in the channel root nor in staging (.github#289)
+      - name: The version a merge to devel publishes
+        id: devel
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/devel')
+        run: |
+          v=$(sed -n 's/^Version: *//p' packaging/*.spec)
+          [ -n "$v" ] || { echo "::error::the tree names no version"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "a merge to devel publishes $v to the staging channel"
+
       # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
       - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
-          publish: ${{ inputs.publish || inputs.staged }}
-          require-tag: ${{ !inputs.staged }}
+          publish: ${{ inputs.publish || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
+          require-tag: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           tag: ${{ inputs.source-ref }}
           target: ${{ inputs.target-repo }}
           packages: ${{ inputs.binary-names || inputs.package-name }}
           republish: ${{ inputs.republish }}
           catch-up: ${{ inputs.catch-up }}
           kind: rpm
+          devel-version: ${{ steps.devel.outputs.version }}
           # the already-served check reads the releases this run publishes into, no others
           releases: ${{ steps.matrix.outputs.releases }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -375,11 +390,11 @@ jobs:
       # a pull request into devel: add-openmixer itself adds the staging channel and refuses an absent one by name
       # (devel -> staging -> prod); the step runs for it whatever channel-deps says
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
-        if: inputs.channel-deps || inputs.staged || inputs.staging || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release')
+        if: inputs.channel-deps || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) || inputs.staging || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release')
         with:
           base-url: ${{ inputs.base-url }}
           release-package: ${{ inputs.release-package }}
-          staging: ${{ inputs.staged || inputs.staging }}
+          staging: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) || inputs.staging }}
           staging-bootstrap: ${{ inputs.staging-bootstrap }}
 
       - name: Show what the channel provides the build
@@ -430,6 +445,8 @@ jobs:
         with:
           max-jobs: ${{ vars.OMX_RUNNER_CPUS || '3' }}
           tag: ${{ env.RELEASE_TAG }}
+          # a merge to devel: the real version, built once (.github#289)
+          real: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') }}
 
       # the full matrix never goes out on top of a version the channel has for the quick set alone: the cells the
       # dependency lacks could not install what this release publishes (docs/release-operations.md)
@@ -494,7 +511,7 @@ jobs:
           name: ${{ inputs.package-name }}-rpms-fc${{ matrix.fedora }}-${{ matrix.arch }}
           path: release/*.rpm
           if-no-files-found: ${{ matrix.arch == needs.preflight.outputs.first-arch && 'error' || 'ignore' }}
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) && 30 || 2 }}
 
   publish-go:
     name: Release publish gate
@@ -559,7 +576,7 @@ jobs:
           name: ${{ inputs.package-name }}-rpms-signed
           path: signed/*.rpm
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) && 30 || 2 }}
 
   publish:
     name: Stage the build, or assemble the unsigned tree (a release is publish-release)
@@ -578,7 +595,7 @@ jobs:
     # A dry run (publish false) pushes nothing, so it gets a group of its own: sharing the live group made
     # concurrent pull-request dry runs cancel each other's pending job.
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ inputs.staged && 'live' || github.run_id }}
+      group: publish-${{ inputs.target-repo }}-${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && 'live' || github.run_id }}
       cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
@@ -588,7 +605,7 @@ jobs:
           path: collected
 
       - id: staged
-        if: inputs.staged
+        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
           # the channel's own rpm/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
@@ -614,7 +631,7 @@ jobs:
 
 
       - id: dry
-        if: ${{ !inputs.staged }}
+        if: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
           # the channel's own rpm/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
@@ -640,23 +657,23 @@ jobs:
 
 
       - uses: actions/upload-artifact@v4
-        if: inputs.staged
+        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))
         with:
           name: ${{ inputs.package-name }}-rpms-signed
           path: signed/*.rpm
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) && 30 || 2 }}
 
       - uses: actions/upload-artifact@v4
-        if: ${{ !inputs.staged }}
+        if: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
         with:
           name: ${{ inputs.package-name }}-unsigned-tree
           path: build/repo/**
           if-no-files-found: error
-          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || inputs.staged) && 30 || 2 }}
+          retention-days: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.publish || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) && 30 || 2 }}
 
       - name: Report a dry run honestly
-        if: ${{ !inputs.staged }}
+        if: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
         run: |
           echo "::warning::dry run: nothing was signed or published. The unsigned tree is attached to this run."
 
@@ -728,7 +745,7 @@ jobs:
   verify:
     name: Install check (fc${{ matrix.fedora }}, ${{ matrix.arch }})
     needs: [preflight, publish, publish-release, release, live]
-    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || inputs.staged) }}
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:
@@ -743,10 +760,10 @@ jobs:
         with:
           base-url: ${{ inputs.base-url }}
           release-package: ${{ inputs.release-package }}
-          staging: ${{ inputs.staged }}
+          staging: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
 
       - name: Install the new version from the channel
-        if: ${{ !inputs.staged }}
+        if: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
         env:
           TAG: ${{ inputs.source-ref || github.ref_name }}
           NAME: ${{ inputs.package-name }}
@@ -767,11 +784,12 @@ jobs:
           done
 
       - name: Install the staged build of this commit from the staging channel
-        if: inputs.staged
+        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))
         env:
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
           BASE_URL: ${{ inputs.base-url }}
+          DEVEL_VERSION: ${{ needs.preflight.outputs.devel-version }}
         run: |
           set -o pipefail
           for bin in ${BINARIES:-$NAME}; do
@@ -785,9 +803,16 @@ jobs:
             rel=$(rpm -q --qf '%{RELEASE}' "$bin")
             repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
             echo "$bin $(rpm -q --qf '%{VERSION}' "$bin")-$rel from $repo"
-            short=$(printf '%s\n' "$rel" | sed -n 's/.*\.git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\)\..*/\1/p')
-            # shellcheck disable=SC2015 # either test failing is the error
-            [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] || { echo "::error::$bin $rel is not the build of $GITHUB_SHA"; exit 1; }
+            if [ -n "$DEVEL_VERSION" ]; then
+              # a merge to devel: the real version, built once (.github#289), no snapshot stamp in its release
+              ver=$(rpm -q --qf '%{VERSION}' "$bin")
+              # shellcheck disable=SC2015 # either test failing is the error
+              [ "$ver" = "$DEVEL_VERSION" ] && [ "${rel#*.git}" = "$rel" ] || { echo "::error::$bin $ver-$rel is not the real $DEVEL_VERSION a merge to devel publishes"; exit 1; }
+            else
+              short=$(printf '%s\n' "$rel" | sed -n 's/.*\.git[0-9]\{1,\}\.\([0-9a-f]\{7,\}\)\..*/\1/p')
+              # shellcheck disable=SC2015 # either test failing is the error
+              [ -n "$short" ] && [ "${GITHUB_SHA#"$short"}" != "$GITHUB_SHA" ] || { echo "::error::$bin $rel is not the build of $GITHUB_SHA"; exit 1; }
+            fi
             case $repo in openmixer-staging*) ;; *) echo "::error::$bin came from $repo, not the staging channel"; exit 1 ;; esac
           done
 

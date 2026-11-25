@@ -110,10 +110,12 @@ for wf in wfs:
         ("a pull request into main", "pull_request", "main", {}, False),
         ("a push of a tag", "push", "", {"inputs.channel-deps": True}, True),
         ("a staged dispatch", "workflow_dispatch", "", {"inputs.staged": True}, True),
+        ("a push to devel (a merge, staged: .github#289)", "push", "", {"github.ref": "refs/heads/devel"}, True),
     ]
     for name, event, base, inp, want_add in cases:
         ctx = dict(base_inputs, **inp)
         ctx.update({"github.event_name": event, "github.base_ref": base})
+        ctx.setdefault("github.ref", "refs/tags/v1.0.0" if event == "push" else "refs/heads/devel" if event == "workflow_dispatch" else "refs/pull/1/merge")
         add = truthy(ev(step["if"], ctx))
         if add != want_add: fails.append(f"{wf}: {name}: add-openmixer runs={add}, want {want_add}")
     if str(step["with"].get("staging-bootstrap")) != "${{ inputs.staging-bootstrap }}":
