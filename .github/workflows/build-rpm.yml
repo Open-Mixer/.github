@@ -316,11 +316,10 @@ jobs:
       - name: The version a merge to devel publishes
         id: devel
         if: (github.event_name == 'push' && github.ref == 'refs/heads/devel')
-        run: |
-          v=$(sed -n 's/^Version: *//p' packaging/*.spec)
-          [ -n "$v" ] || { echo "::error::the tree names no version"; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "a merge to devel publishes $v to the staging channel"
+        # rpmspec reads it, macros expanded; never a text match of Version: (tree-version.sh)
+        uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
+        with:
+          kind: rpm
 
       # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
       - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1

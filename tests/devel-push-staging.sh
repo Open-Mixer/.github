@@ -151,6 +151,31 @@ python3 -I "$collect" "$ch" rpm --name omx-a --version 1.2.0 --releases 45 --arc
 grep -q 'of 2 commits' "$t/two.log" || { cat "$t/two.log"; fail "the refusal of two builds of one version does not say so"; }
 echo "the promotion copies the real package a merge to devel staged, every file at the staged checksum: ok"
 
+# ---- 5. the version a merge to devel publishes is read by the packaging tool, not by a text match (F6b): a spec whose
+#      Version is a macro gives its value, and a debian/changelog entry 1.2.0-1 gives 1.2.0, the version a channel file
+#      name and a v<version> tag carry. The preflight's own step is run, with stub tools where the desk has none.
+step=$root/tests/run_step.py
+mkdir -p "$t/bin" "$t/vt/packaging" "$t/vt/debian"
+command -v dpkg-parsechangelog >/dev/null || cat > "$t/bin/dpkg-parsechangelog" <<'STUB'
+#!/bin/bash
+# the one call tree-version.sh makes: -l <changelog> -S Version
+f=debian/changelog; while [ $# -gt 0 ]; do case $1 in -l) f=$2; shift ;; esac; shift; done
+sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' "$f"
+STUB
+chmod +x "$t/bin/"* 2>/dev/null || true
+printf '%%global upstream 1.2.0\nName: omx-a\nVersion: %%{upstream}\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\n%%description\nt\n' \
+    > "$t/vt/packaging/omx-a.spec"
+printf 'omx-a (1.2.0-1) trixie; urgency=medium\n\n  * t\n\n -- T <t@example.org>  Tue, 25 Nov 2026 12:00:00 +0000\n' > "$t/vt/debian/changelog"
+for kind in rpm deb; do
+    python3 -I "$step" "$root" "$root/.github/workflows/build-$kind.yml" preflight id=devel "$t/devel-$kind.sh"
+    : > "$t/out-$kind"
+    (cd "$t/vt" && PATH=$t/bin:$PATH GITHUB_OUTPUT=$t/out-$kind bash "$t/devel-$kind.sh") > "$t/log-$kind" 2>&1 ||
+        { cat "$t/log-$kind"; fail "build-$kind.yml: the devel version step failed on a tree packaging 1.2.0"; }
+    got=$(sed -n 's/^version=//p' "$t/out-$kind")
+    [ "$got" = 1.2.0 ] || { cat "$t/log-$kind"; fail "build-$kind.yml: a merge to devel reads version '$got' from a tree packaging 1.2.0"; }
+done
+echo "the version of a merge to devel is the spec's expanded Version and the changelog's without its revision: ok"
+
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"
 echo "trigger-gate: a push to devel passes, any other branch is refused: ok"
