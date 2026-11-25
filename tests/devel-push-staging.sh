@@ -16,6 +16,8 @@
 #   build-devel-real.sh, in a Fedora container, builds the real NEVRA with build-rpm.sh -r.
 #
 #   devel-push-staging.sh [root]
+# the stub tools go on PATH inside subshells on purpose
+# shellcheck disable=SC2030,SC2031
 set -euo pipefail
 root=$(readlink -f "${1:-$(dirname "$(readlink -f "$0")")/..}")
 python3 -I - "$root/.github/workflows/build-rpm.yml" "$root/.github/workflows/build-deb.yml" <<'PY'
@@ -356,8 +358,9 @@ done
 bumprun rpm 1.2.0 'docs/** README.md' || { cat "$t/bump.out"; fail "build-rpm.yml: the paths a repository adds to bump-exempt were not exempt"; }
 echo c > "$g/src/a.c"; gitc add -A; gitc commit -q -m code
 bumprun rpm 1.2.0 && { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing src/ at a version staging holds passed"; }
-grep -qF "::error::src/a.c changes the package since $base, the build of the served v1.2.0: bump the version" "$t/bump.out" && grep -qF "v1.2.0 is published already (staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm)" "$t/bump.out" ||
-    { cat "$t/bump.out"; fail "build-rpm.yml: the bump refusal does not name the changed path and the served file"; }
+if ! { grep -qF "::error::src/a.c changes the package since $base, the build of the served v1.2.0: bump the version" "$t/bump.out" && grep -qF "v1.2.0 is published already (staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm)" "$t/bump.out"; }; then
+    cat "$t/bump.out"; fail "build-rpm.yml: the bump refusal does not name the changed path and the served file"
+fi
 grep '::error::' "$t/bump.out" | grep -q 'ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names an exempt path"; }
 bumprun rpm 1.2.0 'docs/** README.md' && { cat "$t/bump.out"; fail "build-rpm.yml: src/ passed with docs added to bump-exempt"; }
 grep '::error::' "$t/bump.out" | grep -q 'docs/x.md\|README.md\|ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names a path the repository exempted"; }
@@ -575,7 +578,9 @@ gate '**' || true; grep -qF "covers every path" "$t/gate.out" || { cat "$t/gate.
 for g in '' 'tools/**' 'ci/** tools/*.py'; do
     gate "$g" || { cat "$t/gate.out"; fail "package-paths.sh refused bump-exempt '$g', which covers no packaged file"; }
 done
+# shellcheck disable=SC2016 # literal text of the scripts
 grep -q '"$here/package-paths.sh" --check' "$root/.github/actions/package-paths/served-change.sh" || fail "served-change.sh does not check the exempt list"
+# shellcheck disable=SC2016 # literal text of the action
 grep -q '"$GITHUB_ACTION_PATH/package-paths.sh" --check' "$root/.github/actions/package-paths/action.yml" || fail "the package-paths action does not check the exempt list"
 echo "bump-exempt is refused, by glob and packaged file, over packaging/, debian/, %doc, %license, deb docs and install entries, or everything: ok"
 
