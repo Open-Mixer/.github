@@ -650,9 +650,13 @@ for g in '.github/**' 'tests/**' 'docs/x.md' 'docs/**' 'nothing/**'; do
 done
 printf 'tests/* usr/share/omx-a/tests\n' > "$ga/debian/omx-a.install"; gita add -A; gita commit -q -m ship-tests; at=$(gita rev-parse HEAD)
 allow 'tests/**' && { cat "$t/allow.out"; fail "package-paths.sh accepted bump-exempt 'tests/**' where debian/*.install ships tests"; }
+# shellcheck disable=SC2016 # literal text of the scripts and the workflow, below
 grep -qF 'CHECK_AT=${EXEMPT_AT:-} "$here/package-paths.sh" --check' "$root/.github/actions/package-paths/served-change.sh" || fail "served-change.sh does not judge the list at the commit it was read at"
+# shellcheck disable=SC2016
 grep -qF 'EXEMPT_AT=$from' "$root/.github/actions/release-preflight/action.yml" || fail "the preflight does not name the commit the list was read at"
+# shellcheck disable=SC2016
 grep -qF 'EXEMPT_AT=$CHANGE_BASE' "$root/.github/actions/devel-bump-check/action.yml" || fail "the pull request check does not name the commit the list was read at"
+# shellcheck disable=SC2016
 grep -qF 'at: ${{ steps.built.outputs.commit }}' "$pw" || fail "the promotion does not judge the list at the build"
 echo "bump-exempt covers only .github/**, unshipped tests/** and uninstalled docs among the tracked files: ok"
 
