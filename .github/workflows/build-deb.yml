@@ -202,6 +202,15 @@ on:
         type: string
         default: ''
         description: "The Origin and Label of the real channel's Release files; empty means OpenMixer"
+    # a merge to devel whose version is served and whose change is exempt builds and publishes nothing (the preflight's
+    # skip): a caller's own jobs that read this run's artifacts skip on it, if: needs.<call>.outputs.skipped != 'true'
+    outputs:
+      skipped:
+        description: "'true' when a merge to devel built and published nothing: its version is served and its change is exempt (release-preflight skip)"
+        value: ${{ jobs.preflight.outputs.skip }}
+      devel-version:
+        description: 'The version a merge to devel publishes, or would have published when skipped; empty for every other run'
+        value: ${{ jobs.preflight.outputs.devel-version }}
     secrets:
       DISPATCH_TOKEN:
         required: false

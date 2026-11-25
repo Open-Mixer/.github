@@ -203,6 +203,18 @@ files. The devel build is the real package at its real version, never a pre-rele
     the version is bumped, and an all-zero or unreachable `before` is red by name. No record is seeded and no bump
     wave is needed. (`package-paths/served-change.sh`, the one judge of the preflight and of `devel-bump-check`.)
   No published version is rebuilt, and no epoch is used.
+- **The caller is told.** `build-rpm.yml` and `build-deb.yml` declare the `workflow_call` outputs `skipped` (`'true'`
+  when the merge built and published nothing) and `devel-version`, from the preflight job. A caller's own job that
+  reads the run's artifacts (an install check, a test of the built packages) skips on it:
+
+  ```yaml
+  install-check:
+    needs: rpm
+    if: needs.rpm.outputs.skipped != 'true'
+  ```
+
+  in general `if: needs.<call>.outputs.skipped != 'true'`; otherwise it goes red on a merge that rightly published
+  nothing.
 - **The missing bump is red on the pull request first.** `devel-bump-check` judges a pull request into devel the same
   way: when its head version is published, in the channel root or staging, every path changed since the recorded
   build that can change a package is refused, named with the served file; with no record, the pull request's own

@@ -607,6 +607,24 @@ grep -q '"$here/package-paths.sh" --check' "$root/.github/actions/package-paths/
 grep -q '"$GITHUB_ACTION_PATH/package-paths.sh" --check' "$root/.github/actions/package-paths/action.yml" || fail "the package-paths action does not check the exempt list"
 echo "bump-exempt is refused, by glob and packaged file, over packaging/, debian/, %doc, %license, deb docs and install entries, or everything: ok"
 
+# ---- 13. the caller is told when a merge to devel was skipped (G2, .github#297): both reusable workflows declare the
+#      workflow_call outputs skipped and devel-version, mapped from the preflight job's own outputs, so a caller's post-build
+#      job can read needs.<call>.outputs.skipped.
+python3 -I - "$root" <<'PY2' || fail "a reusable workflow does not hand the preflight's skip and devel-version to its caller"
+import re, sys, yaml
+for kind in ("rpm", "deb"):
+    d = yaml.safe_load(open(f"{sys.argv[1]}/.github/workflows/build-{kind}.yml"))
+    outs = ((d.get("on") or d[True])["workflow_call"].get("outputs") or {})
+    pre = d["jobs"]["preflight"]["outputs"]
+    assert "skip" in pre and "devel-version" in pre, f"{kind}: the preflight job lost skip or devel-version"
+    for name, src in (("skipped", "skip"), ("devel-version", "devel-version")):
+        val = str((outs.get(name) or {}).get("value", ""))
+        m = re.fullmatch(r"\$\{\{\s*jobs\.preflight\.outputs\.([a-z-]+)\s*\}\}", val.strip())
+        assert m and m.group(1) == src, f"build-{kind}.yml: workflow_call output {name} is {val!r}, not jobs.preflight.outputs.{src}"
+PY2
+grep -qF "needs.<call>.outputs.skipped != 'true'" "$root/docs/release-operations.md" || fail "docs/release-operations.md does not give the caller pattern for a skipped merge to devel"
+echo "both reusable workflows tell the caller skipped and devel-version, from the preflight: ok"
+
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"
 echo "trigger-gate: a push to devel passes, any other branch is refused: ok"
