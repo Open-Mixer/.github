@@ -224,11 +224,14 @@ files. The devel build is the real package at its real version, never a pre-rele
   build that can change a package is refused, named with the served file; with no record, the pull request's own
   change (`merge-base(base, head)..head`) is judged the same way, exempt paths alone passing with a notice. Which paths change a package has one definition, `package-paths.sh` (the `package-paths` action):
   everything but `.github/**`. README.md and `docs/` are NOT exempt: packages ship them (`%doc README.md` in
-  omx-contract and omx-dsp). A repository adds globs through `bump-exempt` only for paths it shows its packages do not
-  install, and a glob that covers one is refused by every reader of the list (`package-paths.sh --check`: the
-  preflight, the pull request's check and the promotion), naming the glob and the file: anything under `packaging/`
-  or `debian/`, a `%doc` or `%license` file of the spec's `%files` sections, a `debian/*.docs` entry, the source of a
-  `debian/*.install` entry, or every path (`**`, `*`). A pull request cannot widen its own exemption over packaged
+  omx-contract and omx-dsp). `bump-exempt` may name only paths UNDER `.github/` (.github#296): every glob must start
+  with `.github/` and stay inside it, and anything else (`tests/**`, `docs/**`, `src/**`, `lib2/**`, `.github` bare,
+  `.githubx/**`, `**/.github/**`, `../.github/x`) is refused by name by every reader of the list
+  (`package-paths.sh --check`: the preflight, the pull request's check and the promotion). A glob that matches nothing
+  yet would let the first source added there escape, and whether a directory ships is not guessed, so the rule is the
+  prefix alone. A glob under `.github/` that covers a file a package ships (a `%doc` or `%license` entry of the spec's
+  `%files`, a `debian/*.docs` entry or the source of a `debian/*.install` entry, read at the commit the list was read
+  at) is refused too, naming the glob and the file. A pull request cannot widen its own exemption over packaged
   files, nor change the value it is judged by: `devel-bump-check` reads `bump-exempt` from the caller's workflow file
   (`github.workflow_ref`) at the merge base, and when the head's value differs it judges with the base value, naming
   both (`exempt-at.py`, .github#292). A pull request that only widens `bump-exempt` and changes `.github/**` passes;

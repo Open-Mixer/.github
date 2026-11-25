@@ -76,7 +76,7 @@ on:
       bump-exempt:
         type: string
         default: ''
-        description: 'Globs, space separated, added to the paths that change no package (.github/** alone by default, package-paths.sh), as the build workflows take them: a real build is promoted only from a commit with no other change since the devel commit that built it'
+        description: 'Globs under .github/ only, space separated, added to the paths that change no package (.github/** by default, package-paths.sh), as the build workflows take them: a real build is promoted only from a commit with no other change since the devel commit that built it'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'
@@ -254,6 +254,8 @@ jobs:
           base: ${{ steps.built.outputs.commit }}
           head: ${{ steps.built.outputs.full }}
           exempt: ${{ steps.exemptbase.outputs.value }}
+          # judged on the tracked files of the build, where the value was read (.github#296)
+          at: ${{ steps.built.outputs.commit }}
 
       # the tie: the promotion's commit carries the version, is the devel commit that built it or descends from it, and
       # changes no package since it

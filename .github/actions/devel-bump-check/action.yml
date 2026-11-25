@@ -28,7 +28,7 @@ inputs:
     description: the Fedora releases or Debian suites the version is read for, space separated; empty reads every one
     default: ''
   exempt:
-    description: globs, space separated, the repository adds to the exempt default (.github/**, package-paths.sh)
+    description: globs under .github/ only, space separated, the repository adds to the exempt default (.github/**, package-paths.sh, .github#296)
     default: ''
   target:
     description: the channel repository
@@ -87,7 +87,8 @@ runs:
           [ -n "$CHANGE_BASE" ] || { echo "::error::no merge base of $BASE and HEAD: the bump-exempt there cannot be read"; exit 1; }
           got=$("$GITHUB_ACTION_PATH/base-exempt.sh" "$CHANGE_BASE" "$CALLER" "build-$KIND.yml" "$EXEMPT" "the merge base" "the head") || { printf '%s\n' "$got"; exit 1; }
           EXEMPT=$(sed -n 's/^value=//p' <<< "$got") JUDGED=$(sed -n 's/^differs=//p' <<< "$got")
-          export EXEMPT JUDGED
+          EXEMPT_AT=$CHANGE_BASE
+          export EXEMPT JUDGED EXEMPT_AT
         fi
         # shellcheck disable=SC2086 # PACKAGES is a list of names, split on purpose
         "$GITHUB_ACTION_PATH/bump-check.sh" "$KIND" "$VERSION" "$NAME" $PACKAGES < /tmp/bump-tree.paths
