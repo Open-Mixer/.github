@@ -50,7 +50,7 @@
 #                   merge to devel builds its version once; a file the channel holds is never kept in place of the new
 #                   build, nor replaced by it.
 #   BUILT_COMMIT    the full commit a merge to devel built the real package from (publish-debs built-commit): recorded in
-#                   <tree>/built/<source>/<version>.commit by ../publish-rpms/record-built.sh, which promote-staged reads
+#                   <tree>/built/$BUILT_NAME/<version>.commit by ../publish-rpms/record-built.sh (BUILT_NAME: the caller's package-name, both kinds), which promote-staged reads
 #   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
 #                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
 #                   beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -281,7 +281,10 @@ for f in ${found[@]+"${found[@]}"}; do
 done
 
 # the real package of a merge to devel names no commit: the commit that built it is recorded beside it (.github#289)
-[ -z "${BUILT_COMMIT:-}" ] || "$(dirname "$(readlink -f "$0")")/../publish-rpms/record-built.sh" "$tree" "$BUILT_COMMIT" ${found[@]+"${found[@]}"}
+if [ -n "${BUILT_COMMIT:-}" ]; then
+    [ -n "${BUILT_NAME:-}" ] || { echo "BUILT_COMMIT needs BUILT_NAME, the package-name the record is written under" >&2; exit 1; }
+    "$(dirname "$(readlink -f "$0")")/../publish-rpms/record-built.sh" "$tree" "$BUILT_COMMIT" "$BUILT_NAME" ${found[@]+"${found[@]}"}
+fi
 
 if [ "${CATCH_UP:-}" = true ] && [ "${#mine[@]}" = 0 ]; then
     echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2

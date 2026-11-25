@@ -373,8 +373,9 @@ echo "a pull request into devel changing a package at a published version is ref
 rb=$root/.github/actions/publish-rpms/record-built.sh
 cat > "$t/pbin/rpm" <<'STUB'
 #!/bin/bash
-# rpm -qp --qf '%{SOURCEPACKAGE}|%{NAME}|%{VERSION}|%{SOURCERPM}\n' <file>: read from the file name
+# rpm -qp --qf '%{VERSION}\n' <file> (record-built.sh), or the four fields below: read from the file name
 f=${*: -1}; b=${f##*/}
+case "$*" in *SOURCEPACKAGE*) ;; *) n=${b%-*-*}; v=${b#"$n"-}; echo "${v%%-*}"; exit 0 ;; esac
 case $b in *.src.rpm) n=${b%-*-*}; v=${b#"$n"-}; printf '1|%s|%s|(none)\n' "$n" "${v%%-*}" ;;
   *) n=${b%-*-*}; v=${b#"$n"-}; printf '0|%s|%s|%s-%s.src.rpm\n' "$n" "${v%%-*}" "$n" "${v%.*.rpm}" ;; esac
 STUB
@@ -382,18 +383,18 @@ cat > "$t/pbin/dpkg-deb" <<'STUB'
 #!/bin/bash
 # dpkg-deb -f <file> Source|Package|Version: read from <package>_<version>_<arch>.deb; Source is omx-a
 b=${2##*/}
-case $3 in Source) echo omx-a ;; Package) echo "${b%%_*}" ;; Version) v=${b#*_}; echo "${v%_*}" ;; esac
+case $3 in Source) echo "${SOURCE:-omx-a}" ;; Package) echo "${b%%_*}" ;; Version) v=${b#*_}; echo "${v%_*}" ;; esac
 STUB
 chmod +x "$t/pbin/rpm" "$t/pbin/dpkg-deb"
 A=0123456789abcdef0123456789abcdef01234567
 rt=$t/record; rm -rf "$rt"; mkdir -p "$rt"
-PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" "$A" x/omx-a-1.2.0-1.fc45.src.rpm x/omx-a-devel-1.2.0-1.fc45.x86_64.rpm > "$rt/log" 2>&1 || { cat "$rt/log"; fail "record-built.sh refused a first rpm record"; }
+PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" "$A" omx-a x/omx-a-1.2.0-1.fc45.src.rpm x/omx-a-devel-1.2.0-1.fc45.x86_64.rpm > "$rt/log" 2>&1 || { cat "$rt/log"; fail "record-built.sh refused a first rpm record"; }
 [ "$(cat "$rt/rpm/built/omx-a/1.2.0.commit" 2>/dev/null)" = "$A" ] || fail "record-built.sh did not record omx-a 1.2.0 built by $A (rpm)"
-PATH=$t/pbin:$PATH bash "$rb" "$rt/deb" "$A" x/trixie/libomx-a0_1.2.0-1_amd64.deb > "$rt/log" 2>&1 || { cat "$rt/log"; fail "record-built.sh refused a first deb record"; }
+PATH=$t/pbin:$PATH bash "$rb" "$rt/deb" "$A" omx-a x/trixie/libomx-a0_1.2.0-1_amd64.deb > "$rt/log" 2>&1 || { cat "$rt/log"; fail "record-built.sh refused a first deb record"; }
 [ "$(cat "$rt/deb/built/omx-a/1.2.0.commit" 2>/dev/null)" = "$A" ] || fail "record-built.sh did not record the source omx-a 1.2.0, revision dropped (deb)"
-PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" "${A/0123/9999}" x/omx-a-1.2.0-1.fc45.src.rpm > "$rt/log" 2>&1 && fail "record-built.sh replaced the record of another commit"
+PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" "${A/0123/9999}" omx-a x/omx-a-1.2.0-1.fc45.src.rpm > "$rt/log" 2>&1 && fail "record-built.sh replaced the record of another commit"
 grep -q 'refused built/omx-a/1.2.0.commit' "$rt/log" || { cat "$rt/log"; fail "record-built.sh's refusal does not name the record"; }
-PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" 0123abc x/omx-a-1.2.0-1.fc45.src.rpm > "$rt/log" 2>&1 && fail "record-built.sh took a short commit"
+PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" 0123abc omx-a x/omx-a-1.2.0-1.fc45.src.rpm > "$rt/log" 2>&1 && fail "record-built.sh took a short commit"
 python3 -I - "$root" <<'PY2' || fail "the staging publish of a merge to devel does not record its commit"
 import sys, yaml
 root = sys.argv[1]
@@ -401,10 +402,13 @@ for kind in ("rpm", "deb"):
     a = yaml.safe_load(open(f"{root}/.github/actions/publish-{kind}s/action.yml"))["runs"]["steps"]
     assert any(s.get("env", {}).get("BUILT_COMMIT_IN") == "${{ inputs.built-commit }}" and 'echo "BUILT_COMMIT=$BUILT_COMMIT_IN" >> "$GITHUB_ENV"' in s.get("run", "") for s in a), kind
     tree = open(f"{root}/.github/actions/publish-{kind}s/publish-tree.sh").read()
-    assert 'record-built.sh" "$tree" "$BUILT_COMMIT"' in tree, kind
+    assert 'record-built.sh" "$tree" "$BUILT_COMMIT" "$BUILT_NAME"' in tree, kind
+    assert any(s.get("env", {}).get("BUILT_NAME_IN") == "${{ inputs.built-name }}" and 'echo "BUILT_NAME=$BUILT_NAME_IN" >> "$GITHUB_ENV"' in s.get("run", "") for s in a), kind
     w = yaml.safe_load(open(f"{root}/.github/workflows/build-{kind}.yml"))["jobs"]["publish"]["steps"]
     st = [s for s in w if str(s.get("with", {}).get("staging")) == "true"][0]
     assert st["with"].get("built-commit") == "${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && github.sha || '' }}", kind
+    # M1: one key for both kinds, the caller's package-name, never a spec Name or a deb Source
+    assert st["with"].get("built-name") == "${{ inputs.package-name }}", kind
 PY2
 
 # the caller's repository
@@ -474,6 +478,22 @@ find_real "$B" && { cat "$t/f.out"; fail "promote-staged took a real build whose
 grep -q 'staging/deb holds no record' "$t/f.out" || { cat "$t/f.out"; fail "the missing deb record is not refused by name"; }
 find_real "$B" true false || { cat "$t/f.out"; fail "an rpm-only promotion was refused for the deb record"; }
 echo "$A" > "$ch/staging/deb/built/omx-a/1.2.0.commit"
+# M1: plugin-db-qualification's rpm spec Name is plugin-qualification-records, its deb source plugin-db-qualification. The
+# rpm and deb runs of one package-name write the record under that name, and the find job reads both there.
+pq=$t/pq-channel; rm -rf "$pq"; mkdir -p "$pq/.git"
+mv "$t/pbin/rpm.stub" "$t/pbin/rpm"
+PATH=$t/pbin:$PATH bash "$rb" "$pq/staging/rpm" "$A" plugin-db-qualification x/plugin-qualification-records-1.2.0-1.fc45.src.rpm \
+    x/plugin-qualification-records-1.2.0-1.fc45.noarch.rpm > "$t/pq.log" 2>&1 || { cat "$t/pq.log"; fail "record-built.sh refused the rpm record of plugin-db-qualification"; }
+SOURCE=plugin-db-qualification PATH=$t/pbin:$PATH bash "$rb" "$pq/staging/deb" "$A" plugin-db-qualification x/trixie/plugin-db-qualification_1.2.0-1_all.deb \
+    > "$t/pq.log" 2>&1 || { cat "$t/pq.log"; fail "record-built.sh refused the deb record of plugin-db-qualification"; }
+mv "$t/pbin/rpm" "$t/pbin/rpm.stub"
+for k in rpm deb; do
+    [ -f "$pq/staging/$k/built/plugin-db-qualification/1.2.0.commit" ] || { find "$pq" -name '*.commit'; fail "the $k run of plugin-db-qualification did not write staging/$k/built/plugin-db-qualification/1.2.0.commit"; }
+done
+[ -z "$(find "$pq" -path '*built/plugin-qualification-records*')" ] || fail "a record was written under the rpm spec Name, not the package-name"
+: > "$t/pq-gh"; (cd "$r" && PATH=$t/pbin:$PATH GITHUB_OUTPUT=$t/pq-gh RUNNER_TEMP=$t NAME=plugin-db-qualification VERSION=1.2.0 RUN_COMMIT=$B RPM=true DEB=true \
+    CHANNEL=x DIR=$pq bash "$t/f-built.sh") > "$t/pq.out" 2>&1 || { cat "$t/pq.out"; fail "the find job did not read the records the rpm and deb runs of plugin-db-qualification wrote"; }
+[ "$(outv commit "$t/pq-gh")" = "$A" ] || { cat "$t/pq.out"; fail "the find job read no record of plugin-db-qualification"; }
 # the commit step promotes a real build only on the tie: collect.py's commit real with no tie is refused
 (cd "$r" && GITHUB_OUTPUT=$t/c-gh RPM_COMMIT=real DEB_COMMIT=real VERSION=1.2.0 RUN_COMMIT=$C DEFAULT_BRANCH=main TIED='' bash "$t/f-commit.sh") > "$t/c.out" 2>&1 &&
     { cat "$t/c.out"; fail "the commit step promoted a real build that no devel commit was tied to"; }

@@ -50,7 +50,7 @@
 #               holds already is refused, each one named, before anything is placed or signed. A merge to devel builds
 #               its version once; a file the channel holds is never kept in place of the new build, nor replaced by it.
 #   BUILT_COMMIT the full commit a merge to devel built the real package from (publish-rpms built-commit): recorded in
-#               <tree>/built/<name>/<version>.commit by record-built.sh, which promote-staged reads
+#               <tree>/built/$BUILT_NAME/<version>.commit by record-built.sh (BUILT_NAME: the caller's package-name, both kinds), which promote-staged reads
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -301,7 +301,10 @@ for f in ${found[@]+"${found[@]}"}; do
 done
 
 # the real package of a merge to devel names no commit: the commit that built it is recorded beside it (.github#289)
-[ -z "${BUILT_COMMIT:-}" ] || "$here/record-built.sh" "$tree" "$BUILT_COMMIT" ${found[@]+"${found[@]}"}
+if [ -n "${BUILT_COMMIT:-}" ]; then
+    [ -n "${BUILT_NAME:-}" ] || { echo "BUILT_COMMIT needs BUILT_NAME, the package-name the record is written under" >&2; exit 1; }
+    "$here/record-built.sh" "$tree" "$BUILT_COMMIT" "$BUILT_NAME" ${found[@]+"${found[@]}"}
+fi
 
 # A catch-up of a version a quick release published: its noarch packages are served from the quick architecture trees
 # alone, which the cells it fills do not read. The served file, the same bytes, goes into the architecture tree of every

@@ -227,9 +227,11 @@ files. The devel build is the real package at its real version, never a pre-rele
   cancelled merge's version is then not staged; it was superseded by a newer version (each merge that changes a
   package carries its own bump), and if that version must be staged anyway, rerun the cancelled run's failed jobs.
 - **Promotion copies it, from the commit that built it.** The real package's name holds no commit, so the staging
-  publish of the merge to devel records the full commit beside it: `staging/<kind>/built/<name>/<version>.commit`
-  (`built-commit` of `publish-rpms` and `publish-debs`, `record-built.sh`; a record naming another commit is
-  refused). `promote-staged`'s find job reads it for every kind it promotes (one record missing, or two naming
+  publish of the merge to devel records the full commit beside it: `staging/<kind>/built/<package-name>/<version>.commit`
+  (`built-commit` and `built-name` of `publish-rpms` and `publish-debs`, `record-built.sh`; a record naming another
+  commit is refused). The name is ONE key for both kinds, the caller's `package-name`, which every reader uses too: never
+  the spec's Name or the deb Source (plugin-db-qualification builds `plugin-qualification-records` RPMs from the deb
+  source `plugin-db-qualification`). The kind stays in the path because each kind publishes in a run of its own. `promote-staged`'s find job reads it for every kind it promotes (one record missing, or two naming
   different commits, is refused) and promotes the real build only when the promotion's commit (the tag's, or the dry
   run's input) carries the same version in its spec and changelog (`tree-version`), is that commit or descends from
   it (`git merge-base --is-ancestor`), AND changes no package since it: every path from the build to it that can change
