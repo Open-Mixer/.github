@@ -130,8 +130,9 @@ def run(kind, inputs, event, ref_type, var):
     if p.returncode:
         return None, p.stdout + p.stderr
     out = O(l.rstrip("\n").split("=", 1) for l in open(env["GITHUB_OUTPUT"]))
-    # the devel step reads a merge to devel's version (.github#289); none of these runs is one
-    steps = O(matrix=O(outputs=out), devel=O(outputs=O(version="")))
+    # the devel step reads a merge to devel's version and the preflight says whether it is published (skip, .github#289);
+    # none of these runs is one
+    steps = O(matrix=O(outputs=out), devel=O(outputs=O(version="")), preflight=O(outputs=O(skip="")))
     pre = d["jobs"]["preflight"]
     needs = O(preflight=O(outputs=O({k: ev(v, full, event, ref_type, var, steps=steps) for k, v in pre["outputs"].items()})))
     names = {}

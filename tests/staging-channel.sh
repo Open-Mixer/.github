@@ -190,9 +190,9 @@ def check(path, kind):
 
     # the install check: from staging after a staged publish, from the real channel alone after a release
     v = jobs["verify"]
-    ok_stage = O(publish=O(result="success"), publish_release=O(result="skipped"))
-    ok_rel = O(publish=O(result="skipped"), publish_release=O(result="success"))
-    ok_none = O(publish=O(result="success"), publish_release=O(result="skipped"))
+    ok_stage = O(publish=O(result="success"), publish_release=O(result="skipped"), preflight=O(outputs=O(skip="false")))
+    ok_rel = O(publish=O(result="skipped"), publish_release=O(result="success"), preflight=O(outputs=O(skip="false")))
+    ok_none = O(publish=O(result="success"), publish_release=O(result="skipped"), preflight=O(outputs=O(skip="false")))
     assert ev(v["if"], staged, needs=ok_stage), f"{path}: no install check after a staged publish"
     assert ev(v["if"], tag, needs=ok_rel, ref_type="tag"), f"{path}: no install check after a release"
     assert not ev(v["if"], dry, needs=ok_none), f"{path}: an install check on a dry run"
