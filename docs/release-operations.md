@@ -191,18 +191,23 @@ files. The devel build is the real package at its real version, never a pre-rele
   has. A dispatched staged run keeps its `+git` snapshot.
 - **A version is built once.** The preflight reads the version with the packaging tool (`tree-version`: `rpmspec -q
   --srpm --qf '%{VERSION}'` of the spec, macros expanded, or `dpkg-parsechangelog -S Version` without the Debian
-  revision). When the channel root or staging (of that kind) holds it already, the merge publishes NOTHING and stays
-  green: `release-preflight`'s `devel-version` runs `already-served.sh` with `STAGING=true ON_SERVED=notice`, a
-  `::notice::` names the served version and files, the output `skip` is `true`, and the build, publish and verify
-  jobs skip on it. No published version is rebuilt, and no epoch is used.
-- **The missing bump is red on the pull request.** A pull request into devel that changes any path that can change a
-  package while its head version is published already, in the channel root or staging, is refused by
-  `devel-bump-check`, naming every such path and the served file. Which paths change a package has one definition,
-  `package-paths.sh` (the `package-paths` action): everything but `.github/**`. README.md and `docs/` are NOT exempt:
-  packages ship them (`%doc README.md` in omx-contract and omx-dsp). A repository adds globs through `bump-exempt` only
-  for paths it shows its packages do not install. So a change to a package carries its version bump, and a fix after
-  a published build is a new version. The channel is public: the check reads its tree with the run's own
-  `github.token`, never `PAGES_TOKEN`.
+  revision). When the channel root or staging (of that kind) holds it already, `release-preflight` reads the commit that
+  built it, `staging/<kind>/built/<name>/<version>.commit`, and the paths changed from it to HEAD:
+  - none that can change a package (`package-paths.sh`: only `.github/**`, plus `bump-exempt`): the merge publishes
+    NOTHING and stays green, a `::notice::` names the served version and files, the output `skip` is `true`, and the
+    build, publish and verify jobs skip on it;
+  - any other path: RED, each path named with the served version. A change that reached devel without its bump (a
+    pull request that raced another, a direct push) is never lost behind a green skip;
+  - no record (a version published before this model): RED by name, never a silent skip.
+  No published version is rebuilt, and no epoch is used.
+- **The missing bump is red on the pull request first.** `devel-bump-check` judges a pull request into devel the same
+  way: when its head version is published, in the channel root or staging, every path changed since the recorded
+  build that can change a package is refused, named with the served file, and a served version with no record is
+  refused by name. Which paths change a package has one definition, `package-paths.sh` (the `package-paths` action):
+  everything but `.github/**`. README.md and `docs/` are NOT exempt: packages ship them (`%doc README.md` in
+  omx-contract and omx-dsp). A repository adds globs through `bump-exempt` only for paths it shows its packages do not
+  install. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
+  `PAGES_TOKEN`.
 - **A snapshot of a published version is retired.** A dispatched staged run (`staged: true`, not a merge to devel)
   still builds a `+git` snapshot of the tree's version, but the preflight reads that version (`staged-version`) and
   refuses it when the channel root or staging holds a REAL build of it (`already-served.sh` with `STAGING=true

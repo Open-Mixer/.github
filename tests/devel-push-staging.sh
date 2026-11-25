@@ -320,8 +320,13 @@ cat > "$t/pbin/curl" <<'STUB'
 #!/bin/bash
 out=
 for a in "$@"; do case $a in "Authorization: "*) echo "$a" >> "$STATE/auth" ;; esac; done
+url=${*: -1}
 while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done
-printf '%s' '{"truncated":false,"tree":[{"path":"staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm"},{"path":"deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb"}]}' > "$out"
+case $url in
+  */contents/staging/rpm/built/omx-a/1.2.0.commit) echo "$RECORD" > "$out" ;;
+  */contents/*) echo '{}' > "$out"; printf 404; exit 0 ;;
+  *) printf '%s' '{"truncated":false,"tree":[{"path":"staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm"},{"path":"staging/rpm/built/omx-a/1.2.0.commit"},{"path":"deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb"}]}' > "$out" ;;
+esac
 printf 200
 STUB
 chmod +x "$t/pbin/curl"
@@ -331,24 +336,25 @@ bumprun() { # bumprun <kind> <version> [extra exempt globs] -> status; log in $t
     [ -z "${3:-}" ] && exempt=$(python3 -I -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print((d.get("on") or d[True])["workflow_call"]["inputs"]["bump-exempt"]["default"])' \
         "$root/.github/workflows/build-$1.yml") || exempt=${3:-}
     python3 -I "$step" "$root" "$root/.github/workflows/build-$1.yml" preflight uses=devel-bump-check "$t/bump-$1.sh" \
-        kind="$1" version="$2" base="$base" packages=omx-a releases= exempt="$exempt" target=Open-Mixer/open-mixer.github.io token=gh-run-token
-    (cd "$g" && STATE=$t/state PATH=$t/pbin:$PATH bash "$t/bump-$1.sh") > "$t/bump.out" 2>&1
+        kind="$1" version="$2" name=omx-a packages=omx-a releases= exempt="$exempt" target=Open-Mixer/open-mixer.github.io token=gh-run-token
+    (cd "$g" && RECORD=$base STATE=$t/state PATH=$t/pbin:$PATH bash "$t/bump-$1.sh") > "$t/bump.out" 2>&1
 }
 # R2: the default exempt list is .github/** alone; README.md and docs/ ship in packages (%doc README.md), so they
 # change the package unless the repository adds them through bump-exempt
 mkdir -p "$g/.github/workflows"; echo w > "$g/.github/workflows/ci.yml"; gitc add -A; gitc commit -q -m workflow
-for kind in rpm deb; do
-    bumprun "$kind" 1.2.0 || { cat "$t/bump.out"; fail "build-$kind.yml: a pull request into devel changing .github/ alone was refused"; }
-done
+bumprun rpm 1.2.0 || { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing .github/ alone since the recorded build was refused"; }
+# R1: the deb 1.2.0 the channel root serves has no record of its build: red by name, never a silent pass
+bumprun deb 1.2.0 && { cat "$t/bump.out"; fail "build-deb.yml: a served version with no record of its build passed"; }
+grep -qF 'staging/deb/built/omx-a/1.2.0.commit does not record the commit that built it' "$t/bump.out" || { cat "$t/bump.out"; fail "build-deb.yml: the missing record is not named"; }
 echo b > "$g/docs/x.md"; echo r2 > "$g/README.md"; gitc add -A; gitc commit -q -m docs
 bumprun rpm 1.2.0 && { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing README.md and docs/ at a published version passed (README.md ships as %doc)"; }
 for p in README.md docs/x.md; do
-    grep -qF "::error::$p changes the package" "$t/bump.out" || { cat "$t/bump.out"; fail "the bump refusal does not name $p"; }
+    grep -qF "::error::$p changes the package since $base" "$t/bump.out" || { cat "$t/bump.out"; fail "the bump refusal does not name $p"; }
 done
 bumprun rpm 1.2.0 'docs/** README.md' || { cat "$t/bump.out"; fail "build-rpm.yml: the paths a repository adds to bump-exempt were not exempt"; }
 echo c > "$g/src/a.c"; gitc add -A; gitc commit -q -m code
 bumprun rpm 1.2.0 && { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing src/ at a version staging holds passed"; }
-grep -qF "::error::src/a.c changes the package, and the head's version v1.2.0 is published already (staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm)" "$t/bump.out" ||
+grep -qF "::error::src/a.c changes the package since $base, and the head's version v1.2.0 is published already (staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm)" "$t/bump.out" ||
     { cat "$t/bump.out"; fail "build-rpm.yml: the bump refusal does not name the changed path and the served file"; }
 grep '::error::' "$t/bump.out" | grep -q 'ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names an exempt path"; }
 bumprun rpm 1.2.0 'docs/** README.md' && { cat "$t/bump.out"; fail "build-rpm.yml: src/ passed with docs added to bump-exempt"; }

@@ -3,8 +3,9 @@
 name: devel-bump-check
 description: Refuse a pull request into devel that changes a package while its version is published already
 
-# A merge to devel whose version the channel root or staging holds publishes nothing and stays green (.github#289), so the
-# "a changed package carries its version bump" check is here, red, on the pull request: bump-check.sh beside this file.
+# A merge to devel whose version the channel root or staging holds is green and publishes nothing only when nothing since
+# the commit that built it changes a package, and red otherwise (release-preflight, .github#289); the pull request into
+# devel is judged the same way first, here: bump-check.sh beside this file.
 # The channel is public: its tree is read with the run's own github.token, never PAGES_TOKEN.
 
 inputs:
@@ -14,8 +15,8 @@ inputs:
   version:
     description: the version at the head of the pull request (tree-version)
     required: true
-  base:
-    description: the commit the pull request is based on; the paths changed since it are judged
+  name:
+    description: the source package, whose staging/<kind>/built/<name>/<version>.commit records the build of a served version
     required: true
   packages:
     description: the binary package names, space separated (globs allowed)
@@ -40,7 +41,7 @@ runs:
       env:
         KIND: ${{ inputs.kind }}
         VERSION: ${{ inputs.version }}
-        BASE: ${{ inputs.base }}
+        NAME: ${{ inputs.name }}
         PACKAGES: ${{ inputs.packages }}
         RELEASES: ${{ inputs.releases }}
         EXEMPT: ${{ inputs.exempt }}
@@ -48,14 +49,23 @@ runs:
         TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
-        changed=$(mktemp)
-        git -c safe.directory="$PWD" diff --name-only "$BASE...HEAD" > "$changed"
-        echo "the pull request changes $(wc -l < "$changed") path(s) since $BASE"
         code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/bump-tree.json -w '%{http_code}' \
           -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
           "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")
         [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether v$VERSION is published"; exit 1; }
         [ "$(jq -r '.truncated' /tmp/bump-tree.json)" != true ] || { echo "::error::the tree of $TARGET is truncated: cannot prove v$VERSION unpublished"; exit 1; }
         jq -r '.tree[].path' /tmp/bump-tree.json > /tmp/bump-tree.paths
+        # the commit that built a served version, when the channel recorded it
+        rec=staging/$KIND/built/$NAME/$VERSION.commit BUILT=
+        if grep -qxF "$rec" /tmp/bump-tree.paths; then
+          code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/bump-built -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/$TARGET/contents/$rec")
+          [ "$code" = 200 ] || { echo "::error::$rec of $TARGET answered HTTP $code"; exit 1; }
+          BUILT=$(tr -d '[:space:]' < /tmp/bump-built)
+          [[ $BUILT =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$BUILT', not a full commit"; exit 1; }
+          git -c safe.directory="$PWD" cat-file -e "$BUILT^{commit}" 2>/dev/null || git -c safe.directory="$PWD" fetch -q origin "$BUILT" ||
+            { echo "::error::this checkout has no commit $BUILT, which built the served v$VERSION, and cannot fetch it"; exit 1; }
+        fi
+        export BUILT
         # shellcheck disable=SC2086 # PACKAGES is a list of names, split on purpose
-        "$GITHUB_ACTION_PATH/bump-check.sh" "$KIND" "$VERSION" "$changed" $PACKAGES < /tmp/bump-tree.paths
+        "$GITHUB_ACTION_PATH/bump-check.sh" "$KIND" "$VERSION" "$NAME" $PACKAGES < /tmp/bump-tree.paths
