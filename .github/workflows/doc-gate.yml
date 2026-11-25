@@ -73,7 +73,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends doxygen
-          if [ -n "${{ inputs.py }}" ]; then pipx install "ruff==${{ inputs.ruff-version }}"; fi
+          # ruff whatever `py` is: the action's --self-test runs first and needs doxygen AND ruff on the path
+          # (docs/doc-gate.md), so a C repository with no Python path exited 127 before its gate ran
+          pipx install "ruff==${{ inputs.ruff-version }}"
           doxygen --version
       - uses: Open-Mixer/.github/.github/actions/doc-gate@openmixer-v1
         with:
