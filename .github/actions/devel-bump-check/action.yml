@@ -18,6 +18,9 @@ inputs:
   name:
     description: the source package, whose staging/<kind>/built/<name>/<version>.commit records the build of a served version
     required: true
+  base:
+    description: the commit the pull request is based on; with no build record of a served version, merge-base(base, head)..head is judged
+    default: ''
   packages:
     description: the binary package names, space separated (globs allowed)
     required: true
@@ -42,6 +45,7 @@ runs:
         KIND: ${{ inputs.kind }}
         VERSION: ${{ inputs.version }}
         NAME: ${{ inputs.name }}
+        BASE: ${{ inputs.base }}
         PACKAGES: ${{ inputs.packages }}
         RELEASES: ${{ inputs.releases }}
         EXEMPT: ${{ inputs.exempt }}
@@ -66,6 +70,12 @@ runs:
           git -c safe.directory="$PWD" cat-file -e "$BUILT^{commit}" 2>/dev/null || git -c safe.directory="$PWD" fetch -q origin "$BUILT" ||
             { echo "::error::this checkout has no commit $BUILT, which built the served v$VERSION, and cannot fetch it"; exit 1; }
         fi
-        export BUILT
+        # with no record, the pull request's own change: from the merge base of its base and its head
+        CHANGE_BASE=''
+        if [ -n "$BASE" ]; then
+          git -c safe.directory="$PWD" cat-file -e "$BASE^{commit}" 2>/dev/null || git -c safe.directory="$PWD" fetch -q origin "$BASE" || true
+          CHANGE_BASE=$(git -c safe.directory="$PWD" merge-base "$BASE" HEAD 2>/dev/null || true)
+        fi
+        export BUILT CHANGE_BASE
         # shellcheck disable=SC2086 # PACKAGES is a list of names, split on purpose
         "$GITHUB_ACTION_PATH/bump-check.sh" "$KIND" "$VERSION" "$NAME" $PACKAGES < /tmp/bump-tree.paths

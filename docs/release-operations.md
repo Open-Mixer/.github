@@ -198,12 +198,15 @@ files. The devel build is the real package at its real version, never a pre-rele
     build, publish and verify jobs skip on it;
   - any other path: RED, each path named with the served version. A change that reached devel without its bump (a
     pull request that raced another, a direct push) is never lost behind a green skip;
-  - no record (a version published before this model): RED by name, never a silent skip.
+  - no record (a version published before this model): the push itself is judged, `github.event.before..HEAD`:
+    exempt paths alone are green with a notice that names the missing record, any packaged path is red by name until
+    the version is bumped, and an all-zero or unreachable `before` is red by name. No record is seeded and no bump
+    wave is needed. (`package-paths/served-change.sh`, the one judge of the preflight and of `devel-bump-check`.)
   No published version is rebuilt, and no epoch is used.
 - **The missing bump is red on the pull request first.** `devel-bump-check` judges a pull request into devel the same
   way: when its head version is published, in the channel root or staging, every path changed since the recorded
-  build that can change a package is refused, named with the served file, and a served version with no record is
-  refused by name. Which paths change a package has one definition, `package-paths.sh` (the `package-paths` action):
+  build that can change a package is refused, named with the served file; with no record, the pull request's own
+  change (`merge-base(base, head)..head`) is judged the same way, exempt paths alone passing with a notice. Which paths change a package has one definition, `package-paths.sh` (the `package-paths` action):
   everything but `.github/**`. README.md and `docs/` are NOT exempt: packages ship them (`%doc README.md` in
   omx-contract and omx-dsp). A repository adds globs through `bump-exempt` only for paths it shows its packages do not
   install. The channel is public: the check reads its tree and the record with the run's own `github.token`, never

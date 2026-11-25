@@ -338,6 +338,8 @@ jobs:
           kind: rpm
           version: ${{ steps.devel.outputs.version }}
           name: ${{ inputs.package-name }}
+          # with no build record, the pull request's own change is judged: merge-base(base, head)..head
+          base: ${{ github.event.pull_request.base.sha }}
           packages: ${{ inputs.binary-names || inputs.package-name }}
           releases: ${{ steps.matrix.outputs.releases }}
           exempt: ${{ inputs.bump-exempt }}
@@ -360,6 +362,8 @@ jobs:
           # a served version is green only when nothing since the commit that built it changes a package (.github#289)
           name: ${{ inputs.package-name }}
           exempt: ${{ inputs.bump-exempt }}
+          # with no build record, the push itself is what is judged
+          before: ${{ github.event.before }}
           # a dispatched staged run: refused when the channel root or staging holds a real build of its version
           staged-version: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/devel') && inputs.staged && steps.devel.outputs.version || '' }}
           # the already-served check reads the releases this run publishes into, no others

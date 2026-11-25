@@ -5,11 +5,10 @@
 #
 # A change to a package carries its version bump (.github#289). When the channel root or staging holds <version> of a
 # package of that kind (../release-preflight/already-served.sh, STAGING=true, KIND=<kind>, RELEASES as set), the head is
-# judged against the commit that built the served version, BUILT (staging/<kind>/built/<name>/<version>.commit, read by
-# the action): every path changed since it that can change a package (../package-paths/package-paths.sh, .github/**
-# exempt, EXEMPT adding globs) is refused, named with the served version, because the merge would be red on devel too
-# (release-preflight). A served version with no record of its build is refused by name: what changed since it cannot be
-# told. A version published nowhere passes.
+# judged by ../package-paths/served-change.sh, as the merge to devel is (release-preflight): against BUILT, the commit
+# that built it (staging/<kind>/built/<name>/<version>.commit, read by the action), or, with no record, the pull
+# request's own change from CHANGE_BASE (merge-base of its base and head). Every path that can change a package is
+# refused by name; exempt paths alone pass. A version published nowhere passes.
 set -euo pipefail
 usage='usage: bump-check.sh <kind> <version> <name> <package>...'
 kind=${1:?$usage}; version=${2:?$usage}; name=${3:?$usage}
@@ -22,16 +21,6 @@ if out=$(KIND=$kind STAGING=true "$here/../release-preflight/already-served.sh" 
 fi
 served=$(printf '%s\n' "$out" | sed -n 's/^::error::v[^ ]* is already served: \([^ ]*\).*/\1/p' | paste -sd' ')
 [ -n "$served" ] || { printf '%s\n' "$out"; exit 1; }
-if [ -z "${BUILT:-}" ]; then
-    echo "::error::v$version is published ($served), and staging/$kind/built/$name/$version.commit does not record the commit that built it: bump the version"
-    exit 1
-fi
-mapfile -t touching < <(git diff --name-only "$BUILT" HEAD | "$here/../package-paths/package-paths.sh")
-if [ "${#touching[@]}" = 0 ]; then
-    echo "v$version is published, built by $BUILT, and nothing since changes a package (.github/** ${EXEMPT:-}): no version bump is needed"
-    exit 0
-fi
-for p in "${touching[@]}"; do
-    echo "::error::$p changes the package since $BUILT, and the head's version v$version is published already ($served): bump the version"
-done
-exit 1
+echo "::notice::v$version is published already ($served)"
+"$here/../package-paths/served-change.sh" "$version" "staging/$kind/built/$name/$version.commit" "${BUILT:-}" "${CHANGE_BASE:-}" \
+    "this pull request (merge-base..head)" || { echo "::error::v$version is published already ($served): a change to the package needs its version bump"; exit 1; }

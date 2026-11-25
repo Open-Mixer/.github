@@ -59,6 +59,9 @@ inputs:
   name:
     description: the source package, whose built/ record a merge to devel of a served version is judged by
     default: ''
+  before:
+    description: "a merge to devel: github.event.before, the change a served version with no build record is judged by"
+    default: ''
   exempt:
     description: globs the repository adds to the paths that change no package (.github/**, package-paths.sh)
     default: ''
@@ -104,6 +107,7 @@ runs:
         STAGED_VERSION: ${{ inputs.staged-version }}
         NAME: ${{ inputs.name }}
         EXEMPT: ${{ inputs.exempt }}
+        BEFORE: ${{ inputs.before }}
       run: |
         set -euo pipefail
         if [ "$PUBLISH" != true ] || { [ "$REQUIRE_TAG" = true ] && [ "$REF_TYPE" != tag ]; }; then
@@ -173,27 +177,20 @@ runs:
             *) exit "$rc" ;;
           esac
           if [ "$rc" = 3 ]; then
-            # served: green only when nothing since the recorded build changes a package (.github#289)
-            [ -n "$NAME" ] && [ -n "$KIND" ] || { echo "::error::v$DEVEL_VERSION is published, and the preflight names no source package and kind to read the record of its build by"; exit 1; }
-            rec=staging/$KIND/built/$NAME/$DEVEL_VERSION.commit
-            grep -qxF "$rec" /tmp/tree.paths ||
-              { echo "::error::v$DEVEL_VERSION is published, and $rec does not record the commit that built it (a build published before the real-version model): a merge to devel cannot tell what changed since; bump the version"; exit 1; }
-            code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/built.commit -w '%{http_code}' \
-              -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github.raw" \
-              "https://api.github.com/repos/$TARGET/contents/$rec")
-            [ "$code" = 200 ] || { echo "::error::$rec of $TARGET answered HTTP $code: cannot tell what changed since the build of v$DEVEL_VERSION"; exit 1; }
-            built=$(tr -d '[:space:]' < /tmp/built.commit)
-            [[ $built =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$built', not a full commit"; exit 1; }
-            git cat-file -e "$built^{commit}" 2>/dev/null || git fetch -q origin "$built" 2>/dev/null ||
-              { echo "::error::this checkout has no commit $built, which built the served v$DEVEL_VERSION, and cannot fetch it"; exit 1; }
-            changed=$(git diff --name-only "$built" HEAD | "$GITHUB_ACTION_PATH/../package-paths/package-paths.sh")
-            if [ -n "$changed" ]; then
-              while IFS= read -r p; do
-                echo "::error::$p changes the package since $built, the build of the served v$DEVEL_VERSION: bump the version"
-              done <<< "$changed"
-              exit 1
+            # served: green only when nothing that can change a package changed, since the recorded build, or, with no
+            # record (a version published before the records), in this push itself (../package-paths/served-change.sh)
+            [ -n "$NAME" ] && [ -n "$KIND" ] || { echo "::error::v$DEVEL_VERSION is published, and the preflight names no package-name and kind to read the record of its build by"; exit 1; }
+            rec=staging/$KIND/built/$NAME/$DEVEL_VERSION.commit built=''
+            if grep -qxF "$rec" /tmp/tree.paths; then
+              code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/built.commit -w '%{http_code}' \
+                -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github.raw" \
+                "https://api.github.com/repos/$TARGET/contents/$rec")
+              [ "$code" = 200 ] || { echo "::error::$rec of $TARGET answered HTTP $code: cannot tell what changed since the build of v$DEVEL_VERSION"; exit 1; }
+              built=$(tr -d '[:space:]' < /tmp/built.commit)
+              [[ $built =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$built', not a full commit"; exit 1; }
             fi
-            echo "::notice::v$DEVEL_VERSION is published already, built by $built, and nothing since changes a package: this merge to devel builds and publishes nothing"
+            "$GITHUB_ACTION_PATH/../package-paths/served-change.sh" "$DEVEL_VERSION" "$rec" "$built" "${BEFORE:-}" "this push (github.event.before..HEAD)"
+            echo "::notice::v$DEVEL_VERSION is published already: this merge to devel builds and publishes nothing"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
         elif [ -n "${STAGED_VERSION:-}" ]; then
