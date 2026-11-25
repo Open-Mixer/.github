@@ -4,7 +4,8 @@
 # No release for Debian bookworm (owner ruling 2026-11-16), offline. Nothing that builds, signs, publishes or checks a
 # package for bookworm may name it: no non-comment line of a workflow, of the release-matrix or check-matrix action or
 # of the quick set carries the word. What is already published stays served (channel/keep-list.txt, the prune, the
-# channel index and the openmixer-release apt source are readers of it and are not scanned here).
+# channel index and the openmixer-release apt source are readers of it and are not scanned here; so is
+# release-matrix/frozen.txt, the list of served releases nothing builds, which a promotion leaves as they are).
 # Positive control: a bookworm put back into a copy of a workflow, and into quick.txt, each go red.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,6 +15,7 @@ scan() { # <root>: print every offending line
   local root=$1 f
   for f in "$root"/workflows/*.yml "$root"/actions/release-matrix/* "$root"/actions/check-matrix/*; do
     [ -f "$f" ] || continue
+    [ "${f##*/}" = frozen.txt ] && continue  # served and never built: the one place bookworm is named on purpose
     grep -nHi 'bookworm' "$f" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true
   done
 }
@@ -27,4 +29,7 @@ cp "$here"/.github/workflows/*.yml "$t/s/workflows/"; cp -r "$here/.github/actio
 sed -i "0,/\"trixie\"/s//\"bookworm\", \"trixie\"/" "$t/s/workflows/clap-headers-deb.yml"
 printf 'deb bookworm amd64\n' >> "$t/s/actions/release-matrix/quick.txt"
 [ "$(scan "$t/s" | wc -l)" -ge 2 ] || { echo "FAIL sabotage: a bookworm put back is not seen"; exit 1; }
+# the exemption is that one file by name: a bookworm in any other release-matrix file is still seen
+printf 'deb bookworm\n' > "$t/s/actions/release-matrix/frozen-extra.txt"
+scan "$t/s" | grep -q 'frozen-extra.txt' || { echo "FAIL sabotage: the frozen exemption reaches another file"; exit 1; }
 echo "ok   sabotage: a bookworm put back into a workflow and into quick.txt is red"

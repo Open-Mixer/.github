@@ -15,6 +15,10 @@ description: Fail when a commit of the pull request has the wrong author or comm
 # is not charged to the pull request. A commit GitHub makes for the pull request itself ("Update branch" merges the base
 # in, committer GitHub) IS in the range and fails: merge the base into the branch locally (plain signed git merge, house author and committer) and push plainly, never rebase or force. The merge button's commit is made after the checks
 # and is never in a range.
+# Published history folded in is not judged again (#269): a commit of the range already reachable from a public ref of
+# this repository (every origin branch but the pull request's head branch, head-ref, and every tag) was judged when it was
+# pushed, so it is named as published and skipped; every commit reachable only from the head is judged in full. A head
+# that is itself reachable from those refs (head-ref misnamed) fails with exit 2. An empty head-ref judges every commit.
 # The caller checks out with fetch-depth: 0 and the pull request head, and passes the token (the default one reads commits).
 
 inputs:
@@ -30,6 +34,9 @@ inputs:
   token:
     description: token that reads repos/{owner}/{repo}/commits/{sha}
     default: ${{ github.token }}
+  head-ref:
+    description: the pull request's head branch; commits reachable from any other branch or tag of this repository are published history and not judged again. Empty, every commit of the range is judged
+    default: ${{ github.head_ref }}
   upstream-url:
     description: the fork's upstream URL (exact line of ../upstream-exempt/upstream-allowed.txt); its own commits are exempt from this check. Empty, no exemption
     default: ''
@@ -49,8 +56,9 @@ runs:
         AUTHOR_EMAIL: ${{ inputs.author-email }}
         COMMITTER_EMAIL: ${{ inputs.committer-email }}
         UPSTREAM_URL: ${{ inputs.upstream-url }}
+        HEAD_REF: ${{ inputs.head-ref }}
       run: |
         set -euo pipefail
         [ -n "$BASE_REF" ] || { echo 'commit-identity-check: no base-ref (run on a pull_request)' >&2; exit 2; }
         "${{ github.action_path }}/commit-identity-check.sh" \
-          --author-email "$AUTHOR_EMAIL" --committer-email "$COMMITTER_EMAIL" --upstream-url "$UPSTREAM_URL" "origin/$BASE_REF..HEAD"
+          --author-email "$AUTHOR_EMAIL" --committer-email "$COMMITTER_EMAIL" --upstream-url "$UPSTREAM_URL" --head-ref "$HEAD_REF" "origin/$BASE_REF..HEAD"

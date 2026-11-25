@@ -24,8 +24,10 @@
 #               them: a machine that adds the staging channel must find an index for its release, never a 404
 #   EMPTY_OK    'true' lets <rpm dir> hold no package (the purge, which only regenerates the metadata)
 #   MATRIX_SET  quick or full: the set this run builds, recorded for its packages in <tree>/cells.tsv; empty records none.
-#               quick also places a noarch package in the quick set's architecture trees of its release
-#               (fedora/<release>/<arch>, from release-matrix/quick.txt), never in fedora/<release>/noarch: see below
+#               quick places a noarch package in fedora/<release>/noarch, served to every architecture, unless some
+#               architecture view cannot install it or an arch package of its source pins it exactly where the run did
+#               not build that package (noarch-views.py place); such a one goes into the quick set's architecture trees
+#               of its release alone (fedora/<release>/<arch>, from release-matrix/quick.txt): see below
 #   CATCH_UP    'true': a catch-up run, which fills cells a served version lacks and never writes a file the channel holds
 #               (docs/release-operations.md, "Catching a served version up"). Before anything is placed, every package of
 #               <rpm dir> whose path the tree already holds is judged: a noarch or source package is dropped from what is
@@ -125,18 +127,33 @@ fi
 # A QUICK RELEASE PLACES A NOARCH PACKAGE IN THE QUICK SET'S ARCHITECTURE TREES ALONE (omx-dsp 0.32.1, 2026-11-14).
 # fedora/<release>/noarch is read by every architecture, so a noarch package the quick set built for x86_64 alone,
 # placed there, reached the aarch64 machines without the aarch64 packages it needs, and the aarch64 cells refused it.
-# With MATRIX_SET=quick it goes into fedora/<release>/<arch> for each architecture quick.txt names for its release
-# (a repository directory holds a noarch package as well as any other), and every other tree stays as it is served
-# until the full matrix publishes. A release quick.txt has no rpm cell for is refused, naming it. The pin guard below
-# judges fedora/<release>/noarch, which such a run does not touch, so it does not judge these packages.
+# With MATRIX_SET=quick such a package, one that NEEDS AN ARCHITECTURE (noarch-views.py place: some architecture view
+# cannot install it, or an arch package of its source pins it exactly where the run did not build that package), goes
+# into fedora/<release>/<arch> for each architecture quick.txt names for its release (a repository directory holds a
+# noarch package as well as any other). A release quick.txt has no rpm cell for is refused, naming it.
+# EVERY OTHER NOARCH PACKAGE OF A QUICK RELEASE GOES INTO fedora/<release>/noarch (Open-Mixer/.github#267): put in the
+# quick trees as well, omx-contract-devel 3.20.0 to 3.21.0, which needs nothing built for an architecture, never
+# reached aarch64, whose view kept 3.19.1 and refused a build asking for >= 3.21.0 (run 45459465038). The placement
+# judged every architecture tree of the release already, so the pin guard below still skips a quick run.
+# the architectures the channel lays out for every release (openmixer.repo reads $basearch and noarch)
+repo_arches="x86_64 aarch64"
 declare -A quick_arches=()
+declare -A needs_arch=() # <rpm file>: why this noarch package needs an architecture (a quick run only)
 if [ "${MATRIX_SET:-}" = quick ]; then
     while read -r qk qr qa; do
         [ "$qk" = rpm ] && quick_arches[$qr]="${quick_arches[$qr]:+${quick_arches[$qr]} }$qa"
     done < <(grep -v '^#' "$here/../release-matrix/quick.txt")
+    placement=$(mktemp)
+    REPO_ARCHES=$repo_arches "$here/noarch-views.py" place "$tree" "$src" > "$placement" || { rm -f "$placement"; echo "the noarch placement could not be judged (noarch-views.py place): nothing was placed or signed" >&2; exit 1; }
+    while IFS=$'\t' read -r nf verdict why; do
+        [ "$verdict" = arch ] && needs_arch[$nf]=$why
+    done < "$placement"
+    rm -f "$placement"
 fi
-noarch_dirs() { # <releasever>: the architecture directories a noarch package of that release is placed in
-    if [ "${MATRIX_SET:-}" = quick ]; then
+noarch_dirs() { # <releasever> <rpm file>: the architecture directories a noarch package of that release is placed in
+    if [ "${MATRIX_SET:-}" = quick ] && [ -z "${needs_arch[$2]+set}" ]; then
+        echo noarch
+    elif [ "${MATRIX_SET:-}" = quick ]; then
         [ -n "${quick_arches[$1]:-}" ] || { echo "fc$1 has no rpm cell in the quick set (release-matrix/quick.txt): a quick release cannot place a noarch package of it" >&2; return 1; }
         echo "${quick_arches[$1]}"
     else
@@ -151,7 +168,6 @@ noarch_dirs() { # <releasever>: the architecture directories a noarch package of
 # out below, narrowed by quick.txt while the matrix is quick): no list of architectures is written here a second time.
 # Kept packages are never relabelled. An architecture inside the set that is skewed stays refused, and an empty set is
 # refused by name rather than judged as nothing to check.
-repo_arches="x86_64 aarch64"
 published_arches() { # <releasever>: the architectures the release matrix publishes for that Fedora release, one line
     local out cells a list=
     out=$(mktemp)
@@ -242,7 +258,8 @@ for f in ${found[@]+"${found[@]}"}; do
     releasever=$(printf '%s\n' "$rel" | sed -n 's/.*\.fc\([0-9][0-9]*\).*/\1/p')
     [ -n "$releasever" ] || { echo "$f has no .fcNN dist tag" >&2; exit 1; }
     if [ "$is_src" = 1 ]; then archdirs=SRPMS
-    elif [ "$arch" = noarch ]; then archdirs=$(noarch_dirs "$releasever") || exit 1
+    elif [ "$arch" = noarch ]; then archdirs=$(noarch_dirs "$releasever" "$f") || exit 1
+        [ -z "${needs_arch[$f]+set}" ] || echo "quick trees alone for $(basename "$f"): it needs an architecture (${needs_arch[$f]})"
     else archdirs=$arch; fi
     for archdir in $archdirs; do
         dest=$tree/fedora/$releasever/$archdir
@@ -281,6 +298,21 @@ for releasever in "${!served_noarch[@]}"; do
         done
     done
 done
+
+# NO PUBLISH LEAVES THE NEWEST BUILD OF A NOARCH PACKAGE IT PUBLISHED DIFFERENT ACROSS THE ARCHITECTURE VIEWS
+# (Open-Mixer/.github#267). A view is fedora/<release>/<arch> with fedora/<release>/noarch, what dnf reads there. The
+# difference is allowed only where the newest build needs an architecture the lower view lacks (noarch-views.py). Judged
+# on the tree as placed, before anything is signed: a refusal pushes nothing.
+views_names=()
+for f in ${found[@]+"${found[@]}"}; do
+    [ -z "${dropped[$f]:-}" ] || continue
+    IFS='|' read -r is_src arch pkg < <(rpm -qp --qf '%{SOURCEPACKAGE}|%{ARCH}|%{NAME}\n' "$f")
+    [ "$is_src" != 1 ] && [ "$arch" = noarch ] && views_names+=("$pkg")
+done
+if [ "${#views_names[@]}" -gt 0 ] && ! "$here/noarch-views.py" check "$tree" "${views_names[@]}"; then
+    echo "a noarch package this run published would be served newer to one architecture than to another that can install it: nothing was signed" >&2
+    exit 1
+fi
 
 if [ "${CATCH_UP:-}" = true ] && [ "${#placed[@]}" = 0 ]; then
     echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2

@@ -165,10 +165,13 @@ tags. The staging channel is per wave and is purged after the pass.
 TESTED platforms — Fedora 45 x86_64 (the stage box's platform) and Zynthian (Debian trixie arm64) — as soon as their
 tests pass; every other cell of the matrix goes to the real channel only when all tests pass (the tag release)." The
 tested platforms are the quick set (`.github/actions/release-matrix/quick.txt`, "The quick set and the full matrix"),
-written once there. So a staged run builds and publishes the quick set and nothing else: `matrix.sh` refuses a staged
-run told `matrix: full`, and one whose caller's matrix holds no quick cell, and takes the quick set whatever
-`OMX_RELEASE_MATRIX` says; the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
-package of any other cell, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
+written once there. So a staged run builds and publishes the quick set by default: `matrix.sh` refuses a staged run
+whose caller's matrix holds no quick cell, and takes the quick set whatever `OMX_RELEASE_MATRIX` says. **Superseded for
+promotion candidates (owner's build-once ruling, 2026-11-24; .github#273):** a staged run whose caller passes
+`matrix: full` explicitly builds the full matrix, so the promotion finds every release and architecture it promotes
+and its staging publish takes every architecture of the releases it built (`staged-cells.sh` reads the run's
+`MATRIX_SET`; the deb skeleton adds the architectures built); the staging publish (`publish-rpms`, `publish-debs` with `staging: 'true'`) refuses a
+package of a cell outside the run's set, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
 and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
 ### Where it is
@@ -354,7 +357,7 @@ pulled copy and pushes nothing.
 ## The quick set and the full matrix
 
 A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
-for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision.
+for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
@@ -590,9 +593,27 @@ until the full matrix publishes. A quick release never builds an aarch64 rpm, so
 aarch64 machine: in `fedora/<release>/noarch`, which dnf reads on every architecture, it did (omx-dsp-contract 0.32.1
 needs omx-dsp-devel 0.32.1, which no aarch64 tree served, and the aarch64 cells refused it). So, with `MATRIX_SET=quick`:
 
-- `publish-rpms` places a `noarch` package in `fedora/<release>/<arch>` for each architecture `quick.txt` names for its
-  release (`x86_64` for fc44 and fc45), never in `fedora/<release>/noarch`; a release with no quick rpm cell is refused.
-  A repository directory serves a `noarch` package like any other, and dnf takes the newest of the two directories. An
+- `publish-rpms` places a `noarch` package that NEEDS an architecture in `fedora/<release>/<arch>` for each
+  architecture `quick.txt` names for its release (`x86_64` for fc45); a release with no quick rpm cell is refused. A
+  repository directory serves a `noarch` package like any other, and dnf takes the newest of the two directories. A
+  `noarch` package needs an architecture when its `Requires`, followed through the packages of the run built from the
+  same source rpm, reach an arch package (omx-dsp-contract -> omx-dsp-devel), or when an arch package of that source pins
+  it exactly (`= %{version}-%{release}`) and some architecture tree of the release serves that package and the run did
+  not build it there (omx-clap-libs -> omx-clap-contract, the #62 case).
+- **Every other `noarch` package goes into `fedora/<release>/noarch`, served to every architecture** (Open-Mixer/.github#267).
+  Placing every `noarch` package in the quick trees starved aarch64 of packages that need nothing of it: from omx-contract
+  3.20.0 on, `omx-contract-devel` (which requires only `omx-contract-data`, noarch, same source) went into
+  `fedora/45/x86_64` alone, the aarch64 view (`fedora/45/aarch64` + `fedora/45/noarch`) kept serving 3.19.1, and an
+  aarch64 build needing `omx-contract-devel >= 3.21.0` found no match (run 45459465038, job 138685304544, against
+  x86_64's job 138685304854 which installed 3.21.0).
+- **A publish never leaves the newest build of a `noarch` package different across the architecture views.** After
+  placing, `publish-tree.sh` reads every architecture view of the release (`fedora/<release>/<arch>` with
+  `fedora/<release>/noarch`, for each architecture directory the release holds) and, for every `noarch` package name the
+  run published, compares the newest build each view serves. A difference is refused, naming the package, the release and
+  each view's newest version, unless the newest build needs an architecture as above, judged on the tree (its own
+  architecture tree and `noarch`, the same source rpm), or the lower view's tree serves an arch package pinning the older
+  build exactly. A refused run pushes nothing. `noarch-views.py report <tree>` lists the same differences for the whole
+  channel. An
   `all` deb needs nothing new: a quick release builds only the quick set's suites, and each of them is a quick cell on
   every architecture it serves.
 - `channel-installability` judges the quick cells alone (`--cell RELEASE/ARCH`, filled from `quick.txt` by `run.sh`

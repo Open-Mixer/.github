@@ -7,7 +7,10 @@
 #     bookworm anything;
 #   - the first step of publish-rpms and publish-debs, run as the runner runs it with staging on, refuses a package of
 #     another cell before anything is placed, accepts a tested one, and leaves a real publish (staging off) alone;
-#   - the staging deb skeleton is the quick set's architectures, in the publish and in the purge.
+#   - the staging deb skeleton is the quick set's architectures, in the publish and in the purge;
+#   - the run's set (MATRIX_SET, .github#273): quick (or empty) refuses an extra cell; full, a promotion candidate,
+#     accepts every architecture of the releases the run built and still refuses another release; an unreadable set,
+#     or full with no releases, is exit 2; the full deb skeleton adds the architectures the run built; sabotaged.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 act=$here/.github/actions
@@ -45,6 +48,50 @@ refuse deb "bookworm arm64" "bookworm arm64" bookworm/omx-lib_3.14.0_arm64.deb
 refuse deb "bookworm all" "bookworm all" bookworm/omx-lib-data_3.14.0_all.deb
 [ "$("$sc" arches deb)" = arm64 ] || fail "the quick set's Debian architectures are '$("$sc" arches deb)', not arm64"
 ok "staged-cells.sh: the quick set's cells pass, every other cell is refused by file and cell"
+
+# the run's set (#273): quick stays the default and refuses an extra cell; full accepts the releases the run built
+accept_with() { # <env...> -- <kind> <what> <path>...
+    local -a e=(); while [ "$1" != -- ]; do e+=("$1"); shift; done; shift
+    local kind=$1 what=$2; shift 2
+    lay "$t/p" "$@"
+    env "${e[@]}" "$sc" check "$kind" "$t/p" > "$t/log" 2>&1 || fail "$kind ${e[*]}: $what refused: $(cat "$t/log")"
+}
+refuse_with() { # <env...> -- <kind> <what> <cell named> <path>...
+    local -a e=(); while [ "$1" != -- ]; do e+=("$1"); shift; done; shift
+    local kind=$1 what=$2 cell=$3; shift 3
+    lay "$t/p" "$@"
+    if env "${e[@]}" "$sc" check "$kind" "$t/p" > "$t/log" 2>&1; then fail "$kind ${e[*]}: $what accepted"; fi
+    grep -q "($cell)" "$t/log" || fail "$kind ${e[*]}: $what not refused by cell '$cell': $(cat "$t/log")"
+}
+full_arms() { # the arms, run against $sc
+    refuse_with MATRIX_SET=quick RELEASES=45 -- rpm "a quick run's fc45 aarch64" "fc45 aarch64" a/omx-lib-3.14.0-1.fc45.x86_64.rpm a/omx-lib-3.14.0-1.fc45.aarch64.rpm
+    refuse_with MATRIX_SET=quick SUITES=trixie -- deb "a quick run's trixie amd64" "trixie amd64" trixie/omx-lib_3.14.0_arm64.deb trixie/omx-lib_3.14.0_amd64.deb
+    accept_with MATRIX_SET=full RELEASES=45 -- rpm "a full run's fc45 x86_64, aarch64, noarch and src" \
+        a/omx-lib-3.14.0-1.fc45.x86_64.rpm a/omx-lib-3.14.0-1.fc45.aarch64.rpm a/omx-lib-data-3.14.0-1.fc45.noarch.rpm a/omx-lib-3.14.0-1.fc45.src.rpm
+    accept_with MATRIX_SET=full RELEASES="44 45" -- rpm "a full run's fc44 and fc45" a/omx-lib-3.14.0-1.fc44.x86_64.rpm a/omx-lib-3.14.0-1.fc45.aarch64.rpm
+    refuse_with MATRIX_SET=full RELEASES=45 -- rpm "a full run's fc44, a release it did not build" "fc44 x86_64" a/omx-lib-3.14.0-1.fc45.x86_64.rpm a/omx-lib-3.14.0-1.fc44.x86_64.rpm
+    accept_with MATRIX_SET=full SUITES=trixie -- deb "a full run's trixie amd64, arm64 and all" \
+        trixie/omx-lib_3.14.0_arm64.deb trixie/omx-lib_3.14.0_amd64.deb trixie/omx-lib-data_3.14.0_all.deb
+    refuse_with MATRIX_SET=full SUITES=trixie -- deb "a full run's bookworm amd64, a release it did not build" "bookworm amd64" bookworm/omx-lib_3.14.0_amd64.deb
+}
+full_arms
+lay "$t/p" a/omx-lib-3.14.0-1.fc45.x86_64.rpm
+rc=0; MATRIX_SET=some "$sc" check rpm "$t/p" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "MATRIX_SET=some gave $rc, not 2"
+rc=0; MATRIX_SET=full RELEASES='' "$sc" check rpm "$t/p" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "MATRIX_SET=full with no releases gave $rc, not 2"
+lay "$t/p" trixie/omx-lib_3.14.0_arm64.deb trixie/omx-lib_3.14.0_amd64.deb trixie/omx-lib-data_3.14.0_all.deb
+[ "$(MATRIX_SET=full "$sc" arches deb "$t/p")" = "amd64 arm64" ] || fail "a full run's skeleton is '$(MATRIX_SET=full "$sc" arches deb "$t/p")', not 'amd64 arm64'"
+[ "$("$sc" arches deb "$t/p")" = arm64 ] || fail "a quick run's skeleton widened to the files: '$("$sc" arches deb "$t/p")'"
+ok "the run's set: quick refuses an extra cell; full accepts every architecture of the releases it built, refuses another release; unreadable is exit 2"
+# SABOTAGE on copies: (1) the full branch ignored (always quick): the full arms are refused; (2) every set read as full:
+# the quick arms accept the extra cell
+real_sc=$sc
+sed 's/if \[ "\$run_set" = full \]; then run_releases/if false; then run_releases/' "$real_sc" > "$t/sab1.sh"
+sed 's/if \[ "\$run_set" = full \]; then run_releases/if true; then run_releases/' "$real_sc" > "$t/sab2.sh"
+for n in 1 2; do chmod +x "$t/sab$n.sh"; [ "$(grep -c "if $([ $n = 1 ] && echo false || echo true); then run_releases" "$t/sab$n.sh")" = 2 ] || fail "sabotage $n setup"; done
+sc=$t/sab1.sh; ( full_arms ) >/dev/null 2>&1 && fail "sabotage 1: with the full branch ignored the full arms still passed"
+sc=$t/sab2.sh; ( RELEASES=45 SUITES=trixie full_arms ) >/dev/null 2>&1 && fail "sabotage 2: with every set read as full the quick arms still passed"
+sc=$real_sc
+ok "sabotage: the full branch ignored, and every set read as full, each turn their arm red"
 
 # the first step of each publish action, as the runner runs it
 step() { # <action.yml> <name pattern> <out>
@@ -86,6 +133,14 @@ lay "$t/d" trixie/omx-lib_3.14.0_arm64.deb trixie/omx-lib-data_3.14.0_all.deb
 first deb true "$t/d" || fail "publish-debs refused a staged trixie arm64 package: $(cat "$t/step.log")"
 grep -qx 'SKELETON_ARCHES=arm64' "$t/env" || fail "the staged deb publish does not make the skeleton of the quick set's architectures: $(cat "$t/env")"
 ok "publish-debs: a staged package of another cell is refused before anything is placed; the skeleton is arm64"
+
+# a staged promotion candidate through the publish steps (#273): MATRIX_SET=full, the step's own env
+lay "$t/r" omx-lib-3.14.0-1.fc45.x86_64.rpm omx-lib-3.14.0-1.fc45.aarch64.rpm
+MATRIX_SET=full first rpm true "$t/r" || fail "publish-rpms refused a full staged run's fc45 aarch64: $(cat "$t/step.log")"
+lay "$t/d" trixie/omx-lib_3.14.0_arm64.deb trixie/omx-lib_3.14.0_amd64.deb
+MATRIX_SET=full first deb true "$t/d" || fail "publish-debs refused a full staged run's trixie amd64: $(cat "$t/step.log")"
+grep -qx 'SKELETON_ARCHES=amd64 arm64' "$t/env" || fail "a full staged deb publish's skeleton is not amd64 arm64: $(cat "$t/env")"
+ok "publish-rpms, publish-debs: a full staged run publishes every architecture it built; its deb skeleton holds them"
 
 # the purge makes the same skeleton
 python3 -I - "$here/.github/actions/purge-staging/action.yml" <<'PY' || fail "the purge's deb skeleton is not the quick set's architectures"

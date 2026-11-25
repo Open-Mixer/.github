@@ -5,7 +5,7 @@
 # GitHub's .commit.verification.verified true (read with `gh api repos/$GH_REPO/commits/<sha>`, GH_TOKEN in the
 # environment). The head is not special: the whole range is read.
 #
-#   commit-identity-check.sh --author-email A --committer-email C [--upstream-url U] <range>
+#   commit-identity-check.sh --author-email A --committer-email C [--upstream-url U] [--head-ref H] <range>
 #   commit-identity-check.sh --selftest
 #
 # Exit 0 clean, 1 a hit (each commit sha, the field and the value are named), 2 a range, flag or API answer that
@@ -14,6 +14,12 @@
 # --upstream-url U (default none: no exemption): a fork's range carries its upstream's own commits, authored by others and unverified.
 # A commit with an offending field is dropped from the count when ../upstream-exempt/upstream-exempt.sh says U is on the exact list,
 # not rewritten, fetched, and the commit an ancestor of it; every other commit, our merge commits included, keeps every field.
+# --head-ref H (the pull request's head branch; default none: every commit of the range is judged): a commit of the range
+# already reachable from a PUBLIC ref of this repository (refs/remotes/origin/* other than origin/H, and refs/tags/*,
+# as a fetch-depth 0 checkout leaves them) is published history folded in by a merge: it was judged when it was pushed,
+# so it is named as published and not judged again (#269, omx-clap-core#213). Every commit reachable only from the head
+# is judged in full. A range tip that is itself reachable from those refs is exit 2: the head is misnamed or pushed
+# under a second name, and nothing of the pull request would be judged.
 set -euo pipefail
 
 verified_of() { # sha -> "<verified> <reason>" from the GitHub API
@@ -22,7 +28,13 @@ verified_of() { # sha -> "<verified> <reason>" from the GitHub API
 
 ex=$(dirname "${BASH_SOURCE[0]}")/../upstream-exempt/upstream-exempt.sh
 UPSTREAM_URL=
+HEAD_REF=
 ex_state=; ex_reason=
+# the public refs of this repository, minus the pull request's own head branch (one per line); nothing without --head-ref
+published_refs() {
+  [ -n "$HEAD_REF" ] || return 0
+  git for-each-ref --format='%(refname)' refs/remotes/origin refs/tags | grep -vxF "refs/remotes/origin/$HEAD_REF" || true
+}
 # exempt <sha>: the upstream exemption (upstream-exempt.sh, the one source) for a commit that has offending fields; lazy, so a clean
 # range fetches nothing, and with no --upstream-url there is no exemption at all
 exempt() {
@@ -33,8 +45,22 @@ exempt() {
   [ "$ex_state" = ok ] && "$ex" holds "$1"
 }
 check() { # author-email committer-email range
-  local want_a=$1 want_c=$2 range=$3 shas sha ae ce v reason bad=0 n=0 hits cb exempted=0
-  shas=$(git rev-list "$range") || { echo "commit-identity-check: cannot read range $range" >&2; return 2; }
+  local want_a=$1 want_c=$2 range=$3 shas sha ae ce v reason bad=0 n=0 hits cb exempted=0 published=0 all refs
+  all=$(git rev-list "$range") || { echo "commit-identity-check: cannot read range $range" >&2; return 2; }
+  shas=$all
+  refs=$(published_refs)
+  if [ -n "$refs" ] && [ -n "$all" ]; then
+    # shellcheck disable=SC2086 # one ref per word: refnames carry no spaces
+    shas=$(git rev-list "$range" --not $refs) || { echo "commit-identity-check: cannot read range $range minus the public refs" >&2; return 2; }
+    # shellcheck disable=SC2086 # as above
+    if [ -z "$(git rev-list -1 "${range##*..}" --not $refs)" ]; then
+      echo "commit-identity-check: the head ${range##*..} is reachable from a public ref other than origin/$HEAD_REF: the head ref is misnamed or pushed under a second name, and nothing would be judged" >&2
+      return 2
+    fi
+    for sha in $all; do
+      case $'\n'"$shas"$'\n' in *$'\n'"$sha"$'\n'*) ;; *) echo "$sha: published (reachable from a public ref of this repository): judged when it was pushed, not here"; published=$((published + 1)) ;; esac
+    done
+  fi
   for sha in $shas; do
     n=$((n + 1)); hits=; cb=0
     IFS=' ' read -r ae ce < <(git log -1 --format='%ae %ce' "$sha")
@@ -57,7 +83,7 @@ check() { # author-email committer-email range
     printf '%s' "$hits"; bad=$((bad + cb))
     [ -z "$UPSTREAM_URL" ] || [ "$ex_state" != no ] || echo "$sha: no upstream exemption: ${ex_reason#upstream-exempt: }"
   done
-  echo "commit-identity-check: $n commits, $bad offending fields$([ "$exempted" = 0 ] || echo ", $exempted upstream commits exempt")"
+  echo "commit-identity-check: $n commits, $bad offending fields$([ "$exempted" = 0 ] || echo ", $exempted upstream commits exempt")$([ "$published" = 0 ] || echo ", $published published commits not judged")"
   [ "$bad" = 0 ]
 }
 
@@ -81,6 +107,7 @@ while [ $# -gt 2 ]; do
     --author-email) a=$2 ;;
     --committer-email) c=$2 ;;
     --upstream-url) UPSTREAM_URL=$2 ;;
+    --head-ref) HEAD_REF=$2 ;;
     *) break ;;
   esac
   shift 2

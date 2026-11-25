@@ -530,6 +530,8 @@ jobs:
       - id: publish
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
+          # the channel's own rpm/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
+          served-url: ${{ inputs.base-url }}/rpm
           same-pass: ${{ inputs.same-pass }}
           rpm-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
@@ -587,6 +589,8 @@ jobs:
         if: inputs.staged
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
+          # the channel's own rpm/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
+          served-url: ${{ inputs.base-url }}/rpm
           same-pass: ${{ inputs.same-pass }}
           rpm-dir: collected
           tag: ${{ format('staged {0}', github.sha) }}
@@ -611,6 +615,8 @@ jobs:
         if: ${{ !inputs.staged }}
         uses: Open-Mixer/.github/.github/actions/publish-rpms@openmixer-v1
         with:
+          # the channel's own rpm/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
+          served-url: ${{ inputs.base-url }}/rpm
           same-pass: ${{ inputs.same-pass }}
           rpm-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}

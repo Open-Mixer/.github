@@ -6,7 +6,8 @@
 #     source package, in every release and architecture, and its checksums name the paths of the channel root;
 #   - it refuses, and copies nothing, a staged tree that lacks a distribution directory the matrix has, a release
 #     with no source package, a version staging does not hold, two staged commits with none named, and a release the
-#     channel root serves the package for and the promotion does not cover;
+#     channel root serves the package for and the promotion does not cover, unless release-matrix/frozen.txt lists that
+#     kind and release (served, no longer built: left as it is);
 #   - the workflow, rendered: nothing in it builds; a run that is not a tag push signs and pushes nothing and creates
 #     no release; a tag push publishes with staging off, in the live publish group, and creates the release only after
 #     the channel serves the bytes staging served and the install checks passed; no job creates the tag.
@@ -94,6 +95,26 @@ refuses "deb: an all package missing from one suite" 'debian/trixie/amd64 holds 
 channel "$t/f"; mk "$t/f/rpm/fedora/43/x86_64/omx-lib-3.12.0-1.fc43.x86_64.rpm"; mk "$t/f/deb/debian/forky/amd64/libomx-lib0_3.12.0_amd64.deb"
 refuses "rpm: a release the channel serves and the promotion lacks" 'serves omx-lib in rpm/fedora/43' "$t/f" "${rpm_args[@]}" --commit 5f455d3
 refuses "deb: a suite the channel serves and the promotion lacks" 'serves libomx-lib0 in deb/debian/forky' "$t/f" "${deb_args[@]}" --commit 5f455d3
+# a FROZEN release (release-matrix/frozen.txt: the channel still serves it, nothing builds it any more; owner ruling
+# 2026-11-19 for fc44) is not held against the promotion's matrix: its tree stays as it is, the promotion covers the
+# built releases. Only the listed kind and release are excused: the same release of the other kind, and any other
+# release, are still refused. PROMOTE_FROZEN names the list (the test's seam; the default is the one beside quick.txt).
+printf '# kind release\nrpm 43\n' > "$t/frozen.txt"
+rm -rf "$t/out" "$t/out.sha256"
+PROMOTE_FROZEN="$t/frozen.txt" python3 -I "$collect" "$t/f" "${rpm_args[@]}" --commit 5f455d3 --out "$t/out" > "$t/log" 2>&1 ||
+    fail "rpm: a frozen release the channel serves still refuses the promotion: $(cat "$t/log")"
+[ "$(find "$t/out" -name '*.rpm' | wc -l)" = 12 ] || fail "rpm: the promotion past a frozen release is not the 12 files of the commit"
+! find "$t/out" -name '*fc43*' | grep -q . || fail "rpm: a file of the frozen release went along"
+ok "rpm: a frozen release the channel serves is left as it is, the promotion covers the built releases"
+PROMOTE_FROZEN="$t/frozen.txt" refuses "deb: a suite not listed frozen (the rpm line excuses no deb suite)" 'serves libomx-lib0 in deb/debian/forky' "$t/f" "${deb_args[@]}" --commit 5f455d3
+mk "$t/f/rpm/fedora/42/x86_64/omx-lib-3.11.0-1.fc42.x86_64.rpm"
+PROMOTE_FROZEN="$t/frozen.txt" refuses "rpm: a served release beside a frozen one, not listed" 'serves omx-lib in rpm/fedora/42' "$t/f" "${rpm_args[@]}" --commit 5f455d3
+printf 'rpm\n' > "$t/bad.txt"
+PROMOTE_FROZEN="$t/bad.txt" refuses "a frozen list line that is not <kind> <release>" 'frozen\.txt|not .<kind> <release>.' "$t/f" "${rpm_args[@]}" --commit 5f455d3
+grep -v '^#' "$here/.github/actions/release-matrix/frozen.txt" | grep -qx 'rpm 44' || fail "release-matrix/frozen.txt does not list rpm 44 (owner ruling 2026-11-19)"
+ok "release-matrix/frozen.txt lists rpm 44"
+grep -v '^#' "$here/.github/actions/release-matrix/frozen.txt" | grep -qx 'deb bookworm' || fail "release-matrix/frozen.txt does not list deb bookworm (owner ruling 2026-11-16)"
+ok "release-matrix/frozen.txt lists deb bookworm"
 
 # ---- the workflow, rendered
 wf=$here/.github/workflows/promote-staged.yml

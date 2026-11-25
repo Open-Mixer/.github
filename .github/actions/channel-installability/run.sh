@@ -5,7 +5,8 @@
 # container, its tools installed when missing. <channel> is the deb/ or rpm/ tree, served (a URL) or pulled (a
 # directory); empty is the served channel at BASE_URL. The environment narrows it: SUITES (Debian releases),
 # FEDORA_VERSIONS, ARCHES, all space separated and empty for what the channel serves and the release brings, and
-# SAME_PASS, the packages other repositories release in the same pass. MATRIX_SET=quick, or CELLS, judges only the cells
+# SAME_PASS, the packages other repositories release in the same pass, and RELEASE_PACKAGE, the deb channel's release
+# package (openmixer-release when empty). MATRIX_SET=quick, or CELLS, judges only the cells
 # of the set (below). UNBUILT_ARCH_PASS=true (a dry run, which builds one
 # architecture) counts, on an architecture it built nothing for, the binary packages it built on another as released in
 # the same pass. Exit 0 green, 1 red, 2 not measured.
@@ -33,7 +34,9 @@ case $kind in
       apt-get update -qq
       apt-get install -y --no-install-recommends dose-distcheck python3 python3-yaml dpkg-dev ca-certificates >/dev/null
     fi
-    for s in ${SUITES:-}; do args+=(--suite "$s"); done ;;
+    for s in ${SUITES:-}; do args+=(--suite "$s"); done
+    # the channel's release package, whose sources name the Debian releases it serves (.github#279)
+    [ -z "${RELEASE_PACKAGE:-}" ] || args+=(--release-package "$RELEASE_PACKAGE") ;;
   rpm)
     if ! dnf repoclosure --help >/dev/null 2>&1 || ! command -v createrepo_c >/dev/null || ! command -v python3 >/dev/null; then
       dnf install -y -q --setopt=install_weak_deps=False dnf5-plugins createrepo_c python3 >/dev/null

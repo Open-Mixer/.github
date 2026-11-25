@@ -4,9 +4,8 @@
 # channel-installability, each arm on a throwaway channel, offline:
 #   ceiling  a library released above a published consumer's ceiling is red and names the consumer ("release it in
 #            the same pass"); the consumer's new release in the same pass, or in this very release, turns it green; a
-#            dependency between our own packages without a floor is red, and a floor alone is green (.github#102: the
-#            owner's rule is floors only on our packages; a breaking release declares Breaks/Conflicts); the same for rpm
-#            Requires, plain and rich.
+#            dependency between our own packages needs no floor and a floor alone is green (owner 2026-11-24: no
+#            hand-kept floors; a breaking release declares Breaks/Conflicts); the same for rpm Requires, plain and rich.
 #   deb      dose-debcheck: the library alone above the consumer's ceiling is red although the old library is still in
 #            the tree (apt takes the newest and does not go back: plugin-hostd-protocol 0.5.0); a patch
 #            inside the ceiling is green; a package broken before the release is reported, not held against it.
@@ -19,10 +18,13 @@
 #            naming each cell it leaves out.
 #   one channel  the channel is judged on its own: a dependency that lives only in another channel is refused, named, and
 #            there is no option that reads another channel as a provider (--external-channels exits 2).
+#   release package  with no --suite, the served Debian releases are read from the release package the caller names
+#            (--release-package, default openmixer-release): freereac-release ships its one suite in
+#            etc/apt/sources.list.d, openmixer-release one file per suite in usr/share/openmixer-release (.github#279).
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|one_channel_deb|one_channel_rpm]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_release_package|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|one_channel_deb|one_channel_rpm]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -83,7 +85,7 @@ arm_ceiling() {
     ceiling --kind deb --published "$d/published" --new "$d/pass-misfit"
   expect 0 - 'ceiling: a FLOOR-ONLY dependency on our own package is green (.github#102: floors only on our packages)' -- \
     ceiling --kind deb --published "$d/published" --new "$d/no-ceiling"
-  expect 1 'without a floor' 'ceiling: one without a floor is red' -- \
+  expect 0 - 'ceiling: a dependency on our own package without a floor is green (owner 2026-11-24: no hand-kept floors)' -- \
     ceiling --kind deb --published "$d/published" --new "$d/no-floor"
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
@@ -238,8 +240,6 @@ arm_deb() {
   grep -qF 'hostd-tests 0.19.1 was installable and is not' "$t/out" && ok 'deb: ... and what installs through it' || bad 'deb: hostd-tests not named'
   grep -qF 'RED deb: debian/bookworm amd64 newest: apt-get install clap-host fails on a clean machine: clap-host : Depends: libproto0 (< 0.5~)' "$t/out" \
     && ok 'deb (newest): apt-get -s names the package and the reason' || bad 'deb (newest): apt-get -s finding missing'
-  grep -qF 'HYGIENE: panel 0.9.1 depend on hostd' "$t/out" \
-    && bad 'deb (hygiene): a floor-only published build is flagged (.github#102: floors only)' || ok 'deb (hygiene): a floor-only published build is not flagged'
   expect 0 - 'deb: a patch inside the ceiling is green' -- "${args[@]}" --new-index "$d/lib-patch"
   grep -qF 'already-broken 1.0 was already uninstallable before' "$t/out" && ok 'deb: a package broken before is reported, not red' \
     || bad 'deb: the earlier breakage is not reported'
@@ -382,8 +382,6 @@ arm_rpm() {
   grep -qF 'published clap-host 0.30.6-1.fc44 declares (libproto < 0.5): release it in the same pass' "$t/out" && ok 'rpm: ... and the ceiling arm names the consumer' || bad 'rpm: ceiling arm silent'
   grep -qF 'RED rpm: fedora/44 x86_64 newest: installing panel falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44: with libproto 0.5.0-1.fc44 requested, dnf takes hostd 0.17.0-1.fc44 instead' "$t/out" \
     && ok 'rpm (newest): a fallback to an old build is red, naming the package' || bad 'rpm (newest): fallback not found'
-  grep -qF 'HYGIENE: hostd 0.17.0-1.fc44 depend on libproto' "$t/out" \
-    && bad 'rpm (hygiene): a floor-only old build is flagged (.github#102: floors only)' || ok 'rpm (hygiene): a floor-only old build is not flagged'
   expect 0 - 'rpm: a patch inside the ceiling is green' -- "${args[@]}" --new-dir "$d/new-patch"
   grep -qF 'already-broken 1.0-1.fc44.noarch was already uninstallable before' "$t/out" && ok 'rpm: a package broken before is reported, not red' \
     || bad 'rpm: the earlier breakage is not reported'
@@ -610,6 +608,66 @@ arm_one_channel_rpm() {
   expect 1 'openmixer-release 2-1.fc44.noarch is new and does not install' 'one channel rpm: a dependency that lives only in another channel is refused' -- "${args[@]}"
   grep -qF 'other-release' "$t/out" && ok 'one channel rpm: ... naming the dependency' || bad 'one channel rpm: the dependency is not named'
   expect 2 'unrecognized arguments: --external-channels' 'one channel rpm: another channel cannot be declared as a provider' -- "${args[@]}" --external-channels "$d/declared"
+}
+
+# THE RELEASE PACKAGE IS THE CALLER'S (.github#279): with no --suite the gate learns the Debian releases a channel serves
+# from the sources its release package installs. It read <channel>/openmixer-release.deb on every channel, so every
+# FreeREAC deb dry run (reac-pw #132 #120 #118 #107, libreac #66) exited 2 on a 404: FreeREAC's channel serves
+# freereac-release.deb, which ships its one suite as etc/apt/sources.list.d/freereac.sources. openmixer-release keeps the
+# default arm: usr/share/openmixer-release/openmixer-<suite>.sources, one per suite.
+arm_deb_release_package() {
+  command -v dose-debcheck >/dev/null || { bad 'deb release package: dose-debcheck is not installed (apt-get install dose-distcheck)'; return; }
+  command -v dpkg-deb >/dev/null || { bad 'deb release package: dpkg-deb is not installed (dpkg-dev)'; return; }
+  local d=$t/relpkg p s
+  mkdir -p "$d/fr/debian/trixie" "$d/om/debian/bookworm" "$d/om/debian/trixie"
+  { stanza libc6 2.41-12 amd64; } > "$d/bg"
+  { stanza libreac1 1.9.0 amd64 'libc6 (>= 2.34)'; } > "$d/fr/debian/trixie/Packages"
+  for s in bookworm trixie; do { stanza libreac1 1.9.0 amd64 'libc6 (>= 2.34)'; } > "$d/om/debian/$s/Packages"; done
+  stanza libreac1 1.9.1 amd64 'libc6 (>= 2.34)' > "$d/new"
+  # sources <package> <path in the package> <suite>: the package installs the sources of that suite there
+  sources() {
+    local root=$d/build/$1
+    mkdir -p "$root/DEBIAN" "$(dirname "$root/$2")"
+    printf 'Package: %s\nVersion: 1-1\nArchitecture: all\nMaintainer: t <t@t>\nDescription: t\n' "$1" > "$root/DEBIAN/control"
+    printf 'Types: deb\nURIs: https://example.org/deb/debian/%s/\nSuites: ./\n' "$3" > "$root/$2"
+  }
+  sources freereac-release etc/apt/sources.list.d/freereac.sources trixie
+  sources openmixer-release usr/share/openmixer-release/openmixer-bookworm.sources bookworm
+  sources openmixer-release usr/share/openmixer-release/openmixer-trixie.sources trixie
+  # the staging sources sit below, in testing/: never a served suite of the channel itself
+  sources openmixer-release usr/share/openmixer-release/testing/openmixer-testing-sid.sources sid
+  dpkg-deb -b "$d/build/freereac-release" "$d/fr/freereac-release.deb" >/dev/null
+  dpkg-deb -b "$d/build/openmixer-release" "$d/om/openmixer-release.deb" >/dev/null
+  expect 0 'debian/trixie: 1 published, 1 new' 'deb release package: a caller naming freereac-release reads <channel>/freereac-release.deb' -- \
+    deb --channel "$d/fr" --release-package freereac-release --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  grep -qF 'debian/bookworm' "$t/out" && bad 'deb release package: ... and judges a suite the channel does not serve' \
+    || ok 'deb release package: ... and judges only the suite it ships'
+  expect 0 'debian/bookworm: 1 published, 1 new' 'deb release package: the default is openmixer-release, one sources file per suite' -- \
+    deb --channel "$d/om" --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  grep -qF 'debian/trixie: 1 published, 1 new' "$t/out" && ok 'deb release package: ... both of its suites' \
+    || bad 'deb release package: the default arm missed trixie'
+  grep -qF 'debian/sid' "$t/out" && bad 'deb release package: ... and judges the staging sources as a served suite' \
+    || ok 'deb release package: ... and not the staging sources below them'
+  expect 2 'freereac-release.deb' 'deb release package: a channel without the named package is not measured, and says which' -- \
+    deb --channel "$d/om" --release-package freereac-release --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  expect 2 'is not <channel>-release' 'deb release package: a name that is not <channel>-release is refused' -- \
+    deb --channel "$d/fr" --release-package ../x --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  # the caller's name reaches the gate: build-deb.yml hands it to every publish-debs, publish-debs to run.sh, run.sh to gate.py
+  p=$here/.github
+  [ "$(grep -c 'actions/publish-debs@' "$p/workflows/build-deb.yml")" = \
+    "$(grep -A14 'actions/publish-debs@' "$p/workflows/build-deb.yml" | grep -cF 'release-package: ${{ inputs.release-package }}')" ] \
+    && ok 'deb release package: build-deb.yml passes release-package to every publish-debs' \
+    || bad 'deb release package: a publish-debs in build-deb.yml does not get release-package'
+  grep -qF 'RELEASE_PACKAGE: ${{ inputs.release-package }}' "$p/actions/publish-debs/action.yml" \
+    && ok 'deb release package: publish-debs hands it to the gate' || bad 'deb release package: publish-debs does not hand it to the gate'
+  grep -qF -- '--release-package "$RELEASE_PACKAGE"' "$p/actions/channel-installability/run.sh" \
+    && ok 'deb release package: run.sh passes it to gate.py' || bad 'deb release package: run.sh does not pass it to gate.py'
+  grep -qF 'RELEASE_PACKAGE: ${{ inputs.release-package }}' "$p/actions/channel-installability/action.yml" \
+    && ok 'deb release package: the channel-installability action hands it to run.sh' \
+    || bad 'deb release package: the channel-installability action does not hand it to run.sh'
+  grep -m1 -A12 'actions/channel-installability@' "$p/workflows/channel-installability.yml" | grep -qF 'release-package: ${{ inputs.release-package }}' \
+    && ok 'deb release package: the reusable channel-installability.yml passes it to the action' \
+    || bad 'deb release package: the reusable channel-installability.yml does not pass it to the action'
 }
 
 arm_deb_cells() {
