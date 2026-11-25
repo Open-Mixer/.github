@@ -201,11 +201,24 @@ jobs:
           RPM_COMMIT: ${{ steps.rpm.outputs.commit }}
           DEB_COMMIT: ${{ steps.deb.outputs.commit }}
           VERSION: ${{ steps.ver.outputs.version }}
+          RUN_COMMIT: ${{ steps.ver.outputs.commit }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -o pipefail
           short=${RPM_COMMIT:-$DEB_COMMIT}
           [ -n "$short" ] || { echo "::error::nothing to promote: both rpm and deb are off"; exit 1; }
+          # the real package a merge to devel staged names no commit (one build per version, .github#289): the
+          # promotion's own commit stands for it, a tag's or the dry run's input, and is checked like any other
+          if [ "$short" = real ]; then
+            for c in "$RPM_COMMIT" "$DEB_COMMIT"; do
+              case $c in
+                ''|real) ;;
+                *) echo "::error::the staged RPMs are of '$RPM_COMMIT' and the staged DEBs of '$DEB_COMMIT': one is the real package of a merge to devel, the other a snapshot"; exit 1 ;;
+              esac
+            done
+            short=${RUN_COMMIT:-} RPM_COMMIT='' DEB_COMMIT=''
+            [ -n "$short" ] || { echo "::error::the staged build is the real package of a merge to devel, and this run names no commit"; exit 1; }
+          fi
           if [ -n "$RPM_COMMIT" ] && [ -n "$DEB_COMMIT" ] && [ "${RPM_COMMIT#"$DEB_COMMIT"}" = "$RPM_COMMIT" ] && [ "${DEB_COMMIT#"$RPM_COMMIT"}" = "$DEB_COMMIT" ]; then
             echo "::error::the staged RPMs are of $RPM_COMMIT and the staged DEBs of $DEB_COMMIT: name one commit both were built from"; exit 1
           fi

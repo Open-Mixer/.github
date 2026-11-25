@@ -9,7 +9,9 @@ staged build of <name> <version> left there, and copy them to DIR laid out as th
 deb: <suite>/<file>). Nothing is built and nothing in the checkout is written.
 
 A staged build is named by its commit: <version>-<release>.git<commit time>.<sha>.fcNN for rpm,
-<version>+git<commit time>.<sha> for deb (a build staged before the time was part of the name has the sha alone). Every
+<version>+git<commit time>.<sha> for deb (a build staged before the time was part of the name has the sha alone). A
+merge to devel stages the REAL package, <version>-<release>.fcNN and <version>[-<revision>], built once (.github#289): its
+name holds no commit and needs none, a version is built only once; it is reported as commit "real". Every
 file of that version and commit goes along, the subpackages too. --releases are Fedora releases (rpm) or Debian suites
 (deb), --arches the architectures a release builds; --binaries are the packages every one of those must hold
 (default: the name), as its own architecture or as noarch / all.
@@ -23,7 +25,7 @@ It refuses, naming each case, and copies nothing when:
     stays as it is.
 
 On success: one "<sha256>  <path in the channel root>" line per file in --sums (default DIR.sha256) and on stdout, then
-"commit <sha>", the short commit the staged build recorded.
+"commit <sha>", the short commit the staged build recorded, or "commit real" for the real package of a merge to devel.
 """
 import argparse
 import hashlib
@@ -65,9 +67,15 @@ def parse(kind, version, fname):
         if not m:
             return None
         g = re.search(r"\.git(?:[0-9]+\.)?([0-9a-f]{7,40})(?:\.|$)", "." + m.group(2))
-        return (m.group(1), g.group(1), m.group(3)) if g else None
+        if g:
+            return (m.group(1), g.group(1), m.group(3))
+        # the real package a merge to devel staged: a plain <release>.fcNN, no snapshot stamp
+        return (m.group(1), "real", m.group(3)) if re.match(r"^[0-9][0-9.]*\.fc[0-9]+$", m.group(2)) else None
     m = re.match(rf"^([^_]+)_{v}\+git(?:[0-9]+\.)?([0-9a-f]{{7,40}})[^_]*_([^_]+)\.deb$", fname)
-    return (m.group(1), m.group(2), m.group(3)) if m else None
+    if m:
+        return (m.group(1), m.group(2), m.group(3))
+    m = re.match(rf"^([^_]+)_{v}(?:-[0-9][0-9A-Za-z.+~]*)?_([^_]+)\.deb$", fname)
+    return (m.group(1), "real", m.group(2)) if m else None
 
 
 def cells(tree, ext):
@@ -107,7 +115,8 @@ def main():
                 staged[(rel, arch, f)] = p[:2]
     commits = sorted({c for (p, c) in staged.values() if p in binaries or p == a.name})
     if a.commit:
-        commits = [c for c in commits if c.startswith(a.commit) or a.commit.startswith(c)]
+        # the real package is one build per version: --commit cannot be read from its name and does not narrow it
+        commits = [c for c in commits if c == "real" or c.startswith(a.commit) or a.commit.startswith(c)]
     if not commits:
         of = f" of commit {a.commit}" if a.commit else ""
         sys.exit(f"refused: {where} holds no {a.name} {a.version}{of}")
