@@ -216,8 +216,8 @@ files. The devel build is the real package at its real version, never a pre-rele
   files, nor change the value it is judged by: `devel-bump-check` reads `bump-exempt` from the caller's workflow file
   (`github.workflow_ref`) at the merge base, and when the head's value differs it judges with the base value, naming
   both (`exempt-at.py`, .github#292). A pull request that only widens `bump-exempt` and changes `.github/**` passes;
-  the wider value applies once it is on devel. A push to devel is judged the same way by the value its caller had at
-  `github.event.before`, and a promotion by the value its caller (the `promote.yml` that calls `promote-staged.yml`)
+  the wider value applies once it is on devel. A push to devel is judged the same way by the value its caller had where
+  its diff starts (the recorded build, else `github.event.before`), and a promotion by the value its caller (the `promote.yml` that calls `promote-staged.yml`)
   had at the recorded build (`base-exempt.sh`, one reader for all three, .github#294): a push or a tagged commit that
   widens the list over packaged changes is refused, naming both values. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
   `PAGES_TOKEN`.

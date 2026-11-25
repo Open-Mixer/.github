@@ -146,12 +146,17 @@ relyml() { mkdir -p "$repo/.github/workflows"; printf 'jobs:\n  rpm:\n    uses: 
 gitr checkout -q -b widen "$B"; relyml 'tools/**'; mkdir -p "$repo/tools"; echo t > "$repo/tools/x.py"; gitr add -A; gitr commit -q -m widen-and-change
 cref=Open-Mixer/foo/.github/workflows/release.yml@refs/heads/devel
 EXEMPT_IN='tools/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 && { cat "$tmp/out"; fail "a push widening bump-exempt over tools/x.py passed"; }
-grep -qF "bump-exempt is '' at github.event.before and 'tools/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not show both bump-exempt values"; }
+grep -qF "bump-exempt is '' at the build and 'tools/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not show both bump-exempt values, read at the build its diff starts from"; }
 grep -qF "::error::tools/x.py changes the package since $A" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not name tools/x.py"; }
 gitr checkout -q -b widen-only "$B"; relyml 'tools/**'; gitr add -A; gitr commit -q -m widen-only
 : > "$tmp/gh-out"; EXEMPT_IN='tools/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 || { cat "$tmp/out"; fail "a push that only widens bump-exempt was refused"; }
-grep -qF "bump-exempt is '' at github.event.before and 'tools/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the widening push does not name both values"; }
+grep -qF "bump-exempt is '' at the build and 'tools/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the widening push does not name both values"; }
 gitr checkout -q "$B"
+# with a record the diff starts at the build, so bump-exempt is read there: the first push of devel (before all zeros)
+# at the recorded, served v1.5.0, changing .github/ alone, stays green
+: > "$tmp/gh-out"; CALLER_IN=$cref BEFORE=0000000000000000000000000000000000000000 rundevel 1.5.0 false 45 ||
+    { cat "$tmp/out"; fail "a first push of devel (before all zeros) at a recorded version changing .github/ alone was refused"; }
+grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "the first push of devel at a recorded version does not skip"; }
 : > "$tmp/gh-out"; rundevel 1.2.9 || { cat "$tmp/out"; fail "a merge to devel of a new version was refused"; }
 grep -qx 'skip=false' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "a merge to devel of a new version does not output skip=false"; }
 echo "ok   a merge to devel of a published version is green, publishes nothing, and names what is served"
@@ -182,4 +187,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 46 arms"
+echo "ok   release-preflight-served: 47 arms"

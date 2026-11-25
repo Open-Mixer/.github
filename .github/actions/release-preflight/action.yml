@@ -63,7 +63,7 @@ inputs:
     description: "a merge to devel: github.event.before, the change a served version with no build record is judged by"
     default: ''
   caller-workflow:
-    description: "github.workflow_ref of the caller: a merge to devel is judged by the bump-exempt its file had at github.event.before, never by one the push sets (../devel-bump-check/base-exempt.sh, .github#294); empty judges by exempt"
+    description: "github.workflow_ref of the caller: a merge to devel is judged by the bump-exempt its file had where the diff starts (the recorded build, else github.event.before), never by one the push sets (../devel-bump-check/base-exempt.sh, .github#294); empty judges by exempt"
     default: ''
   exempt:
     description: globs the repository adds to the paths that change no package (.github/**, package-paths.sh)
@@ -193,16 +193,18 @@ runs:
               built=$(tr -d '[:space:]' < /tmp/built.commit)
               [[ $built =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$built', not a full commit"; exit 1; }
             fi
-            # judged by the bump-exempt the caller's workflow had at github.event.before, never by one this push sets
+            # judged by the bump-exempt the caller's workflow had at the commit the diff starts from, never by one this push
+            # sets: the recorded build when there is one (R1, built..HEAD), else github.event.before (B1, before..HEAD)
             judged=''
             if [ -n "${CALLER:-}" ]; then
-              got=$("$GITHUB_ACTION_PATH/../devel-bump-check/base-exempt.sh" "${BEFORE:-}" "$CALLER" "build-$KIND.yml" "${EXEMPT:-}" "github.event.before" "HEAD") || { printf '%s\n' "$got"; exit 1; }
+              if [ -n "$built" ]; then from=$built fromlabel="the build"; else from=${BEFORE:-} fromlabel="github.event.before"; fi
+              got=$("$GITHUB_ACTION_PATH/../devel-bump-check/base-exempt.sh" "$from" "$CALLER" "build-$KIND.yml" "${EXEMPT:-}" "$fromlabel" "HEAD") || { printf '%s\n' "$got"; exit 1; }
               EXEMPT=$(sed -n 's/^value=//p' <<< "$got") judged=$(sed -n 's/^differs=//p' <<< "$got")
               export EXEMPT
-              [ -z "$judged" ] || echo "::notice::$judged: this push is judged by the value at github.event.before; a changed bump-exempt takes effect on the next push"
+              [ -z "$judged" ] || echo "::notice::$judged: this push is judged by the value at $fromlabel; a changed bump-exempt takes effect once a build or push starts from it"
             fi
             "$GITHUB_ACTION_PATH/../package-paths/served-change.sh" "$DEVEL_VERSION" "$rec" "$built" "${BEFORE:-}" "this push (github.event.before..HEAD)" || {
-              [ -z "$judged" ] || echo "::error::$judged: judged by the value at github.event.before, so the change above is packaged"
+              [ -z "$judged" ] || echo "::error::$judged: judged by the value at $fromlabel, so the change above is packaged"
               exit 1
             }
             echo "::notice::v$DEVEL_VERSION is published already: this merge to devel builds and publishes nothing"
