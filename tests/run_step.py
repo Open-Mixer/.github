@@ -6,7 +6,7 @@
 Writes the shell of one step of a workflow (or of a composite action, with <job> '-') to <out.sh>, so a test runs the
 step's own text with stub tools on PATH instead of a copy of it. <step> is id=<id>, name=<name> or uses=<action dir>.
 
-A run step is its body. A step that uses Open-Mixer/.github/.github/actions/<dir>@... or ./.github/actions/<dir> is the
+A run step is its body, under set -eo pipefail as GitHub runs a bash step. A step that uses Open-Mixer/.github/.github/actions/<dir>@... or ./.github/actions/<dir> is the
 run steps of that composite action, in order, each in a subshell of its own with GITHUB_ACTION_PATH set and its env
 mapped from the step's with: (a value written as an expression is taken from the name=value arguments, by the input's
 name; an input not given takes its default). The step's own env: is not evaluated: the test exports what it names.
@@ -62,10 +62,13 @@ def main():
                 v = str(v)
                 mm = re.fullmatch(r"\$\{\{\s*inputs\.([A-Za-z0-9_-]+)\s*\}\}", v.strip())
                 env.append(f"export {k}={shlex.quote(inputs.get(mm.group(1), '') if mm else v)}")
-            parts.append("(\n" + f"export GITHUB_ACTION_PATH={shlex.quote(adir)}\n" + "\n".join(env) + "\n" + s["run"] + "\n) || exit $?\n")
+            # a subshell whose status is read after it: `( ... ) || exit` would switch errexit off inside it
+            parts.append("(\nset -eo pipefail\n" + f"export GITHUB_ACTION_PATH={shlex.quote(adir)}\n" + "\n".join(env) + "\n" + s["run"]
+                         + "\n)\nrc=$?; [ \"$rc\" = 0 ] || exit \"$rc\"\n")
         body = "".join(parts)
     with open(out, "w", encoding="utf-8") as h:
-        h.write("#!/bin/bash\n" + body)
+        # GitHub runs a bash step as bash --noprofile --norc -eo pipefail {0}
+        h.write("#!/bin/bash\nset -eo pipefail\n" + body)
 
 
 if __name__ == "__main__":
