@@ -24,8 +24,8 @@ inputs:
     description: the Fedora releases or Debian suites the version is read for, space separated; empty reads every one
     default: ''
   exempt:
-    description: globs, space separated, of paths that change no package
-    default: 'docs/** **/*.md .github/**'
+    description: globs, space separated, the repository adds to the exempt default (.github/**, package-paths.sh)
+    default: ''
   target:
     description: the channel repository
     default: Open-Mixer/open-mixer.github.io

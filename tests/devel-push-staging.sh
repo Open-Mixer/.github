@@ -325,30 +325,39 @@ printf '%s' '{"truncated":false,"tree":[{"path":"staging/rpm/fedora/45/x86_64/om
 printf 200
 STUB
 chmod +x "$t/pbin/curl"
-bumprun() { # bumprun <kind> <version> -> status; log in $t/bump.out
+bumprun() { # bumprun <kind> <version> [extra exempt globs] -> status; log in $t/bump.out
     local exempt
     rm -rf "$t/state"; mkdir -p "$t/state"
-    exempt=$(python3 -I -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print((d.get("on") or d[True])["workflow_call"]["inputs"]["bump-exempt"]["default"])' \
-        "$root/.github/workflows/build-$1.yml")
+    [ -z "${3:-}" ] && exempt=$(python3 -I -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print((d.get("on") or d[True])["workflow_call"]["inputs"]["bump-exempt"]["default"])' \
+        "$root/.github/workflows/build-$1.yml") || exempt=${3:-}
     python3 -I "$step" "$root" "$root/.github/workflows/build-$1.yml" preflight uses=devel-bump-check "$t/bump-$1.sh" \
         kind="$1" version="$2" base="$base" packages=omx-a releases= exempt="$exempt" target=Open-Mixer/open-mixer.github.io token=gh-run-token
     (cd "$g" && STATE=$t/state PATH=$t/pbin:$PATH bash "$t/bump-$1.sh") > "$t/bump.out" 2>&1
 }
-echo b > "$g/docs/x.md"; echo r2 > "$g/README.md"; mkdir -p "$g/.github/workflows"; echo w > "$g/.github/workflows/ci.yml"
-gitc add -A; gitc commit -q -m docs
+# R2: the default exempt list is .github/** alone; README.md and docs/ ship in packages (%doc README.md), so they
+# change the package unless the repository adds them through bump-exempt
+mkdir -p "$g/.github/workflows"; echo w > "$g/.github/workflows/ci.yml"; gitc add -A; gitc commit -q -m workflow
 for kind in rpm deb; do
-    bumprun "$kind" 1.2.0 || { cat "$t/bump.out"; fail "build-$kind.yml: a pull request into devel changing docs, *.md and .github/ alone was refused"; }
+    bumprun "$kind" 1.2.0 || { cat "$t/bump.out"; fail "build-$kind.yml: a pull request into devel changing .github/ alone was refused"; }
 done
+echo b > "$g/docs/x.md"; echo r2 > "$g/README.md"; gitc add -A; gitc commit -q -m docs
+bumprun rpm 1.2.0 && { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing README.md and docs/ at a published version passed (README.md ships as %doc)"; }
+for p in README.md docs/x.md; do
+    grep -qF "::error::$p changes the package" "$t/bump.out" || { cat "$t/bump.out"; fail "the bump refusal does not name $p"; }
+done
+bumprun rpm 1.2.0 'docs/** README.md' || { cat "$t/bump.out"; fail "build-rpm.yml: the paths a repository adds to bump-exempt were not exempt"; }
 echo c > "$g/src/a.c"; gitc add -A; gitc commit -q -m code
 bumprun rpm 1.2.0 && { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing src/ at a version staging holds passed"; }
 grep -qF "::error::src/a.c changes the package, and the head's version v1.2.0 is published already (staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm)" "$t/bump.out" ||
     { cat "$t/bump.out"; fail "build-rpm.yml: the bump refusal does not name the changed path and the served file"; }
-grep '::error::' "$t/bump.out" | grep -q 'docs/x.md\|README.md\|ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names an exempt path"; }
+grep '::error::' "$t/bump.out" | grep -q 'ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names an exempt path"; }
+bumprun rpm 1.2.0 'docs/** README.md' && { cat "$t/bump.out"; fail "build-rpm.yml: src/ passed with docs added to bump-exempt"; }
+grep '::error::' "$t/bump.out" | grep -q 'docs/x.md\|README.md\|ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names a path the repository exempted"; }
 grep -qx 'Authorization: Bearer gh-run-token' "$t/state/auth" || { cat "$t/state/auth"; fail "the bump check did not read the channel with the run's github.token"; }
 bumprun deb 1.2.0 && { cat "$t/bump.out"; fail "build-deb.yml: a pull request into devel changing src/ at a version the channel root holds passed"; }
 grep -q 'deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb' "$t/bump.out" || { cat "$t/bump.out"; fail "build-deb.yml: the bump refusal does not name the served deb"; }
 bumprun rpm 1.3.0 || { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel carrying a new version was refused"; }
-echo "a pull request into devel changing a package at a published version is refused by name; exempt paths and a bump pass: ok"
+echo "a pull request into devel changing a package at a published version is refused by name; .github/ alone, a repository's own exempt paths and a bump pass: ok"
 
 # ---- 9. a real promotion is tied to the devel commit that built it (F6c). The staging publish of a merge to devel records
 #      the full commit (built-commit, record-built.sh: staging/<kind>/built/<name>/<version>.commit); promote-staged's

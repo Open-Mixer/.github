@@ -139,8 +139,8 @@ on:
         description: 'Ignored, kept so existing callers still validate: no CHANGELOG.md check remains'
       bump-exempt:
         type: string
-        default: 'docs/** **/*.md .github/**'
-        description: 'Globs, space separated, of paths that change no package: a pull request into devel that changes any other path while its version is published already is refused (a merge to devel of a published version publishes nothing)'
+        default: ''
+        description: 'Globs, space separated, added to the paths that change no package (.github/** alone by default, package-paths.sh; README.md and docs/ ship as %doc): only paths the repository shows its packages do not install. A pull request into devel, or a merge to devel, that changes any other path while its version is published already is refused'
       source-repository:
         type: string
         default: ''
