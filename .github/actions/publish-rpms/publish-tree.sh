@@ -46,6 +46,9 @@
 #               with no MATRIX_SET (a regeneration such as the prune of the channel repository), the pin guard judges the
 #               architectures release-matrix/matrix.sh says that matrix publishes, and a caller that wants the open wave's
 #               set passes the variable through. With MATRIX_SET, that set is the matrix.
+#   REFUSE_SERVED 'true' (a merge to devel, publish-rpms refuse-served): every package of <rpm dir> whose file name the tree
+#               holds already is refused, each one named, before anything is placed or signed. A merge to devel builds
+#               its version once; a file the channel holds is never kept in place of the new build, nor replaced by it.
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -71,6 +74,17 @@ repo_file=${REPO_FILE:-$here/../../../packaging/openmixer-release/openmixer.repo
 
 mapfile -t found < <(find "$src" -name '*.rpm' | sort)
 [ "${#found[@]}" -gt 0 ] || [ "${EMPTY_OK:-}" = true ] || { echo "no rpm under $src" >&2; exit 1; }
+# a merge to devel publishes a version once: a file the channel holds already refuses the run, before anything is judged
+if [ "${REFUSE_SERVED:-}" = true ]; then
+    clash=0
+    for f in ${found[@]+"${found[@]}"}; do
+        while IFS= read -r held; do
+            echo "refused ${held#"$tree"/}: the channel holds it already, and a merge to devel never keeps or replaces a published file (a change is a new version)" >&2
+            clash=1
+        done < <(find "$tree" -name "$(basename "$f")" 2>/dev/null | sort)
+    done
+    [ "$clash" = 0 ] || { echo "a merge to devel over files the channel holds: nothing was placed or signed" >&2; exit 1; }
+fi
 # a package of one house organisation never goes into the other's channel (.github#224): judged on what this run would
 # place, a file name the tree does not hold yet, never on what it already serves
 newfiles=()

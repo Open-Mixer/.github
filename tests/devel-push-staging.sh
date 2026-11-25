@@ -27,13 +27,14 @@ def ev(expr, ctx):
     e = str(expr).strip()
     if e.startswith("${{") and e.endswith("}}"):
         e = e[3:-2]
-    toks = re.findall(r"startsWith|cancelled\(\)|always\(\)|\(|\)|,|==|!=|&&|\|\||!|'[^']*'|[A-Za-z_][A-Za-z0-9_.-]*", e)
+    toks = re.findall(r"startsWith|format|cancelled\(\)|always\(\)|\(|\)|,|==|!=|&&|\|\||!|'[^']*'|[A-Za-z_][A-Za-z0-9_.-]*", e)
     out = []
     for t in toks:
         if t == "&&": out.append(" and ")
         elif t == "||": out.append(" or ")
         elif t == "!": out.append(" not ")
         elif t == "startsWith": out.append(" sw")
+        elif t == "format": out.append(" fmt")
         elif t == "cancelled()": out.append(" False ")
         elif t == "always()": out.append(" True ")
         elif t in ("==", "!=", "(", ")", ","): out.append(f" {t} ")
@@ -43,7 +44,8 @@ def ev(expr, ctx):
             if t not in ctx: raise SystemExit(f"FAIL: the expression names {t}, which the test does not model: {expr}")
             out.append(repr(ctx[t]))
     # GitHub's || and && return an operand, not a boolean: Python's or/and do the same
-    return eval("".join(out), {"__builtins__": {}, "sw": lambda a, b: str(a).lower().startswith(str(b).lower())})
+    return eval("".join(out), {"__builtins__": {}, "sw": lambda a, b: str(a).lower().startswith(str(b).lower()),
+                                        "fmt": lambda f, *a: f.format(*a)})
 
 def truthy(v):
     return v not in (False, None, "", "false", 0)
@@ -64,7 +66,8 @@ for wf in sys.argv[1:]:
     def ctx(run):
         event, ref, base, staged, publish = RUNS[run]
         return {"github.event_name": event, "github.ref": ref, "github.base_ref": base, "inputs.staged": staged,
-                "inputs.publish": publish, "inputs.staging": False, "inputs.matrix": "", "inputs.stage": "all",
+                "inputs.publish": publish, "inputs.staging": False, "github.repository": "Open-Mixer/omx-a",
+                "inputs.target-repo": "Open-Mixer/open-mixer.github.io", "github.run_id": "4242", "inputs.matrix": "", "inputs.stage": "all",
                 "inputs.bootstrap-only": False, "inputs.verify-install": True,
                 "needs.preflight.result": "success", "needs.preflight.outputs.count": "1", "needs.build.result": "success",
                 "needs.publish.result": "success", "needs.publish-release.result": "skipped"}
@@ -103,6 +106,17 @@ for wf in sys.argv[1:]:
                  "publishes to staging", "the publish job runs", "the real channel's publish runs")
         for n, g, x in zip(names, got, w):
             if g != x: fails.append(f"{wf}: {run}: {n}={g}, want {x}")
+        # F2: a merge to devel refuses a file the channel holds, and publishes in a group of its repository and kind
+        refuse = truthy(ev(staging_pub["with"].get("refuse-served", "false"), c))
+        if refuse != (run == "a push to devel"):
+            fails.append(f"{wf}: {run}: the staging publish's refuse-served={refuse}")
+        group = re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(ev(m.group(1), c)), str(jobs["publish"]["concurrency"]["group"]))
+        want_group = {"a push to devel": f"devel-publish-Open-Mixer/omx-a-{kind}",
+                      "a staged dispatch": "publish-Open-Mixer/open-mixer.github.io-live"}.get(run, "publish-Open-Mixer/open-mixer.github.io-4242")
+        if group != want_group:
+            fails.append(f"{wf}: {run}: the publish job's concurrency group is {group}, want {want_group}")
+        if str(jobs["publish"]["concurrency"].get("cancel-in-progress")).lower() != "false":
+            fails.append(f"{wf}: the publish job cancels a publish in progress")
 if fails:
     print("\n".join(f"FAIL: {f}" for f in fails), file=sys.stderr); sys.exit(1)
 print("a push to devel publishes the real build to staging; a pull request publishes nothing; tags unchanged: ok")
@@ -230,6 +244,42 @@ grep -qx 'install -y --no-install-recommends omx-a=1.2.0' "$t/state/apt.log" || 
 vcheck deb false 0123abc - || { cat "$t/v.out"; fail "verify-deb found no snapshot of the commit"; }
 grep -qx 'install -y --no-install-recommends omx-a=1.2.0+git1700000000.0123abc' "$t/state/apt.log" || { cat "$t/state/apt.log"; fail "verify-deb did not pin the snapshot of the commit"; }
 echo "promote-staged's install checks take the real package of a real promotion, and the snapshot of its commit otherwise: ok"
+
+# ---- 7. a merge to devel REFUSES a file the channel already holds, never keeps it (F2): with REFUSE_SERVED=true both
+#      tree scripts check every file up front and refuse, naming each one, before anything is placed or signed. The
+#      staging publish step of each workflow passes refuse-served for a push to devel alone (section 1 evaluates it).
+for kind in rpm deb; do
+    tr=$t/refuse-$kind; rm -rf "$tr"; mkdir -p "$tr/src/trixie"
+    if [ "$kind" = rpm ]; then
+        held=fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm; held2=fedora/45/SRPMS/omx-a-1.2.0-1.fc45.src.rpm
+        new=omx-a-devel-1.2.0-1.fc45.x86_64.rpm; srcd=$tr/src
+    else
+        held=debian/trixie/amd64/omx-a_1.2.0_amd64.deb; held2=debian/trixie/all/omx-a-data_1.2.0_all.deb
+        new=omx-a-dev_1.2.0_amd64.deb; srcd=$tr/src/trixie
+    fi
+    mkdir -p "$tr/tree/$(dirname "$held")" "$tr/tree/$(dirname "$held2")"
+    echo served > "$tr/tree/$held"; echo served > "$tr/tree/$held2"
+    echo rebuilt > "$srcd/$(basename "$held")"; echo rebuilt > "$srcd/$(basename "$held2")"; echo new > "$srcd/$new"
+    # the same deb file name in another suite is not this suite's file
+    [ "$kind" = rpm ] || { mkdir -p "$tr/tree/debian/bookworm/amd64"; echo other > "$tr/tree/debian/bookworm/amd64/$new"; }
+    REFUSE_SERVED=true bash "$root/.github/actions/publish-${kind}s/publish-tree.sh" "$tr/tree" "$tr/src" > "$tr/log" 2>&1 &&
+        { cat "$tr/log"; fail "publish-${kind}s: a merge to devel over files the channel holds was published"; }
+    for h in "$held" "$held2"; do
+        grep -qF "refused $h: the channel holds it already" "$tr/log" || { cat "$tr/log"; fail "publish-${kind}s: the refusal does not name $h"; }
+        [ "$(cat "$tr/tree/$h")" = served ] || fail "publish-${kind}s: the served $h was replaced"
+    done
+    grep -qF "refused" <(grep -F "$new" "$tr/log") && fail "publish-${kind}s: $new, which the channel does not hold, was refused"
+    [ ! -e "$tr/tree/$(dirname "$held")/$new" ] || fail "publish-${kind}s: $new was placed although the run refused"
+done
+python3 -I - "$root" <<'PY2' || fail "a publish action does not hand refuse-served to its tree script and its lost-race rebuild"
+import sys, yaml
+for kind in ("rpm", "deb"):
+    steps = yaml.safe_load(open(f"{sys.argv[1]}/.github/actions/publish-{kind}s/action.yml"))["runs"]["steps"]
+    hits = [s for s in steps if s.get("env", {}).get("REFUSE_SERVED_IN") == "${{ inputs.refuse-served }}"
+            and 'echo "REFUSE_SERVED=$REFUSE_SERVED_IN" >> "$GITHUB_ENV"' in s.get("run", "")]
+    assert len(hits) == 1, kind
+PY2
+echo "a merge to devel refuses, naming each, the files the channel holds already, and places nothing: ok"
 
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"

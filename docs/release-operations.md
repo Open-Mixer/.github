@@ -194,6 +194,18 @@ files. The devel build is the real package at its real version, never a pre-rele
   `already-served.sh` with `STAGING=true`. So a merge to devel that changes a package carries its version bump, and a
   fix after a published build is a new version. No published version is rebuilt, and no epoch is used.
 - **The install check** takes the staged package of exactly that version.
+- **A file the channel holds is refused, never kept.** The staging publish of a merge to devel passes `refuse-served`
+  to `publish-rpms` and `publish-debs` (`REFUSE_SERVED=true` for `publish-tree.sh`): every package whose file the tree
+  already holds (the same file name; for a deb, in the same suite) is named and refuses the run before anything is
+  placed or signed. A release keeps a served file and says `kept`; a merge to devel has built its version once, so a
+  second build of it is an error, not a no-op.
+- **One publish per repository and kind at a time.** The publish job of a merge to devel runs in the concurrency group
+  `devel-publish-<owner>/<repo>-rpm` (or `-deb`) with `cancel-in-progress: false`, not in the channel's `live` group:
+  another repository's release never waits behind it, and `channel-push` repeats a push that lost a race on the new
+  tip. GitHub keeps at most one run RUNNING and one PENDING per group: when a third merge to the same repository
+  arrives while one publishes and one waits, the waiting one is cancelled and the newest takes its place. The
+  cancelled merge's version is then not staged; it was superseded by a newer version (each merge that changes a
+  package carries its own bump), and if that version must be staged anyway, rerun the cancelled run's failed jobs.
 - **Promotion copies it.** `promote-staged` finds the real package by its version alone: `collect.py` reports it as
   commit `real`, and the promotion's own commit stands for it. Promotion copies its bytes, checked checksum for
   checksum.

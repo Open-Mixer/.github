@@ -593,8 +593,11 @@ jobs:
     # refusal of a non-fast-forward push; one group per target serialises this organisation's runs.
     # A dry run (publish false) pushes nothing, so it gets a group of its own: sharing the live group made
     # concurrent pull-request dry runs cancel each other's pending job.
+    # A merge to devel has a group per calling repository and kind: it never waits behind, or holds back, another
+    # repository's release, and the channel push repeats a lost race on the new tip. GitHub keeps one run pending per
+    # group and cancels the older pending one when a third arrives (docs/release-operations.md).
     concurrency:
-      group: publish-${{ inputs.target-repo }}-${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && 'live' || github.run_id }}
+      group: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && format('devel-publish-{0}-rpm', github.repository) || format('publish-{0}-{1}', inputs.target-repo, inputs.staged && 'live' || github.run_id) }}
       cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
@@ -623,6 +626,8 @@ jobs:
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
           staging: 'true'
+          # a merge to devel refuses, by name, a file the channel holds already, never keeps it (.github#289)
+          refuse-served: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') }}
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}
