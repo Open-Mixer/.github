@@ -45,6 +45,13 @@ inputs:
       cells the channel lacks for this version and the publish refuses to write any file the channel holds. With
       republish it is refused: a catch-up never rewrites a served file, and republish does.
     default: 'false'
+  devel-version:
+    description: >-
+      The version a merge to devel publishes to the staging channel (its spec's Version, or its debian/changelog's), with
+      require-tag false: the already-served check runs for v<devel-version> over the channel root AND staging, and a
+      version either holds is refused by name. A merge to devel builds the real package once; a change after a published
+      build is a new version (.github#289). Empty for every other run.
+    default: ''
   gpg-key:
     default: ''
   gpg-passphrase:
@@ -70,6 +77,7 @@ runs:
         KIND: ${{ inputs.kind }}
         RELEASES: ${{ inputs.releases }}
         CATCH_UP: ${{ inputs.catch-up }}
+        DEVEL_VERSION: ${{ inputs.devel-version }}
       run: |
         set -euo pipefail
         if [ "$PUBLISH" != true ] || { [ "$REQUIRE_TAG" = true ] && [ "$REF_TYPE" != tag ]; }; then
@@ -121,4 +129,13 @@ runs:
           [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether $TAG is already served"; exit 1; }
           [ "$(jq -r '.truncated' /tmp/tree.json)" != true ] || echo "::warning::the tree of $TARGET is truncated; the already-served check is partial"
           jq -r '.tree[].path' /tmp/tree.json | "$GITHUB_ACTION_PATH/already-served.sh" "$TAG" $PACKAGES
+        elif [ -n "${DEVEL_VERSION:-}" ]; then
+          [ -n "$PACKAGES" ] || { echo "::error::a merge to devel names no packages: cannot tell whether v$DEVEL_VERSION is published"; exit 1; }
+          [ "$REPUBLISH" != true ] || { echo "::error::a merge to devel never republishes: a published version is never built again"; exit 1; }
+          code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/tree.json -w '%{http_code}' \
+            -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")
+          [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether v$DEVEL_VERSION is published"; exit 1; }
+          [ "$(jq -r '.truncated' /tmp/tree.json)" != true ] || { echo "::error::the tree of $TARGET is truncated: a merge to devel cannot prove v$DEVEL_VERSION unpublished"; exit 1; }
+          jq -r '.tree[].path' /tmp/tree.json | STAGING=true "$GITHUB_ACTION_PATH/already-served.sh" "v$DEVEL_VERSION" $PACKAGES
         fi

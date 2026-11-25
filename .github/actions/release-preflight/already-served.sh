@@ -10,13 +10,16 @@
 # RELEASES, space separated, names the Fedora releases (rpm/fedora/<release>/) or Debian suites (deb/debian/<suite>/)
 # the release publishes into; a file under another release or suite is not this release's, so an fc44 build of the
 # version does not refuse its fc45 publish. A file outside those trees is read for every release; empty reads all.
+# STAGING=true reads staging/rpm and staging/deb as well: a merge to devel builds the real package once and publishes it
+# to staging, so a version staged before is published already and is never built again (.github#289).
 set -uo pipefail
 tag=$1; shift
 ver=${tag#v}
 [ "$ver" != "$tag" ] || exit 0
 found=
 while IFS= read -r path; do
-  base=${path##*/}
+  base=${path##*/} full=$path
+  if [ "${STAGING:-false}" = true ]; then path=${path#staging/}; fi
   case $path in
     rpm/*.rpm) [ "${KIND:-}" != deb ] || continue ;;
     deb/*.deb) [ "${KIND:-}" != rpm ] || continue ;;
@@ -32,12 +35,13 @@ while IFS= read -r path; do
   for name in "$@"; do
     # shellcheck disable=SC2254 # name is a glob on purpose
     case $base in
-      ${name}-${ver}-*.rpm|${name}_${ver}-*.deb|${name}_${ver}_*.deb) found="$found $path"; break ;;
+      ${name}-${ver}-*.rpm|${name}_${ver}-*.deb|${name}_${ver}_*.deb) found="$found $full"; break ;;
     esac
   done
 done
 if [ -n "$found" ]; then
   for f in $found; do echo "::error::$tag is already served: $f (the channel holds this version; bump the version, or set republish for a rerun that must finish a partial publish)"; done
+  [ "${STAGING:-false}" != true ] || echo "::error::a merge to devel builds the real package once: a change after a published build is a new version, never the same one again (no rebuild of a published version, no epoch)"
   exit 1
 fi
 echo "$tag is not served yet"
