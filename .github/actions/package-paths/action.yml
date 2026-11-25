@@ -11,10 +11,10 @@ inputs:
     description: the later commit
     default: HEAD
   at:
-    description: the commit the exempt list was read at, whose tracked files the list is judged on (.github#296); empty judges the checkout
+    description: the commit the exempt list was read at, whose spec and debian files the list is judged against (.github#296); empty judges the checkout
     default: ''
   exempt:
-    description: globs, space separated, the repository adds to the exempt default (.github/**)
+    description: globs under .github/ only, space separated, the repository adds to the exempt default (.github/**, .github#296)
     default: ''
 
 outputs:

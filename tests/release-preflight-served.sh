@@ -132,28 +132,28 @@ grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "a push changing .g
 grep -q '::notice::v1.2.3 is served and staging/rpm/built/foo/1.2.3.commit does not record the commit that built it; this push (github.event.before..HEAD) changes no package' "$tmp/out" || { cat "$tmp/out"; fail "the green skip does not name the missing record"; }
 # GATE: a bump-exempt over every path is refused by the preflight before it judges anything
 EXEMPT_IN='**' BEFORE=$A rundevel 1.2.3 && { cat "$tmp/out"; fail "the preflight took bump-exempt '**'"; }
-grep -qF "::error::bump-exempt glob '**' covers every path" "$tmp/out" || { cat "$tmp/out"; fail "the preflight's refusal of '**' is not named"; }
+grep -qF "::error::bump-exempt glob '**' is not under .github/" "$tmp/out" || { cat "$tmp/out"; fail "the preflight's refusal of '**' is not named"; }
 # #296: the preflight refuses a bump-exempt over a tracked build source (src/a.c at C)
 gitr checkout -q "$C"
 EXEMPT_IN='src/**' BEFORE=$B rundevel 1.2.3 && { cat "$tmp/out"; fail "the preflight took bump-exempt 'src/**' over the tracked src/a.c"; }
-grep -qF "::error::bump-exempt glob 'src/**' covers src/a.c, a tracked file outside the allow-list" "$tmp/out" || { cat "$tmp/out"; fail "the preflight's refusal of src/** does not name src/a.c"; }
+grep -qF "::error::bump-exempt glob 'src/**' is not under .github/" "$tmp/out" || { cat "$tmp/out"; fail "the preflight's refusal of src/** does not name src/a.c"; }
 BEFORE=$B rundevel 1.2.3 && { cat "$tmp/out"; fail "a push changing src/ at a served version with no record skipped green"; }
 grep -q '::error::src/a.c changes the package in this push (github.event.before..HEAD), and the served v1.2.3 has no build record' "$tmp/out" || { cat "$tmp/out"; fail "the red of a push without a record does not name src/a.c"; }
 gitr checkout -q "$B"
 echo 0000000000000000000000000000000000000000 > "$tmp/record"
 rundevel 1.5.0 false 45 && { cat "$tmp/out"; fail "a record naming a commit the checkout cannot reach skipped green"; }
 echo "$A" > "$tmp/record"
-# G1a: a push is judged by the bump-exempt its caller workflow had at github.event.before. D widens it to tests/** and
-# adds tests/x.sh in one push from B (where release.yml is absent: ''): red, naming both values; D2 only widens it.
+# G1a: a push is judged by the bump-exempt its caller workflow had at github.event.before. D widens it to .github/scripts/** and
+# changes src/a.c in one push from B (where release.yml is absent: ''): red, naming both values; D2 only widens it.
 relyml() { mkdir -p "$repo/.github/workflows"; printf 'jobs:\n  rpm:\n    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1\n    with:\n      bump-exempt: %s\n' "'$1'" > "$repo/.github/workflows/release.yml"; }
-gitr checkout -q -b widen "$B"; relyml 'tests/**'; mkdir -p "$repo/tests"; echo t > "$repo/tests/x.sh"; gitr add -A; gitr commit -q -m widen-and-change
+gitr checkout -q -b widen "$B"; relyml '.github/scripts/**'; echo w > "$repo/src/a.c"; gitr add -A; gitr commit -q -m widen-and-change
 cref=Open-Mixer/foo/.github/workflows/release.yml@refs/heads/devel
-EXEMPT_IN='tests/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 && { cat "$tmp/out"; fail "a push widening bump-exempt over tests/x.sh passed"; }
-grep -qF "bump-exempt is '' at the build and 'tests/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not show both bump-exempt values, read at the build its diff starts from"; }
-grep -qF "::error::tests/x.sh changes the package since $A" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not name tests/x.sh"; }
-gitr checkout -q -b widen-only "$B"; relyml 'tests/**'; gitr add -A; gitr commit -q -m widen-only
-: > "$tmp/gh-out"; EXEMPT_IN='tests/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 || { cat "$tmp/out"; fail "a push that only widens bump-exempt was refused"; }
-grep -qF "bump-exempt is '' at the build and 'tests/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the widening push does not name both values"; }
+EXEMPT_IN='.github/scripts/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 && { cat "$tmp/out"; fail "a push widening bump-exempt over a change to src/a.c passed"; }
+grep -qF "bump-exempt is '' at the build and '.github/scripts/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not show both bump-exempt values, read at the build its diff starts from"; }
+grep -qF "::error::src/a.c changes the package since $A" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not name src/a.c"; }
+gitr checkout -q -b widen-only "$B"; relyml '.github/scripts/**'; gitr add -A; gitr commit -q -m widen-only
+: > "$tmp/gh-out"; EXEMPT_IN='.github/scripts/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 || { cat "$tmp/out"; fail "a push that only widens bump-exempt was refused"; }
+grep -qF "bump-exempt is '' at the build and '.github/scripts/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the widening push does not name both values"; }
 gitr checkout -q "$B"
 # with a record the diff starts at the build, so bump-exempt is read there: the first push of devel (before all zeros)
 # at the recorded, served v1.5.0, changing .github/ alone, stays green

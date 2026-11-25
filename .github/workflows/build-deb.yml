@@ -140,7 +140,7 @@ on:
       bump-exempt:
         type: string
         default: ''
-        description: 'Globs, space separated, added to the paths that change no package (.github/** alone by default, package-paths.sh; README.md and docs/ ship as %doc): only paths the repository shows its packages do not install. A pull request into devel, or a merge to devel, that changes any other path while its version is published already is refused'
+        description: 'Globs, space separated, added to the paths that change no package (.github/** by default, package-paths.sh). Each must name paths under .github/ only (.github#296); any other glob is refused by name'
       source-repository:
         type: string
         default: ''

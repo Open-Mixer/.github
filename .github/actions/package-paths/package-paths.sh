@@ -11,11 +11,11 @@
 # matches at the top (**/*.txt matches NOTES.txt).
 #
 # package-paths.sh --check (run in the checkout, judging the tree at CHECK_AT when set: the commit the exempt list was
-# read at): refuses, naming the glob and the file it covers, an EXEMPT glob that matches packaging/ or debian/, a %doc or
-# %license file of a packaging/*.spec (its %files sections), a debian/*.docs entry or the source of a debian/*.install
-# entry, every path, or any TRACKED file outside the allow-list: .github/**, tests/** when no package ships it, and docs
-# (docs/, doc/, *.md, *.rst, *.adoc) that are not packaged (.github#296). A build source (src/**, *.c, include/**,
-# CMakeLists.txt, meson.build, Makefile) is never exempt. Every reader of the exempt list runs it.
+# read at): an EXEMPT glob names only paths UNDER .github/ (.github#296). A glob that does not start with .github/, or
+# that climbs out of it (..), is refused by name, whatever the tree holds: a glob matching nothing yet would let the
+# first source added there escape, and whether a directory ships is not guessed. A glob under .github/ that covers a
+# file a package ships (a %doc or %license entry of a packaging/*.spec's %files, a debian/*.docs entry or the source
+# of a debian/*.install entry) is refused too, naming the glob and the file. Every reader of the exempt list runs it.
 set -euo pipefail
 matches() { # <path> <glob>
     # shellcheck disable=SC2053 # the glob is a glob on purpose
@@ -34,8 +34,7 @@ if [ "${1:-}" = --check ]; then
         content() { cat "$1" 2>/dev/null; }
     fi
     mapfile -t files < <(tracked || { echo "::error::the tracked files at ${CHECK_AT:-the checkout} cannot be listed" >&2; exit 1; })
-    packaged=(packaging/x debian/x)
-    for f in "${files[@]}"; do case $f in packaging/* | debian/*) packaged+=("$f") ;; esac; done
+    packaged=()
     for spec in "${files[@]}"; do
         case $spec in packaging/*.spec) ;; *) continue ;; esac
         # the %doc and %license entries of every %files section; macros and absolute paths name no file of the tree
@@ -50,31 +49,13 @@ if [ "${1:-}" = --check ]; then
         case $f in debian/*.docs | debian/*.install) ;; *) continue ;; esac
         while read -r w _; do [ -z "$w" ] || packaged+=("${w%/}"); done < <(content "$f")
     done
-    shipped() { local p; for p in "${packaged[@]}"; do [[ $1 == "$p" || $1 == "$p"/* ]] || matches "$1" "$p" && return 0; done; return 1; }
-    # the allow-list of tracked files a glob may cover (.github#296): .github/**, tests/** when no package ships it, and
-    # docs (docs/, doc/, *.md, *.rst, *.adoc) that are not %doc, %license or debian/*.docs entries; never a build source
-    allowed() {
-        case $1 in
-            .github/*) return 0 ;;
-            tests/*) ! shipped "$1" && ! shipped tests ;;
-            docs/* | doc/* | *.md | *.rst | *.adoc) ! shipped "$1" ;;
-            *) return 1 ;;
-        esac
-    }
     bad=0
     for g in "${added[@]}"; do
-        if matches x "$g" && matches src/x.c "$g" && matches a/b/c.d "$g"; then
-            echo "::error::bump-exempt glob '$g' covers every path: it would exempt every packaged file"; bad=1; continue
+        if [[ $g != .github/* || /$g/ == */../* ]]; then
+            echo "::error::bump-exempt glob '$g' is not under .github/: bump-exempt may name only paths under .github/ (.github#296)"; bad=1; continue
         fi
-        hit=
         for p in "${packaged[@]}"; do
-            if matches "$p" "$g"; then echo "::error::bump-exempt glob '$g' covers $p, which a package ships or builds from"; bad=1 hit=1; break; fi
-        done
-        [ -z "$hit" ] || continue
-        for f in "${files[@]}"; do
-            if matches "$f" "$g" && ! allowed "$f"; then
-                echo "::error::bump-exempt glob '$g' covers $f, a tracked file outside the allow-list (.github/**, unshipped tests/**, uninstalled docs)"; bad=1; break
-            fi
+            if matches "$p" "$g"; then echo "::error::bump-exempt glob '$g' covers $p, which a package ships"; bad=1; break; fi
         done
     done
     exit "$bad"

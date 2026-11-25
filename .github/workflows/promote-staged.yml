@@ -76,7 +76,7 @@ on:
       bump-exempt:
         type: string
         default: ''
-        description: 'Globs, space separated, added to the paths that change no package (.github/** alone by default, package-paths.sh), as the build workflows take them: a real build is promoted only from a commit with no other change since the devel commit that built it'
+        description: 'Globs under .github/ only, space separated, added to the paths that change no package (.github/** by default, package-paths.sh), as the build workflows take them: a real build is promoted only from a commit with no other change since the devel commit that built it'
       target-repo:
         type: string
         default: 'Open-Mixer/open-mixer.github.io'

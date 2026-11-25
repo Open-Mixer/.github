@@ -28,7 +28,7 @@ inputs:
     description: the Fedora releases or Debian suites the version is read for, space separated; empty reads every one
     default: ''
   exempt:
-    description: globs, space separated, the repository adds to the exempt default (.github/**, package-paths.sh)
+    description: globs under .github/ only, space separated, the repository adds to the exempt default (.github/**, package-paths.sh, .github#296)
     default: ''
   target:
     description: the channel repository
