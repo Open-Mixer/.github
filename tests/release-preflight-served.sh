@@ -100,7 +100,7 @@ gitr init -q; gitr add -A; gitr commit -q -m built; A=$(gitr rev-parse HEAD); ec
 mkdir -p "$repo/.github"; echo w > "$repo/.github/ci.yml"; gitr add -A; gitr commit -q -m workflow; B=$(gitr rev-parse HEAD)
 echo c > "$repo/src/a.c"; gitr commit -q -am code; C=$(gitr rev-parse HEAD); gitr checkout -q "$B"
 rundevel() { # rundevel <devel version> [catch-up] [releases]
-  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT=${EXEMPT_IN:-} BEFORE=${BEFORE:-} PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
+  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT=${EXEMPT_IN:-} CALLER=${CALLER_IN:-} BEFORE=${BEFORE:-} PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
     REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=${3-44} CATCH_UP=${2:-false} \
     DEVEL_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1; local rc=$?; cd "$here"; return $rc
 }
@@ -140,6 +140,23 @@ gitr checkout -q "$B"
 echo 0000000000000000000000000000000000000000 > "$tmp/record"
 rundevel 1.5.0 false 45 && { cat "$tmp/out"; fail "a record naming a commit the checkout cannot reach skipped green"; }
 echo "$A" > "$tmp/record"
+# G1a: a push is judged by the bump-exempt its caller workflow had at github.event.before. D widens it to tools/** and
+# adds tools/x.py in one push from B (where release.yml is absent: ''): red, naming both values; D2 only widens it.
+relyml() { mkdir -p "$repo/.github/workflows"; printf 'jobs:\n  rpm:\n    uses: Open-Mixer/.github/.github/workflows/build-rpm.yml@openmixer-v1\n    with:\n      bump-exempt: %s\n' "'$1'" > "$repo/.github/workflows/release.yml"; }
+gitr checkout -q -b widen "$B"; relyml 'tools/**'; mkdir -p "$repo/tools"; echo t > "$repo/tools/x.py"; gitr add -A; gitr commit -q -m widen-and-change
+cref=Open-Mixer/foo/.github/workflows/release.yml@refs/heads/devel
+EXEMPT_IN='tools/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 && { cat "$tmp/out"; fail "a push widening bump-exempt over tools/x.py passed"; }
+grep -qF "bump-exempt is '' at the build and 'tools/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not show both bump-exempt values, read at the build its diff starts from"; }
+grep -qF "::error::tools/x.py changes the package since $A" "$tmp/out" || { cat "$tmp/out"; fail "the push refusal does not name tools/x.py"; }
+gitr checkout -q -b widen-only "$B"; relyml 'tools/**'; gitr add -A; gitr commit -q -m widen-only
+: > "$tmp/gh-out"; EXEMPT_IN='tools/**' CALLER_IN=$cref BEFORE=$B rundevel 1.5.0 false 45 || { cat "$tmp/out"; fail "a push that only widens bump-exempt was refused"; }
+grep -qF "bump-exempt is '' at the build and 'tools/**' at HEAD" "$tmp/out" || { cat "$tmp/out"; fail "the widening push does not name both values"; }
+gitr checkout -q "$B"
+# with a record the diff starts at the build, so bump-exempt is read there: the first push of devel (before all zeros)
+# at the recorded, served v1.5.0, changing .github/ alone, stays green
+: > "$tmp/gh-out"; CALLER_IN=$cref BEFORE=0000000000000000000000000000000000000000 rundevel 1.5.0 false 45 ||
+    { cat "$tmp/out"; fail "a first push of devel (before all zeros) at a recorded version changing .github/ alone was refused"; }
+grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "the first push of devel at a recorded version does not skip"; }
 : > "$tmp/gh-out"; rundevel 1.2.9 || { cat "$tmp/out"; fail "a merge to devel of a new version was refused"; }
 grep -qx 'skip=false' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "a merge to devel of a new version does not output skip=false"; }
 echo "ok   a merge to devel of a published version is green, publishes nothing, and names what is served"
@@ -170,4 +187,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 44 arms"
+echo "ok   release-preflight-served: 47 arms"
