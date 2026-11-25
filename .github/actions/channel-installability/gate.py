@@ -641,16 +641,23 @@ def join(base, *parts):
     return "/".join([base.rstrip("/")] + [p.strip("/") for p in parts])
 
 
-def served_suites(channel, work):
-    """The Debian releases the channel serves: the sources files openmixer-release installs."""
-    deb = fetch(join(channel, "openmixer-release.deb"), os.path.join(work, "openmixer-release.deb"))
-    out = os.path.join(work, "openmixer-release")
+def served_suites(channel, work, package="openmixer-release"):
+    """The Debian releases the channel serves: the sources files its release package installs. The package is the
+    caller's (openmixer-release, freereac-release: .github#279), fetched at its stable name <channel>/<package>.deb; it
+    ships one sources file per suite in usr/share/<package>/ (its testing/ below is the staging channel, not read), or
+    a channel serving one suite ships that one as it is, in etc/apt/sources.list.d/."""
+    if not re.fullmatch(r"[a-z0-9]+-release", package):
+        raise Cannot(f"release package '{package}' is not <channel>-release")
+    deb = fetch(join(channel, f"{package}.deb"), os.path.join(work, f"{package}.deb"))
+    out = os.path.join(work, package)
     if subprocess.run(["dpkg-deb", "-x", deb, out]).returncode:
-        raise Cannot("openmixer-release.deb could not be unpacked")
-    suites = sorted({m.group(1) for f in glob.glob(os.path.join(out, "usr/share/openmixer-release/*.sources"))
+        raise Cannot(f"{package}.deb could not be unpacked")
+    files = glob.glob(os.path.join(out, "usr/share", package, "*.sources")) \
+        + glob.glob(os.path.join(out, "etc/apt/sources.list.d/*.sources"))
+    suites = sorted({m.group(1) for f in files
                      for m in [re.search(r"URIs:\s*\S*/debian/([a-z]+)/", open(f).read())] if m})
     if not suites:
-        raise Cannot("openmixer-release.deb names no Debian release")
+        raise Cannot(f"{package}.deb names no Debian release")
     return suites
 
 
@@ -759,7 +766,7 @@ def deb_arm(a):
         # every Debian release the channel serves, and any the release brings that it does not serve yet
         built = sorted(d for d in os.listdir(a.new_dir) if os.path.isdir(os.path.join(a.new_dir, d))) \
             if a.new_dir and os.path.isdir(a.new_dir) else []
-        suites = a.suite or sorted(set(served_suites(a.channel, work)) | set(built))
+        suites = a.suite or sorted(set(served_suites(a.channel, work, a.release_package)) | set(built))
         if a.cell:
             for suite in [x for x in suites if not any(c.startswith(f"{x}/") for c in a.cell)]:
                 say(f"debian/{suite}: outside the cells of the set, not judged")
@@ -1075,6 +1082,9 @@ def main(argv=None):
     d = sub.add_parser("deb")
     common(d)
     d.add_argument("--suite", action="append")
+    d.add_argument("--release-package", default="openmixer-release",
+                   help="the channel's release package, served at <channel>/<name>.deb: with no --suite, the Debian "
+                        "releases it installs sources for are the ones judged (freereac-release for FreeREAC's channel)")
     d.add_argument("--new-index", action="append")
     d.add_argument("--bg", action="append", help="background Packages files, instead of the Debian mirror")
     d.add_argument("--mirror", default="https://deb.debian.org/debian")

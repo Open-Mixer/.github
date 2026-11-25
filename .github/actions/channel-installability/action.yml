@@ -36,6 +36,9 @@ inputs:
   base-url:
     description: where the channel is served
     default: https://www.openmixer.org
+  release-package:
+    description: "the channel's release package, served at deb/<name>.deb: the Debian releases it installs sources for are the ones the channel serves (openmixer-release, or freereac-release for FreeREAC's channel)"
+    default: openmixer-release
   suites:
     description: Debian releases to check, space separated; empty is every one the channel serves and the release brings
     default: ''
@@ -66,6 +69,7 @@ runs:
         CHANNEL: ${{ inputs.channel }}
         BASE_URL: ${{ inputs.base-url }}
         SUITES: ${{ inputs.suites }}
+        RELEASE_PACKAGE: ${{ inputs.release-package }}
         FEDORA_VERSIONS: ${{ inputs.fedora-versions }}
         ARCHES: ${{ inputs.arches }}
         SAME_PASS: ${{ inputs.same-pass }}

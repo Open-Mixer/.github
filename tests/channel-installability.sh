@@ -18,10 +18,13 @@
 #            naming each cell it leaves out.
 #   one channel  the channel is judged on its own: a dependency that lives only in another channel is refused, named, and
 #            there is no option that reads another channel as a provider (--external-channels exits 2).
+#   release package  with no --suite, the served Debian releases are read from the release package the caller names
+#            (--release-package, default openmixer-release): freereac-release ships its one suite in
+#            etc/apt/sources.list.d, openmixer-release one file per suite in usr/share/openmixer-release (.github#279).
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
-# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|one_channel_deb|one_channel_rpm]...   (no argument: ceiling, then each arm whose tools exist)
+# Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_release_package|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|one_channel_deb|one_channel_rpm]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 gate=$here/.github/actions/channel-installability/gate.py
@@ -605,6 +608,66 @@ arm_one_channel_rpm() {
   expect 1 'openmixer-release 2-1.fc44.noarch is new and does not install' 'one channel rpm: a dependency that lives only in another channel is refused' -- "${args[@]}"
   grep -qF 'other-release' "$t/out" && ok 'one channel rpm: ... naming the dependency' || bad 'one channel rpm: the dependency is not named'
   expect 2 'unrecognized arguments: --external-channels' 'one channel rpm: another channel cannot be declared as a provider' -- "${args[@]}" --external-channels "$d/declared"
+}
+
+# THE RELEASE PACKAGE IS THE CALLER'S (.github#279): with no --suite the gate learns the Debian releases a channel serves
+# from the sources its release package installs. It read <channel>/openmixer-release.deb on every channel, so every
+# FreeREAC deb dry run (reac-pw #132 #120 #118 #107, libreac #66) exited 2 on a 404: FreeREAC's channel serves
+# freereac-release.deb, which ships its one suite as etc/apt/sources.list.d/freereac.sources. openmixer-release keeps the
+# default arm: usr/share/openmixer-release/openmixer-<suite>.sources, one per suite.
+arm_deb_release_package() {
+  command -v dose-debcheck >/dev/null || { bad 'deb release package: dose-debcheck is not installed (apt-get install dose-distcheck)'; return; }
+  command -v dpkg-deb >/dev/null || { bad 'deb release package: dpkg-deb is not installed (dpkg-dev)'; return; }
+  local d=$t/relpkg p s
+  mkdir -p "$d/fr/debian/trixie" "$d/om/debian/bookworm" "$d/om/debian/trixie"
+  { stanza libc6 2.41-12 amd64; } > "$d/bg"
+  { stanza libreac1 1.9.0 amd64 'libc6 (>= 2.34)'; } > "$d/fr/debian/trixie/Packages"
+  for s in bookworm trixie; do { stanza libreac1 1.9.0 amd64 'libc6 (>= 2.34)'; } > "$d/om/debian/$s/Packages"; done
+  stanza libreac1 1.9.1 amd64 'libc6 (>= 2.34)' > "$d/new"
+  # sources <package> <path in the package> <suite>: the package installs the sources of that suite there
+  sources() {
+    local root=$d/build/$1
+    mkdir -p "$root/DEBIAN" "$(dirname "$root/$2")"
+    printf 'Package: %s\nVersion: 1-1\nArchitecture: all\nMaintainer: t <t@t>\nDescription: t\n' "$1" > "$root/DEBIAN/control"
+    printf 'Types: deb\nURIs: https://example.org/deb/debian/%s/\nSuites: ./\n' "$3" > "$root/$2"
+  }
+  sources freereac-release etc/apt/sources.list.d/freereac.sources trixie
+  sources openmixer-release usr/share/openmixer-release/openmixer-bookworm.sources bookworm
+  sources openmixer-release usr/share/openmixer-release/openmixer-trixie.sources trixie
+  # the staging sources sit below, in testing/: never a served suite of the channel itself
+  sources openmixer-release usr/share/openmixer-release/testing/openmixer-testing-sid.sources sid
+  dpkg-deb -b "$d/build/freereac-release" "$d/fr/freereac-release.deb" >/dev/null
+  dpkg-deb -b "$d/build/openmixer-release" "$d/om/openmixer-release.deb" >/dev/null
+  expect 0 'debian/trixie: 1 published, 1 new' 'deb release package: a caller naming freereac-release reads <channel>/freereac-release.deb' -- \
+    deb --channel "$d/fr" --release-package freereac-release --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  grep -qF 'debian/bookworm' "$t/out" && bad 'deb release package: ... and judges a suite the channel does not serve' \
+    || ok 'deb release package: ... and judges only the suite it ships'
+  expect 0 'debian/bookworm: 1 published, 1 new' 'deb release package: the default is openmixer-release, one sources file per suite' -- \
+    deb --channel "$d/om" --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  grep -qF 'debian/trixie: 1 published, 1 new' "$t/out" && ok 'deb release package: ... both of its suites' \
+    || bad 'deb release package: the default arm missed trixie'
+  grep -qF 'debian/sid' "$t/out" && bad 'deb release package: ... and judges the staging sources as a served suite' \
+    || ok 'deb release package: ... and not the staging sources below them'
+  expect 2 'freereac-release.deb' 'deb release package: a channel without the named package is not measured, and says which' -- \
+    deb --channel "$d/om" --release-package freereac-release --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  expect 2 'is not <channel>-release' 'deb release package: a name that is not <channel>-release is refused' -- \
+    deb --channel "$d/fr" --release-package ../x --arch amd64 --bg "$d/bg" --new-index "$d/new"
+  # the caller's name reaches the gate: build-deb.yml hands it to every publish-debs, publish-debs to run.sh, run.sh to gate.py
+  p=$here/.github
+  [ "$(grep -c 'actions/publish-debs@' "$p/workflows/build-deb.yml")" = \
+    "$(grep -A14 'actions/publish-debs@' "$p/workflows/build-deb.yml" | grep -cF 'release-package: ${{ inputs.release-package }}')" ] \
+    && ok 'deb release package: build-deb.yml passes release-package to every publish-debs' \
+    || bad 'deb release package: a publish-debs in build-deb.yml does not get release-package'
+  grep -qF 'RELEASE_PACKAGE: ${{ inputs.release-package }}' "$p/actions/publish-debs/action.yml" \
+    && ok 'deb release package: publish-debs hands it to the gate' || bad 'deb release package: publish-debs does not hand it to the gate'
+  grep -qF -- '--release-package "$RELEASE_PACKAGE"' "$p/actions/channel-installability/run.sh" \
+    && ok 'deb release package: run.sh passes it to gate.py' || bad 'deb release package: run.sh does not pass it to gate.py'
+  grep -qF 'RELEASE_PACKAGE: ${{ inputs.release-package }}' "$p/actions/channel-installability/action.yml" \
+    && ok 'deb release package: the channel-installability action hands it to run.sh' \
+    || bad 'deb release package: the channel-installability action does not hand it to run.sh'
+  grep -m1 -A12 'actions/channel-installability@' "$p/workflows/channel-installability.yml" | grep -qF 'release-package: ${{ inputs.release-package }}' \
+    && ok 'deb release package: the reusable channel-installability.yml passes it to the action' \
+    || bad 'deb release package: the reusable channel-installability.yml does not pass it to the action'
 }
 
 arm_deb_cells() {

@@ -498,6 +498,8 @@ jobs:
         with:
           # the channel's own deb/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
           served-url: ${{ inputs.base-url }}/deb
+          # ... and its release package, whose sources name the Debian releases the check judges (.github#279)
+          release-package: ${{ inputs.release-package }}
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
@@ -558,6 +560,8 @@ jobs:
         with:
           # the channel's own deb/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
           served-url: ${{ inputs.base-url }}/deb
+          # ... and its release package, whose sources name the Debian releases the check judges (.github#279)
+          release-package: ${{ inputs.release-package }}
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ format('staged {0}', github.sha) }}
@@ -586,6 +590,8 @@ jobs:
         with:
           # the channel's own deb/ tree, read by a dry run's installability check (the action's default is OpenMixer's)
           served-url: ${{ inputs.base-url }}/deb
+          # ... and its release package, whose sources name the Debian releases the check judges (.github#279)
+          release-package: ${{ inputs.release-package }}
           same-pass: ${{ inputs.same-pass }}
           deb-dir: collected
           tag: ${{ inputs.source-ref || github.ref_name }}
