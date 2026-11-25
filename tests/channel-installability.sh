@@ -667,6 +667,12 @@ arm_deb_release_package() {
     && ok 'deb release package: publish-debs hands it to the gate' || bad 'deb release package: publish-debs does not hand it to the gate'
   grep -qF -- '--release-package "$RELEASE_PACKAGE"' "$p/actions/channel-installability/run.sh" \
     && ok 'deb release package: run.sh passes it to gate.py' || bad 'deb release package: run.sh does not pass it to gate.py'
+  grep -qF 'RELEASE_PACKAGE: ${{ inputs.release-package }}' "$p/actions/channel-installability/action.yml" \
+    && ok 'deb release package: the channel-installability action hands it to run.sh' \
+    || bad 'deb release package: the channel-installability action does not hand it to run.sh'
+  grep -m1 -A12 'actions/channel-installability@' "$p/workflows/channel-installability.yml" | grep -qF 'release-package: ${{ inputs.release-package }}' \
+    && ok 'deb release package: the reusable channel-installability.yml passes it to the action' \
+    || bad 'deb release package: the reusable channel-installability.yml does not pass it to the action'
 }
 
 arm_deb_cells() {
