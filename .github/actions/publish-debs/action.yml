@@ -66,6 +66,9 @@ inputs:
   served-url:
     description: where the channel's deb/ tree is served, read by the installability check of a dry run, which pulls no tree
     default: https://www.openmixer.org/deb
+  release-package:
+    description: "the channel's release package, served at <channel>/<name>.deb: the installability check reads the Debian releases the channel serves from the sources it installs (openmixer-release, or freereac-release for FreeREAC's channel)"
+    default: openmixer-release
   signed-dir:
     description: directory receiving the published copies, laid out <suite>/*.deb
     default: signed
@@ -181,6 +184,7 @@ runs:
         SIGN: ${{ inputs.sign }}
         SAME_PASS: ${{ inputs.same-pass }}
         SERVED: ${{ inputs.served-url }}
+        RELEASE_PACKAGE: ${{ inputs.release-package }}
       run: |
         set -o pipefail
         # a dry run builds one architecture: on the others, what it built counts as released in the same pass (the
