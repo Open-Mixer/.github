@@ -19,11 +19,9 @@ packages" on a clean bookworm and trixie). Three arms:
            with every one of our packages it pulls in, to the newest version published: dnf backtracks, and in the
            middle of a pass takes an old build without a ceiling beside the new library (plugin-hostd 0.17.0 asks only
            for protocol >= 0.2.0) while repoclosure passes. A fallback the release brings is RED, with the reason.
-  hygiene  every published build, old ones too, whose dependencies on our own packages lack a floor is flagged, to be
-           removed from the index or superseded (reported, not red).
-  ceiling  every dependency between the channel's own packages that a new package declares has a floor; a ceiling is
-           optional (Open-Mixer/.github#102, the owner's rule: consumers declare FLOORS only on our packages, and a
-           breaking release declares generated Breaks/Conflicts); where a ceiling IS declared it must not be crossed:
+  ceiling  a dependency between the channel's own packages needs neither a floor nor a ceiling (owner 2026-11-24: no
+           hand-kept floors; a breaking release declares generated Breaks/Conflicts); where a ceiling IS declared it
+           must not be crossed:
            a new version outside the range a published consumer declares is RED unless that consumer's new release is
            in the same pass.
 
@@ -212,8 +210,6 @@ OPS = {
 }
 # dpkg's old "<" and ">" mean <= and >=; rpm's mean strictly less and greater
 DEB_OPS = dict(OPS, **{"<": OPS["<="], ">": OPS[">="]})
-FLOOR_OPS = {">=", ">>", ">", "="}
-CEILING_OPS = {"<<", "<", "<=", "="}
 
 
 def satisfies(kind, version, op, want):
@@ -386,34 +382,7 @@ def ceiling_check(kind, published, new, same_pass=()):
                 by.setdefault(name, []).append((op, ver))
         return by
 
-    # 1. a floor on every dependency between our own packages, a ceiling optional (.github#102: floors only on our
-    #    packages); a new package must; a published one that does not is reported, not held against this release
-    def sanity(p, sink, what):
-        for dep, cons in ranges(p).items():
-            ops = {op for op, _ in cons if op}
-            has_floor, has_ceiling = bool(ops & FLOOR_OPS), bool(ops & CEILING_OPS)
-            if has_floor and not has_ceiling and kind == "deb" and re.match(r"^lib.*\d$", dep) \
-                    and all(op in (">=", None) for op, _ in cons):
-                # a shared library's shlibs dependency: the soname in the package name is its ceiling, and a new
-                # soname is a new package
-                continue
-            if has_floor:
-                continue  # a floor alone is the rule (.github#102); a declared ceiling is checked in 2
-            sink.append(f"{what}{p.name} {p.version} depends on {dep} without a floor "
-                        f"(every dependency between our own packages states its floor)")
-
-    seen = set()
-    for p in new:
-        if (p.name, p.version) not in seen:
-            seen.add((p.name, p.version))
-            sanity(p, reds, "")
-    seen = set()
-    for p in pub:
-        if p.name not in new_names and p.name not in seen:
-            seen.add(p.name)
-            sanity(p, warns, "published: ")
-
-    # 2. a new version outside the range a consumer declares
+    # a new version outside the range a consumer declares
     said = set()
     for lib in new:
         for cons_pkg in pub + new:
@@ -443,30 +412,6 @@ def ceiling_check(kind, published, new, same_pass=()):
                     reds.append(f"{lib.name} {lib.version} falls outside the range published "
                                 f"{cons_pkg.name} {cons_pkg.version} declares ({req}): release it in the same pass")
     return reds, warns, notes
-
-
-# ----------------------------------------------------------------------------------------------- hygiene
-
-def hygiene(kind, published):
-    """Every published build, old ones too, whose dependencies on our own packages lack a floor: a package manager
-    that backtracks (dnf) can fall back to it and install it beside a library it does not fit, so it should leave the
-    index or be superseded. A floor alone is the rule (.github#102); a breaking release declares Breaks/Conflicts.
-    Grouped by package and dependency; reported, not red."""
-    ours = {p.name for p in published}
-    groups = {}
-    for p in published:
-        by = {}
-        for name, op, ver in p.deps:
-            if name in ours and name != p.name:
-                by.setdefault(name, set()).add(op)
-        for dep, ops in by.items():
-            ops.discard(None)
-            if ops & FLOOR_OPS:
-                continue  # a floor alone is the rule (.github#102)
-            groups.setdefault((p.name, dep, "floor"), set()).add(p.version)
-    cmpk = functools.cmp_to_key(deb_cmp if kind == "deb" else rpm_cmp)
-    return [f"HYGIENE: {name} {' '.join(sorted(vs, key=cmpk))} depend on {dep} with no {missing}: remove these builds "
-            f"from the index or supersede them" for (name, dep, missing), vs in sorted(groups.items())]
 
 
 # ----------------------------------------------------------------------------------------------- newest arm
@@ -870,7 +815,6 @@ def deb_arm(a):
                                  ("deb", deb_pkgs(view_a)))
                     say(f"debian/{suite} {arch}: {len(names_a)} packages installed alone, {len(nb)} not at their "
                         f"newest before, {len(na)} after")
-            warns += [f"debian/{suite}: {x}" for x in hygiene("deb", deb_pkgs(published))]
             r, w, n = ceiling_check("deb", deb_pkgs(published), deb_pkgs(new), expand_same_pass(a.same_pass, chan))
             reds += [f"debian/{suite}: {x}" for x in r]
             warns += [f"debian/{suite}: {x}" for x in w]
@@ -1018,7 +962,6 @@ def rpm_arm(a):
                     newest_judge(f"{where} newest", nb, na, same_pass, reds, warns, notes, ("rpm", [
                         p for p in published + new_pkgs if p.arch in (arch, "noarch")]))
                     say(f"{where}: {len(nb)} of our packages not at their newest before, {len(na)} after")
-                warns += [f"{where}: {x}" for x in hygiene("rpm", published)]
                 r, w, n = ceiling_check("rpm", published, new_pkgs, same_pass)
                 reds += [f"{where}: {x}" for x in r]
                 warns += [f"{where}: {x}" for x in w]

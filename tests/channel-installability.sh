@@ -4,9 +4,8 @@
 # channel-installability, each arm on a throwaway channel, offline:
 #   ceiling  a library released above a published consumer's ceiling is red and names the consumer ("release it in
 #            the same pass"); the consumer's new release in the same pass, or in this very release, turns it green; a
-#            dependency between our own packages without a floor is red, and a floor alone is green (.github#102: the
-#            owner's rule is floors only on our packages; a breaking release declares Breaks/Conflicts); the same for rpm
-#            Requires, plain and rich.
+#            dependency between our own packages needs no floor and a floor alone is green (owner 2026-11-24: no
+#            hand-kept floors; a breaking release declares Breaks/Conflicts); the same for rpm Requires, plain and rich.
 #   deb      dose-debcheck: the library alone above the consumer's ceiling is red although the old library is still in
 #            the tree (apt takes the newest and does not go back: plugin-hostd-protocol 0.5.0); a patch
 #            inside the ceiling is green; a package broken before the release is reported, not held against it.
@@ -86,7 +85,7 @@ arm_ceiling() {
     ceiling --kind deb --published "$d/published" --new "$d/pass-misfit"
   expect 0 - 'ceiling: a FLOOR-ONLY dependency on our own package is green (.github#102: floors only on our packages)' -- \
     ceiling --kind deb --published "$d/published" --new "$d/no-ceiling"
-  expect 1 'without a floor' 'ceiling: one without a floor is red' -- \
+  expect 0 - 'ceiling: a dependency on our own package without a floor is green (owner 2026-11-24: no hand-kept floors)' -- \
     ceiling --kind deb --published "$d/published" --new "$d/no-floor"
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
@@ -241,8 +240,6 @@ arm_deb() {
   grep -qF 'hostd-tests 0.19.1 was installable and is not' "$t/out" && ok 'deb: ... and what installs through it' || bad 'deb: hostd-tests not named'
   grep -qF 'RED deb: debian/bookworm amd64 newest: apt-get install clap-host fails on a clean machine: clap-host : Depends: libproto0 (< 0.5~)' "$t/out" \
     && ok 'deb (newest): apt-get -s names the package and the reason' || bad 'deb (newest): apt-get -s finding missing'
-  grep -qF 'HYGIENE: panel 0.9.1 depend on hostd' "$t/out" \
-    && bad 'deb (hygiene): a floor-only published build is flagged (.github#102: floors only)' || ok 'deb (hygiene): a floor-only published build is not flagged'
   expect 0 - 'deb: a patch inside the ceiling is green' -- "${args[@]}" --new-index "$d/lib-patch"
   grep -qF 'already-broken 1.0 was already uninstallable before' "$t/out" && ok 'deb: a package broken before is reported, not red' \
     || bad 'deb: the earlier breakage is not reported'
@@ -385,8 +382,6 @@ arm_rpm() {
   grep -qF 'published clap-host 0.30.6-1.fc44 declares (libproto < 0.5): release it in the same pass' "$t/out" && ok 'rpm: ... and the ceiling arm names the consumer' || bad 'rpm: ceiling arm silent'
   grep -qF 'RED rpm: fedora/44 x86_64 newest: installing panel falls back to libproto 0.4.4-1.fc44, not its newest 0.5.0-1.fc44: with libproto 0.5.0-1.fc44 requested, dnf takes hostd 0.17.0-1.fc44 instead' "$t/out" \
     && ok 'rpm (newest): a fallback to an old build is red, naming the package' || bad 'rpm (newest): fallback not found'
-  grep -qF 'HYGIENE: hostd 0.17.0-1.fc44 depend on libproto' "$t/out" \
-    && bad 'rpm (hygiene): a floor-only old build is flagged (.github#102: floors only)' || ok 'rpm (hygiene): a floor-only old build is not flagged'
   expect 0 - 'rpm: a patch inside the ceiling is green' -- "${args[@]}" --new-dir "$d/new-patch"
   grep -qF 'already-broken 1.0-1.fc44.noarch was already uninstallable before' "$t/out" && ok 'rpm: a package broken before is reported, not red' \
     || bad 'rpm: the earlier breakage is not reported'
