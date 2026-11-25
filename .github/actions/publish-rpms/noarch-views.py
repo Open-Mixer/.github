@@ -33,6 +33,11 @@ import sys
 import rpm
 
 NOT_ARCH = ("noarch", "SRPMS")
+# the frozen releases (release-matrix/frozen.txt): served, never built again, so never judged here; a skew left in one is
+# no run's doing and no run could mend it. Read by promote-staged/collect.py's frozen(), the one reader of that list
+# (PROMOTE_FROZEN names another).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "promote-staged"))
+from collect import frozen  # noqa: E402
 SENSE = rpm.RPMSENSE_LESS | rpm.RPMSENSE_GREATER | rpm.RPMSENSE_EQUAL
 
 OPS = {"=": rpm.RPMSENSE_EQUAL, "<": rpm.RPMSENSE_LESS, ">": rpm.RPMSENSE_GREATER,
@@ -257,7 +262,10 @@ def judge(tree, names):
     """One line per unexplained difference of the newest noarch build across the architecture views of a release."""
     out = []
     fedora = os.path.join(tree, "fedora")
+    skip = frozen("rpm")
     for rel in sorted(os.listdir(fedora)) if os.path.isdir(fedora) else []:
+        if rel in skip:
+            continue
         common, own = release_pkgs(tree, rel)
         arches = sorted(own)
         if len(arches) < 2:
