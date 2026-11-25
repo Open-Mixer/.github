@@ -228,6 +228,19 @@ files. The devel build is the real package at its real version, never a pre-rele
   it (`git merge-base --is-ancestor`). It then asks `collect.py` for `--commit real`, which no commit sha selects, and
   the install checks require that real version (no `.git`, no `+git`). Promotion copies its bytes, checked checksum
   for checksum.
+- **When one kind published and the other failed.** build-rpm.yml and build-deb.yml are two workflows of the
+  caller, each with its own preflight, and each preflight reads only its own half of the channel (`kind`): the RPMs a
+  merge published never make its failed DEB half a skip, nor the other way round. So:
+  1. **A failure outside the code** (a runner, the network, a lost push race past its retries): rerun the failed jobs
+     of the failed workflow, `gh run rerun <run id> --failed` (or "Re-run failed jobs"). The rerun builds and
+     publishes the same commit, its preflight finds its own kind unpublished, `refuse-served` refuses nothing of
+     the other kind, and `record-built.sh` records the same commit for it.
+  2. **A failure in the code** (the DEB does not build, its install check fails): fix forward. The pull request
+     into devel carries the fix AND a version bump (`devel-bump-check` refuses it otherwise), and its merge builds
+     and stages the new version, both kinds, from one commit.
+  3. **The half-published old version is never promoted.** `promote-staged` refuses it: the kind that failed holds
+     no build of it and no `built/` record, and a later merge that publishes that kind from another commit leaves two
+     records naming different commits, which the find job refuses too. It stays in staging until the purge.
 - **Tests.**
   - `tests/devel-push-staging.sh`: the workflow conditions for each kind of run, the version read, the refusal of a
     served file, the skip and the pull request's bump check, the promotion's checksums, its tie to the devel commit and

@@ -445,6 +445,30 @@ echo "$A" > "$ch/staging/deb/built/omx-a/1.2.0.commit"
 mv "$t/pbin/rpm.stub" "$t/pbin/rpm"
 echo "a real promotion is tied to the devel commit that built it: the same version, that commit or a descendant: ok"
 
+# ---- 10. the recovery of a half-published merge to devel (F4): each kind has its own preflight, reading only its own
+#      half of the channel, so the rpm a merge published does not turn its failed deb half into a skip on a rerun (and
+#      the other way round); docs/release-operations.md says to rerun the failed jobs, to fix forward with a bump when the
+#      code is at fault, and that the half-published version is never promoted.
+python3 -I - "$root" <<'PY2' || fail "a kind's preflight does not read its own half of the channel alone"
+import sys, yaml
+for kind in ("rpm", "deb"):
+    steps = yaml.safe_load(open(f"{sys.argv[1]}/.github/workflows/build-{kind}.yml"))["jobs"]["preflight"]["steps"]
+    pre = [s for s in steps if s.get("id") == "preflight"][0]
+    assert pre["with"].get("kind") == kind, kind
+PY2
+printf '%s\n' rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm staging/rpm/fedora/45/x86_64/omx-a-1.4.0-1.fc45.x86_64.rpm > "$t/half"
+KIND=deb STAGING=true ON_SERVED=notice bash "$served" v1.4.0 omx-a < "$t/half" > "$t/half.out" 2>&1 ||
+    { cat "$t/half.out"; fail "the deb half of a merge whose rpm half was published is skipped on its rerun"; }
+rc=0; KIND=rpm STAGING=true ON_SERVED=notice bash "$served" v1.4.0 omx-a < "$t/half" > "$t/half.out" 2>&1 || rc=$?; [ "$rc" = 3 ] ||
+    { cat "$t/half.out"; fail "the rpm half a merge published is not seen as published by its own kind"; }
+doc=$root/docs/release-operations.md
+sec=$(sed -n '/^### A merge to devel publishes the real package to staging/,/^### /p' "$doc")
+for want in 'one kind published and the other failed' 'rerun the failed jobs' 'gh run rerun <run id> --failed' \
+            'fix forward' 'bump' 'never promoted'; do
+    grep -qF "$want" <<< "$sec" || fail "docs/release-operations.md does not say, in the devel section: $want"
+done
+echo "a half-published merge to devel: each kind's rerun reads its own half; the doc gives the rerun, the fix forward and the rule: ok"
+
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"
 echo "trigger-gate: a push to devel passes, any other branch is refused: ok"
