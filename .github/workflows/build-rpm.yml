@@ -655,6 +655,8 @@ jobs:
           staging: 'true'
           # a merge to devel refuses, by name, a file the channel holds already, never keeps it (.github#289)
           refuse-served: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') }}
+          # ... and records the commit that built the real package, which the promotion is tied to
+          built-commit: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && github.sha || '' }}
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}

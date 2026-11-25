@@ -166,6 +166,89 @@ jobs:
             echo "version=$IN_VERSION" >> "$GITHUB_OUTPUT"; echo "commit=$IN_COMMIT" >> "$GITHUB_OUTPUT"
           fi
 
+      # THE REAL PACKAGE IS PROMOTED ONLY FROM THE DEVEL COMMIT THAT BUILT IT (.github#289). Its name holds no commit, so
+      # the staging publish of the merge to devel recorded it: staging/<kind>/built/<name>/<version>.commit
+      # (publish-rpms/record-built.sh). With a record, every kind this run promotes must hold one, all naming the same
+      # commit, and the promotion's commit (the tag's, or the dry run's input) is read out for the version check below.
+      # Without one, the staged build is a snapshot named by its commit, as before.
+      - id: built
+        name: Read the commit that built the real package
+        env:
+          NAME: ${{ inputs.package-name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          RUN_COMMIT: ${{ steps.ver.outputs.commit }}
+          RPM: ${{ inputs.rpm }}
+          DEB: ${{ inputs.deb }}
+          CHANNEL: ${{ inputs.target-repo }}
+          DIR: ${{ runner.temp }}/channel
+        run: |
+          set -euo pipefail
+          [ -d "$DIR/.git" ] || git clone --quiet --depth 1 "https://github.com/$CHANNEL" "$DIR"
+          built= have= lack=
+          for kind in rpm deb; do
+            on=$RPM; [ "$kind" = rpm ] || on=$DEB
+            [ "$on" = true ] || continue
+            rec=staging/$kind/built/$NAME/$VERSION.commit
+            if [ -f "$DIR/$rec" ]; then
+              c=$(cat "$DIR/$rec")
+              [[ $c =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$rec holds '$c', not a full commit"; exit 1; }
+              [ -z "$built" ] || [ "$built" = "$c" ] || { echo "::error::the real $NAME $VERSION was built by $built for one kind and by $c for the other: one version, one build"; exit 1; }
+              built=$c have="$have $kind"
+            else
+              lack="$lack $kind"
+            fi
+          done
+          [ -n "$built" ] || { echo "no record of a real build of $NAME $VERSION: a snapshot is promoted by its commit"; exit 0; }
+          for kind in $lack; do
+            echo "::error::staging/$kind holds no record of the commit that built $NAME $VERSION, and staging/${have# } does ($built): the real build of both kinds comes from one merge to devel"
+          done
+          [ -z "$lack" ] || exit 1
+          [ -n "$RUN_COMMIT" ] || { echo "::error::the real $NAME $VERSION was built by $built, and this run names no commit to promote"; exit 1; }
+          full=$(git rev-parse --verify --quiet "$RUN_COMMIT^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $RUN_COMMIT"; exit 1; }
+          tree=$RUNNER_TEMP/promoted-tree; rm -rf "$tree"; mkdir -p "$tree"
+          git archive "$full" -- packaging debian 2>/dev/null | tar -x -C "$tree" || true
+          echo "the real $NAME $VERSION was built by $built; the promotion is of $full"
+          { echo "commit=$built"; echo "full=$full"; echo "tree=$tree"; } >> "$GITHUB_OUTPUT"
+
+      # the version the promotion's commit carries, read as the build read it
+      - id: rpmver
+        if: steps.built.outputs.commit != '' && inputs.rpm
+        uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
+        with:
+          kind: rpm
+          dir: ${{ steps.built.outputs.tree }}
+      - id: debver
+        if: steps.built.outputs.commit != '' && inputs.deb
+        uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
+        with:
+          kind: deb
+          dir: ${{ steps.built.outputs.tree }}
+
+      # the tie: the promotion's commit carries the version and is the devel commit that built it, or descends from it
+      - id: tie
+        name: The promotion's commit is the build's, or descends from it, at the same version
+        if: steps.built.outputs.commit != ''
+        env:
+          NAME: ${{ inputs.package-name }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILT: ${{ steps.built.outputs.commit }}
+          FULL: ${{ steps.built.outputs.full }}
+          RPMV: ${{ steps.rpmver.outputs.version }}
+          DEBV: ${{ steps.debver.outputs.version }}
+        run: |
+          set -euo pipefail
+          for v in "rpm:$RPMV" "deb:$DEBV"; do
+            [ -z "${v#*:}" ] || [ "${v#*:}" = "$VERSION" ] ||
+              { echo "::error::$FULL carries ${v#*:} in its ${v%%:*} packaging, and the real build promoted is $NAME $VERSION"; exit 1; }
+          done
+          [ -n "$RPMV$DEBV" ] || { echo "::error::$FULL carries no version: the real $NAME $VERSION is promoted only from a commit that carries it"; exit 1; }
+          git cat-file -e "$BUILT^{commit}" 2>/dev/null || git fetch -q origin "$BUILT" 2>/dev/null ||
+            { echo "::error::$GITHUB_REPOSITORY has no commit $BUILT, which built the real $NAME $VERSION"; exit 1; }
+          git merge-base --is-ancestor "$BUILT" "$FULL" ||
+            { echo "::error::$FULL does not descend from $BUILT, the devel commit that built the real $NAME $VERSION: it is not promoted"; exit 1; }
+          echo "$FULL is $BUILT or descends from it, at $VERSION"
+          echo "real=true" >> "$GITHUB_OUTPUT"
+
       - id: rpm
         if: inputs.rpm
         uses: Open-Mixer/.github/.github/actions/promote-staged@openmixer-v1
@@ -176,7 +259,7 @@ jobs:
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
           arches: ${{ join(fromJSON(inputs.rpm-arch-matrix), ' ') }}
-          commit: ${{ steps.ver.outputs.commit }}
+          commit: ${{ steps.built.outputs.commit != '' && 'real' || steps.ver.outputs.commit }}
           channel: ${{ inputs.target-repo }}
           channel-dir: ${{ runner.temp }}/channel
           out: ${{ runner.temp }}/found-rpm
@@ -192,7 +275,7 @@ jobs:
           binaries: ${{ inputs.binary-names }}
           releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
           arches: ${{ join(fromJSON(inputs.deb-arch-matrix), ' ') }}
-          commit: ${{ steps.ver.outputs.commit }}
+          commit: ${{ steps.built.outputs.commit != '' && 'real' || steps.ver.outputs.commit }}
           channel: ${{ inputs.target-repo }}
           channel-dir: ${{ runner.temp }}/channel
           out: ${{ runner.temp }}/found-deb
@@ -205,28 +288,33 @@ jobs:
           DEB_COMMIT: ${{ steps.deb.outputs.commit }}
           VERSION: ${{ steps.ver.outputs.version }}
           RUN_COMMIT: ${{ steps.ver.outputs.commit }}
+          TIED: ${{ steps.tie.outputs.real }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -o pipefail
           short=${RPM_COMMIT:-$DEB_COMMIT}
           [ -n "$short" ] || { echo "::error::nothing to promote: both rpm and deb are off"; exit 1; }
           real=false
-          # the real package a merge to devel staged names no commit (one build per version, .github#289): the
-          # promotion's own commit stands for it, a tag's or the dry run's input, and is checked like any other
+          # the real package a merge to devel staged names no commit (one build per version, .github#289): it is promoted
+          # only on the tie above (the recorded devel commit, the same version, that commit or a descendant); the
+          # promotion's own commit is then checked like any other
           if [ "$short" = real ]; then
+            [ "${TIED:-}" = true ] || { echo "::error::the staged build is the real package, and no devel commit that built it is tied to this promotion"; exit 1; }
             for c in "$RPM_COMMIT" "$DEB_COMMIT"; do
               case $c in
                 ''|real) ;;
                 *) echo "::error::the staged RPMs are of '$RPM_COMMIT' and the staged DEBs of '$DEB_COMMIT': one is the real package of a merge to devel, the other a snapshot"; exit 1 ;;
               esac
             done
-            short=${RUN_COMMIT:-} RPM_COMMIT='' DEB_COMMIT='' real=true
-            [ -n "$short" ] || { echo "::error::the staged build is the real package of a merge to devel, and this run names no commit"; exit 1; }
+            [ -n "${RUN_COMMIT:-}" ] || { echo "::error::the staged build is the real package of a merge to devel, and this run names no commit"; exit 1; }
+            full=$(git rev-parse --verify --quiet "$RUN_COMMIT^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $RUN_COMMIT"; exit 1; }
+            RPM_COMMIT='' DEB_COMMIT='' real=true
           fi
           if [ -n "$RPM_COMMIT" ] && [ -n "$DEB_COMMIT" ] && [ "${RPM_COMMIT#"$DEB_COMMIT"}" = "$RPM_COMMIT" ] && [ "${DEB_COMMIT#"$RPM_COMMIT"}" = "$DEB_COMMIT" ]; then
             echo "::error::the staged RPMs are of $RPM_COMMIT and the staged DEBs of $DEB_COMMIT: name one commit both were built from"; exit 1
           fi
-          full=$(git rev-parse --verify --quiet "$short^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $short"; exit 1; }
+          # a real build keeps short=real (the jobs below collect it by that name) and is promoted at the run's commit
+          [ "$real" = true ] || full=$(git rev-parse --verify --quiet "$short^{commit}") || { echo "::error::$GITHUB_REPOSITORY has no commit $short"; exit 1; }
           git merge-base --is-ancestor "$full" "origin/$DEFAULT_BRANCH" ||
             { echo "::error::$full is not on $DEFAULT_BRANCH of $GITHUB_REPOSITORY: a staged build of a commit that never landed is not promoted"; exit 1; }
           if at=$(git rev-parse --verify --quiet "refs/tags/v$VERSION^{commit}"); then

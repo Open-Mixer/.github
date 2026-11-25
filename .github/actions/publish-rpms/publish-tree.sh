@@ -49,6 +49,8 @@
 #   REFUSE_SERVED 'true' (a merge to devel, publish-rpms refuse-served): every package of <rpm dir> whose file name the tree
 #               holds already is refused, each one named, before anything is placed or signed. A merge to devel builds
 #               its version once; a file the channel holds is never kept in place of the new build, nor replaced by it.
+#   BUILT_COMMIT the full commit a merge to devel built the real package from (publish-rpms built-commit): recorded in
+#               <tree>/built/<name>/<version>.commit by record-built.sh, which promote-staged reads
 #   NEWEST_ONLY 'true' (staging) keeps one staged build of a version: every other <version>-<release>.git... build of a
 #               package this run publishes leaves its directory, so the metadata never offers the build of an earlier
 #               commit beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -297,6 +299,9 @@ for f in ${found[@]+"${found[@]}"}; do
         done
     done
 done
+
+# the real package of a merge to devel names no commit: the commit that built it is recorded beside it (.github#289)
+[ -z "${BUILT_COMMIT:-}" ] || "$here/record-built.sh" "$tree" "$BUILT_COMMIT" ${found[@]+"${found[@]}"}
 
 # A catch-up of a version a quick release published: its noarch packages are served from the quick architecture trees
 # alone, which the cells it fills do not read. The served file, the same bytes, goes into the architecture tree of every

@@ -169,7 +169,10 @@ for f in x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm aarch64/omx-a-1.2.0-1.fc45.aarch64
 done
 head -c 4096 /dev/urandom > "$d/amd64/omx-a_1.2.0_amd64.deb"; head -c 4096 /dev/urandom > "$d/arm64/omx-a_1.2.0_arm64.deb"
 collect=$root/.github/actions/promote-staged/collect.py
-python3 -I "$collect" "$ch" rpm --name omx-a --version 1.2.0 --releases 45 --arches "x86_64 aarch64" --commit 0123abc --out "$t/rpm-out" > "$t/rpm.log" ||
+# a commit never selects the real package: promote-staged ties it to its devel commit and asks for it by name (F6c)
+python3 -I "$collect" "$ch" rpm --name omx-a --version 1.2.0 --releases 45 --arches "x86_64 aarch64" --commit 0123abc --out "$t/rpm-sha" > "$t/sha.log" 2>&1 &&
+    { cat "$t/sha.log"; fail "collect.py took a commit sha for the real package, which names none"; }
+python3 -I "$collect" "$ch" rpm --name omx-a --version 1.2.0 --releases 45 --arches "x86_64 aarch64" --commit real --out "$t/rpm-out" > "$t/rpm.log" ||
     { cat "$t/rpm.log"; fail "the promotion refused the real package a merge to devel staged (rpm)"; }
 grep -qx 'commit real' "$t/rpm.log" || { cat "$t/rpm.log"; fail "collect.py did not report the real package as commit real"; }
 for f in x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm aarch64/omx-a-1.2.0-1.fc45.aarch64.rpm SRPMS/omx-a-1.2.0-1.fc45.src.rpm; do
@@ -344,6 +347,103 @@ bumprun deb 1.2.0 && { cat "$t/bump.out"; fail "build-deb.yml: a pull request in
 grep -q 'deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb' "$t/bump.out" || { cat "$t/bump.out"; fail "build-deb.yml: the bump refusal does not name the served deb"; }
 bumprun rpm 1.3.0 || { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel carrying a new version was refused"; }
 echo "a pull request into devel changing a package at a published version is refused by name; exempt paths and a bump pass: ok"
+
+# ---- 9. a real promotion is tied to the devel commit that built it (F6c). The staging publish of a merge to devel records
+#      the full commit (built-commit, record-built.sh: staging/<kind>/built/<name>/<version>.commit); promote-staged's
+#      find job reads it and refuses unless the promotion commit carries the same version and is that commit or descends
+#      from it. The find job's own steps run in a git tree: devel commit A builds 1.2.0, B merges it into main, C is an
+#      unrelated 1.2.0 on main, D bumps to 1.3.0 after B.
+rb=$root/.github/actions/publish-rpms/record-built.sh
+cat > "$t/pbin/rpm" <<'STUB'
+#!/bin/bash
+# rpm -qp --qf '%{SOURCEPACKAGE}|%{NAME}|%{VERSION}|%{SOURCERPM}\n' <file>: read from the file name
+f=${*: -1}; b=${f##*/}
+case $b in *.src.rpm) n=${b%-*-*}; v=${b#"$n"-}; printf '1|%s|%s|(none)\n' "$n" "${v%%-*}" ;;
+  *) n=${b%-*-*}; v=${b#"$n"-}; printf '0|%s|%s|%s-%s.src.rpm\n' "$n" "${v%%-*}" "$n" "${v%.*.rpm}" ;; esac
+STUB
+cat > "$t/pbin/dpkg-deb" <<'STUB'
+#!/bin/bash
+# dpkg-deb -f <file> Source|Package|Version: read from <package>_<version>_<arch>.deb; Source is omx-a
+b=${2##*/}
+case $3 in Source) echo omx-a ;; Package) echo "${b%%_*}" ;; Version) v=${b#*_}; echo "${v%_*}" ;; esac
+STUB
+chmod +x "$t/pbin/rpm" "$t/pbin/dpkg-deb"
+A=0123456789abcdef0123456789abcdef01234567
+rt=$t/record; rm -rf "$rt"; mkdir -p "$rt"
+PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" "$A" x/omx-a-1.2.0-1.fc45.src.rpm x/omx-a-devel-1.2.0-1.fc45.x86_64.rpm > "$rt/log" 2>&1 || { cat "$rt/log"; fail "record-built.sh refused a first rpm record"; }
+[ "$(cat "$rt/rpm/built/omx-a/1.2.0.commit" 2>/dev/null)" = "$A" ] || fail "record-built.sh did not record omx-a 1.2.0 built by $A (rpm)"
+PATH=$t/pbin:$PATH bash "$rb" "$rt/deb" "$A" x/trixie/libomx-a0_1.2.0-1_amd64.deb > "$rt/log" 2>&1 || { cat "$rt/log"; fail "record-built.sh refused a first deb record"; }
+[ "$(cat "$rt/deb/built/omx-a/1.2.0.commit" 2>/dev/null)" = "$A" ] || fail "record-built.sh did not record the source omx-a 1.2.0, revision dropped (deb)"
+PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" "${A/0123/9999}" x/omx-a-1.2.0-1.fc45.src.rpm > "$rt/log" 2>&1 && fail "record-built.sh replaced the record of another commit"
+grep -q 'refused built/omx-a/1.2.0.commit' "$rt/log" || { cat "$rt/log"; fail "record-built.sh's refusal does not name the record"; }
+PATH=$t/pbin:$PATH bash "$rb" "$rt/rpm" 0123abc x/omx-a-1.2.0-1.fc45.src.rpm > "$rt/log" 2>&1 && fail "record-built.sh took a short commit"
+python3 -I - "$root" <<'PY2' || fail "the staging publish of a merge to devel does not record its commit"
+import sys, yaml
+root = sys.argv[1]
+for kind in ("rpm", "deb"):
+    a = yaml.safe_load(open(f"{root}/.github/actions/publish-{kind}s/action.yml"))["runs"]["steps"]
+    assert any(s.get("env", {}).get("BUILT_COMMIT_IN") == "${{ inputs.built-commit }}" and 'echo "BUILT_COMMIT=$BUILT_COMMIT_IN" >> "$GITHUB_ENV"' in s.get("run", "") for s in a), kind
+    tree = open(f"{root}/.github/actions/publish-{kind}s/publish-tree.sh").read()
+    assert 'record-built.sh" "$tree" "$BUILT_COMMIT"' in tree, kind
+    w = yaml.safe_load(open(f"{root}/.github/workflows/build-{kind}.yml"))["jobs"]["publish"]["steps"]
+    st = [s for s in w if str(s.get("with", {}).get("staging")) == "true"][0]
+    assert st["with"].get("built-commit") == "${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && github.sha || '' }}", kind
+PY2
+
+# the caller's repository
+r=$t/caller; rm -rf "$r"; mkdir -p "$r/packaging" "$r/debian"
+gitr() { git -C "$r" -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false "$@"; }
+setv() { printf 'Name: omx-a\nVersion: %s\nRelease: 1%%{?dist}\nSummary: t\nLicense: MIT\n%%description\nt\n' "$1" > "$r/packaging/omx-a.spec"
+         printf 'omx-a (%s-1) trixie; urgency=medium\n\n  * t\n\n -- T <t@example.org>  Tue, 25 Nov 2026 12:00:00 +0000\n' "$1" > "$r/debian/changelog"; }
+setv 1.1.0; gitr init -q -b main; gitr add -A; gitr commit -q -m root
+gitr checkout -q -b devel; setv 1.2.0; gitr commit -q -am devel-1.2.0; A=$(gitr rev-parse HEAD)
+gitr checkout -q main; echo x > "$r/x"; gitr add -A; gitr commit -q -m main-side; gitr merge -q --no-ff -m merge devel; B=$(gitr rev-parse HEAD)
+gitr checkout -q -b other main~1; setv 1.2.0; gitr commit -q -am unrelated-1.2.0; C=$(gitr rev-parse HEAD)
+gitr checkout -q main; gitr merge -q --no-ff -m merge-other other; CM=$(gitr rev-parse HEAD)
+gitr checkout -q -b bump "$B"; setv 1.3.0; gitr commit -q -am bump; D=$(gitr rev-parse HEAD); gitr checkout -q main
+gitr update-ref refs/remotes/origin/main "$CM"
+ch=$t/promo-channel; rm -rf "$ch"; mkdir -p "$ch/.git" "$ch/staging/rpm/built/omx-a" "$ch/staging/deb/built/omx-a"
+echo "$A" > "$ch/staging/rpm/built/omx-a/1.2.0.commit"; echo "$A" > "$ch/staging/deb/built/omx-a/1.2.0.commit"
+pw=$root/.github/workflows/promote-staged.yml
+python3 -I "$step" "$root" "$pw" find id=built "$t/f-built.sh"
+python3 -I "$step" "$root" "$pw" find id=tie "$t/f-tie.sh"
+python3 -I "$step" "$root" "$pw" find id=commit "$t/f-commit.sh"
+outv() { sed -n "s/^$1=//p" "$2" | tail -n1; }
+find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built, version and tie steps; log in $t/f.out
+    local o=$t/f-gh; : > "$o"; rm -rf "$t/promo-tree"
+    (cd "$r" && export PATH=$t/pbin:$PATH GITHUB_OUTPUT=$o RUNNER_TEMP=$t NAME=omx-a VERSION=1.2.0 RUN_COMMIT=$1 RPM=${2:-true} DEB=${3:-true} \
+        CHANNEL=Open-Mixer/open-mixer.github.io DIR=$ch
+     bash "$t/f-built.sh" || exit $?
+     built=$(outv commit "$o"); [ -n "$built" ] || exit 0; export RPMV= DEBV=
+     for k in rpm deb; do
+        [ "$( [ "$k" = rpm ] && echo "${2:-true}" || echo "${3:-true}")" = true ] || continue
+        python3 -I "$step" "$root" "$pw" find "id=${k}ver" "$t/f-$k.sh" kind=$k dir="$(outv tree "$o")"
+        GITHUB_OUTPUT=$t/f-$k-out bash "$t/f-$k.sh" > /dev/null || exit $?
+        export "${k^^}V=$(outv version "$t/f-$k-out")"
+     done
+     BUILT=$built FULL=$(outv full "$o") bash "$t/f-tie.sh") > "$t/f.out" 2>&1
+}
+command -v dpkg-parsechangelog >/dev/null || cp "$t/bin/dpkg-parsechangelog" "$t/pbin/"
+mv "$t/pbin/rpm" "$t/pbin/rpm.stub"   # the find job reads the spec with the real rpmspec
+find_real "$B" || { cat "$t/f.out"; fail "promote-staged refused the merge of the devel commit that built 1.2.0"; }
+[ "$(outv real "$t/f-gh")" = true ] || { cat "$t/f.out" "$t/f-gh"; fail "the tie did not say the promotion is real"; }
+find_real "$A" || { cat "$t/f.out"; fail "promote-staged refused the devel commit that built 1.2.0 itself"; }
+find_real "$C" && { cat "$t/f.out"; fail "promote-staged took an unrelated commit of 1.2.0 for the real build of $A"; }
+grep -q "does not descend from $A" "$t/f.out" || { cat "$t/f.out"; fail "the refusal of an unrelated commit does not name the devel commit"; }
+find_real "$D" && { cat "$t/f.out"; fail "promote-staged took a descendant carrying 1.3.0 for the real 1.2.0"; }
+grep -q 'carries 1.3.0' "$t/f.out" || { cat "$t/f.out"; fail "the refusal of a bumped descendant does not name its version"; }
+rm "$ch/staging/deb/built/omx-a/1.2.0.commit"
+find_real "$B" && { cat "$t/f.out"; fail "promote-staged took a real build whose deb half records no commit"; }
+grep -q 'staging/deb holds no record' "$t/f.out" || { cat "$t/f.out"; fail "the missing deb record is not refused by name"; }
+find_real "$B" true false || { cat "$t/f.out"; fail "an rpm-only promotion was refused for the deb record"; }
+echo "$A" > "$ch/staging/deb/built/omx-a/1.2.0.commit"
+# the commit step promotes a real build only on the tie: collect.py's commit real with no tie is refused
+(cd "$r" && GITHUB_OUTPUT=$t/c-gh RPM_COMMIT=real DEB_COMMIT=real VERSION=1.2.0 RUN_COMMIT=$C DEFAULT_BRANCH=main TIED= bash "$t/f-commit.sh") > "$t/c.out" 2>&1 &&
+    { cat "$t/c.out"; fail "the commit step promoted a real build that no devel commit was tied to"; }
+(cd "$r" && GITHUB_OUTPUT=$t/c-gh RPM_COMMIT=real DEB_COMMIT=real VERSION=1.2.0 RUN_COMMIT=$B DEFAULT_BRANCH=main TIED=true bash "$t/f-commit.sh") > "$t/c.out" 2>&1 ||
+    { cat "$t/c.out"; fail "the commit step refused a tied real build"; }
+mv "$t/pbin/rpm.stub" "$t/pbin/rpm"
+echo "a real promotion is tied to the devel commit that built it: the same version, that commit or a descendant: ok"
 
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"

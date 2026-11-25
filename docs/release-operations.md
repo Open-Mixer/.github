@@ -219,12 +219,19 @@ files. The devel build is the real package at its real version, never a pre-rele
   arrives while one publishes and one waits, the waiting one is cancelled and the newest takes its place. The
   cancelled merge's version is then not staged; it was superseded by a newer version (each merge that changes a
   package carries its own bump), and if that version must be staged anyway, rerun the cancelled run's failed jobs.
-- **Promotion copies it.** `promote-staged` finds the real package by its version alone: `collect.py` reports it as
-  commit `real`, and the promotion's own commit stands for it. Promotion copies its bytes, checked checksum for
-  checksum.
+- **Promotion copies it, from the commit that built it.** The real package's name holds no commit, so the staging
+  publish of the merge to devel records the full commit beside it: `staging/<kind>/built/<name>/<version>.commit`
+  (`built-commit` of `publish-rpms` and `publish-debs`, `record-built.sh`; a record naming another commit is
+  refused). `promote-staged`'s find job reads it for every kind it promotes (one record missing, or two naming
+  different commits, is refused) and promotes the real build only when the promotion's commit (the tag's, or the dry
+  run's input) carries the same version in its spec and changelog (`tree-version`) AND is that commit or descends from
+  it (`git merge-base --is-ancestor`). It then asks `collect.py` for `--commit real`, which no commit sha selects, and
+  the install checks require that real version (no `.git`, no `+git`). Promotion copies its bytes, checked checksum
+  for checksum.
 - **Tests.**
-  - `tests/devel-push-staging.sh`: the workflow conditions for each kind of run, the refusal, the promotion's
-    checksums and trigger-gate.
+  - `tests/devel-push-staging.sh`: the workflow conditions for each kind of run, the version read, the refusal of a
+    served file, the skip and the pull request's bump check, the promotion's checksums, its tie to the devel commit and
+    its install checks, and trigger-gate.
   - `tests/build-devel-real.sh`: the real NEVRA (Fedora container).
   - `tests/devel-pr-staged-install.sh`: the next layer takes the staged build.
 

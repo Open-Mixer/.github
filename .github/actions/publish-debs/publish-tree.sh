@@ -49,6 +49,8 @@
 #                   tree holds already in its suite is refused, each one named, before anything is placed or signed. A
 #                   merge to devel builds its version once; a file the channel holds is never kept in place of the new
 #                   build, nor replaced by it.
+#   BUILT_COMMIT    the full commit a merge to devel built the real package from (publish-debs built-commit): recorded in
+#                   <tree>/built/<source>/<version>.commit by ../publish-rpms/record-built.sh, which promote-staged reads
 #   NEWEST_ONLY     'true' (staging) keeps one staged build of a version: every other <version>+git... build of a package
 #                   this run publishes leaves its directory, so the index never offers the build of an earlier commit
 #                   beside this one. The real tree never sets it: nothing published there is ever removed.
@@ -277,6 +279,9 @@ for f in ${found[@]+"${found[@]}"}; do
         echo "dropped $(basename "$old") from debian/$suite/$arch (an earlier staged build of ${ver%%+git*})"
     done
 done
+
+# the real package of a merge to devel names no commit: the commit that built it is recorded beside it (.github#289)
+[ -z "${BUILT_COMMIT:-}" ] || "$(dirname "$(readlink -f "$0")")/../publish-rpms/record-built.sh" "$tree" "$BUILT_COMMIT" ${found[@]+"${found[@]}"}
 
 if [ "${CATCH_UP:-}" = true ] && [ "${#mine[@]}" = 0 ]; then
     echo "catch-up: nothing was left to place (every package is served already): nothing was signed" >&2

@@ -78,6 +78,9 @@ inputs:
   releases:
     description: with staging, the Fedora releases (space separated) whose staging directories get metadata even when empty
     default: ''
+  built-commit:
+    description: "a merge to devel: the full commit its real package was built from, recorded in <tree>/built/<name>/<version>.commit for promote-staged (publish-tree.sh BUILT_COMMIT); empty records nothing"
+    default: ''
   refuse-served:
     description: "'true' for a merge to devel: every package whose file the tree holds already refuses the run, each one named, before anything is placed or signed; a published file is never kept in place of the new build (publish-tree.sh REFUSE_SERVED)"
     default: 'false'
@@ -108,6 +111,7 @@ runs:
         MATRIX_SET: ${{ inputs.matrix-set }}
         CATCH_UP: ${{ inputs.catch-up }}
         REFUSE_SERVED_IN: ${{ inputs.refuse-served }}
+        BUILT_COMMIT_IN: ${{ inputs.built-commit }}
         RELEASES: ${{ inputs.releases }}
         KEY_FILE_IN: ${{ inputs.key-file }}
         COMMITTED_KEYS: ${{ inputs.committed-keys }}
@@ -133,6 +137,7 @@ runs:
         echo "CATCH_UP=$CATCH_UP" >> "$GITHUB_ENV"
         # a merge to devel, for the tree script and the lost-race rebuild alike
         echo "REFUSE_SERVED=$REFUSE_SERVED_IN" >> "$GITHUB_ENV"
+        echo "BUILT_COMMIT=$BUILT_COMMIT_IN" >> "$GITHUB_ENV"
         # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton
         if [ "$STAGING" = true ]; then
           { echo "RPM_TREE=staging/rpm"; echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../packaging/staging/openmixer-staging.repo"

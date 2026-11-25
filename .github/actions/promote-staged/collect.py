@@ -11,7 +11,7 @@ deb: <suite>/<file>). Nothing is built and nothing in the checkout is written.
 A staged build is named by its commit: <version>-<release>.git<commit time>.<sha>.fcNN for rpm,
 <version>+git<commit time>.<sha> for deb (a build staged before the time was part of the name has the sha alone). A
 merge to devel stages the REAL package, <version>-<release>.fcNN and <version>[-<revision>], built once (.github#289): its
-name holds no commit and needs none, a version is built only once; it is reported as commit "real". Every
+name holds no commit: it is reported as commit "real", and --commit real selects it (no commit sha does). Every
 file of that version and commit goes along, the subpackages too. --releases are Fedora releases (rpm) or Debian suites
 (deb), --arches the architectures a release builds; --binaries are the packages every one of those must hold
 (default: the name), as its own architecture or as noarch / all.
@@ -115,8 +115,9 @@ def main():
                 staged[(rel, arch, f)] = p[:2]
     commits = sorted({c for (p, c) in staged.values() if p in binaries or p == a.name})
     if a.commit:
-        # the real package is one build per version: --commit cannot be read from its name and does not narrow it
-        commits = [c for c in commits if c == "real" or c.startswith(a.commit) or a.commit.startswith(c)]
+        # --commit real selects the real package a merge to devel staged, and only it: a commit never matches the real
+        # package, whose tie to the devel commit that built it promote-staged's find job checks (.github#289)
+        commits = [c for c in commits if c == a.commit or (c != "real" and a.commit != "real" and (c.startswith(a.commit) or a.commit.startswith(c)))]
     if not commits:
         of = f" of commit {a.commit}" if a.commit else ""
         sys.exit(f"refused: {where} holds no {a.name} {a.version}{of}")
