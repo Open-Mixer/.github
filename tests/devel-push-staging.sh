@@ -176,6 +176,61 @@ for kind in rpm deb; do
 done
 echo "the version of a merge to devel is the spec's expanded Version and the changelog's without its revision: ok"
 
+# ---- 6. promote-staged's install checks take the real package when the find job says the promoted build is real (F1):
+#      verify-rpm requires %{VERSION} = the version and a release with no .git, verify-deb pins the exact version with
+#      no +git from madison; a snapshot is checked by its commit as before. Each step's own text runs over stub
+#      dnf/rpm/apt-get/apt-cache, the channel holding the real 1.2.0 beside a snapshot of it.
+pw=$root/.github/workflows/promote-staged.yml
+mkdir -p "$t/pbin"
+cat > "$t/pbin/dnf" <<'STUB'
+#!/bin/bash
+case $1 in
+  install) echo "$*" >> "$STATE/dnf.log" ;;
+  repoquery) echo openmixer ;;
+esac
+exit 0
+STUB
+cat > "$t/pbin/rpm" <<'STUB'
+#!/bin/bash
+# rpm -q --qf '%{RELEASE}' <bin> | '%{VERSION}' <bin>: the build the stub channel installed
+case "$*" in *RELEASE*) printf '%s' "$RPM_RELEASE" ;; *VERSION*) printf '%s' "$RPM_VERSION" ;; esac
+STUB
+cat > "$t/pbin/apt-cache" <<'STUB'
+#!/bin/bash
+# madison: newest first, as apt prints it
+printf ' %s | %s | https://www.openmixer.org/deb/debian/trixie ./ Packages\n' "$2" 1.2.0+git1700000000.0123abc "$2" 1.2.0 "$2" 1.1.0
+STUB
+cat > "$t/pbin/apt-get" <<'STUB'
+#!/bin/bash
+[ "$1" = update ] && exit 0
+echo "$*" >> "$STATE/apt.log"
+STUB
+printf '#!/bin/bash\nexit 0\n' > "$t/pbin/sleep"
+printf '#!/bin/bash\necho "$4 installed"\n' > "$t/pbin/dpkg-query"
+chmod +x "$t/pbin/"*
+python3 -I "$step" "$root" "$pw" verify-rpm "name=Install the promoted version from the channel" "$t/vrpm.sh"
+python3 -I "$step" "$root" "$pw" verify-deb "name=Install the promoted version from the channel" "$t/vdeb.sh"
+grep -qF 'REAL: ${{ needs.find.outputs.real }}' <(python3 -I -c 'import sys, yaml; j = yaml.safe_load(open(sys.argv[1]))["jobs"]
+for n in ("verify-rpm", "verify-deb"):
+    for s in j[n]["steps"]:
+        if s.get("name") == "Install the promoted version from the channel": print(n, s["env"].get("REAL"))
+print(j["find"]["outputs"].get("real"))' "$pw" | sed 's/^verify-[a-z]* /REAL: /') ||
+    fail "promote-staged.yml: the install checks do not read the find job's real output"
+vcheck() { # vcheck <rpm|deb> <real> <short> <rpm release> -> exit status; logs in $t/v.out, $t/state
+    rm -rf "$t/state"; mkdir -p "$t/state"
+    STATE=$t/state PATH=$t/pbin:$PATH REAL=$2 SHORT=$3 RPM_RELEASE=$4 RPM_VERSION=1.2.0 VERSION=1.2.0 NAME=omx-a BINARIES=omx-a \
+        BASE_URL=https://www.openmixer.org URL=https://www.openmixer.org/deb SUITE=trixie bash "$t/v$1.sh" > "$t/v.out" 2>&1
+}
+vcheck rpm true 0123abc 1.fc45 || { cat "$t/v.out"; fail "verify-rpm refused the real omx-a 1.2.0-1.fc45 a real promotion installs"; }
+vcheck rpm true 0123abc 1.git1700000000.0123abc.fc45 && { cat "$t/v.out"; fail "verify-rpm took a snapshot for the real package"; }
+vcheck rpm false 0123abc 1.git1700000000.0123abc.fc45 || { cat "$t/v.out"; fail "verify-rpm refused the snapshot of the commit a snapshot promotion installs"; }
+vcheck rpm false 0123abc 1.fc45 && { cat "$t/v.out"; fail "verify-rpm took the real package for a snapshot promotion"; }
+vcheck deb true 0123abc - || { cat "$t/v.out"; fail "verify-deb found no real omx-a 1.2.0 to install"; }
+grep -qx 'install -y --no-install-recommends omx-a=1.2.0' "$t/state/apt.log" || { cat "$t/state/apt.log"; fail "verify-deb did not pin the real omx-a=1.2.0"; }
+vcheck deb false 0123abc - || { cat "$t/v.out"; fail "verify-deb found no snapshot of the commit"; }
+grep -qx 'install -y --no-install-recommends omx-a=1.2.0+git1700000000.0123abc' "$t/state/apt.log" || { cat "$t/state/apt.log"; fail "verify-deb did not pin the snapshot of the commit"; }
+echo "promote-staged's install checks take the real package of a real promotion, and the snapshot of its commit otherwise: ok"
+
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"
 echo "trigger-gate: a push to devel passes, any other branch is refused: ok"

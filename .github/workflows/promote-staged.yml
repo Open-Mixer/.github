@@ -138,6 +138,9 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       short: ${{ steps.commit.outputs.short }}
       commit: ${{ steps.commit.outputs.commit }}
+      # 'true' when the promoted build is the real package a merge to devel staged (collect.py: commit real), so the
+      # install checks take <version>-<release> with no .git and the deb <version> with no +git (.github#289)
+      real: ${{ steps.commit.outputs.real }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -207,6 +210,7 @@ jobs:
           set -o pipefail
           short=${RPM_COMMIT:-$DEB_COMMIT}
           [ -n "$short" ] || { echo "::error::nothing to promote: both rpm and deb are off"; exit 1; }
+          real=false
           # the real package a merge to devel staged names no commit (one build per version, .github#289): the
           # promotion's own commit stands for it, a tag's or the dry run's input, and is checked like any other
           if [ "$short" = real ]; then
@@ -216,7 +220,7 @@ jobs:
                 *) echo "::error::the staged RPMs are of '$RPM_COMMIT' and the staged DEBs of '$DEB_COMMIT': one is the real package of a merge to devel, the other a snapshot"; exit 1 ;;
               esac
             done
-            short=${RUN_COMMIT:-} RPM_COMMIT='' DEB_COMMIT=''
+            short=${RUN_COMMIT:-} RPM_COMMIT='' DEB_COMMIT='' real=true
             [ -n "$short" ] || { echo "::error::the staged build is the real package of a merge to devel, and this run names no commit"; exit 1; }
           fi
           if [ -n "$RPM_COMMIT" ] && [ -n "$DEB_COMMIT" ] && [ "${RPM_COMMIT#"$DEB_COMMIT"}" = "$RPM_COMMIT" ] && [ "${DEB_COMMIT#"$RPM_COMMIT"}" = "$DEB_COMMIT" ]; then
@@ -229,7 +233,7 @@ jobs:
             [ "$at" = "$full" ] || { echo "::error::v$VERSION is on $at, and the staged build is of $full"; exit 1; }
           fi
           echo "promoting $VERSION of $full"
-          { echo "short=$short"; echo "commit=$full"; } >> "$GITHUB_OUTPUT"
+          { echo "short=$short"; echo "commit=$full"; echo "real=$real"; } >> "$GITHUB_OUTPUT"
 
   # The staged RPMs go to rpm/ of the channel through publish-rpms, as a release's do. They are already signed, so the
   # publish places them as they are and signs only the metadata; the tree is compared with the staged checksums before
@@ -553,6 +557,7 @@ jobs:
         env:
           VERSION: ${{ needs.find.outputs.version }}
           SHORT: ${{ needs.find.outputs.short }}
+          REAL: ${{ needs.find.outputs.real }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
           BASE_URL: ${{ inputs.base-url }}
@@ -569,7 +574,15 @@ jobs:
             rel=$(rpm -q --qf '%{RELEASE}' "$bin")
             repo=$(dnf repoquery --installed --qf '%{from_repo}' "$bin")
             echo "$bin $VERSION-$rel from $repo"
-            case $rel in *.git*".$SHORT"* | *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
+            if [ "$REAL" = true ]; then
+              # the real package a merge to devel staged: the version itself, a release with no snapshot stamp
+              ver=$(rpm -q --qf '%{VERSION}' "$bin")
+              if [ "$ver" != "$VERSION" ] || [ "${rel#*.git}" != "$rel" ]; then
+                echo "::error::$bin $ver-$rel is not the real $VERSION promoted"; exit 1
+              fi
+            else
+              case $rel in *.git*".$SHORT"* | *".git$SHORT"*) ;; *) echo "::error::$bin $VERSION-$rel is not the staged build of $SHORT"; exit 1 ;; esac
+            fi
             case $repo in openmixer-staging*) echo "::error::$bin came from the staging channel, not the channel root"; exit 1 ;; esac
           done
 
@@ -595,6 +608,7 @@ jobs:
         env:
           VERSION: ${{ needs.find.outputs.version }}
           SHORT: ${{ needs.find.outputs.short }}
+          REAL: ${{ needs.find.outputs.real }}
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
           URL: ${{ inputs.base-url }}/deb
@@ -605,15 +619,20 @@ jobs:
             ok=
             for try in $(seq 1 20); do
               apt-get update -qq || true
-              # the staged build of the commit, <version>+git<commit time>.<short>, never the newest
-              pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git" -v s="$SHORT" 'index($3, v) == 1 {r = substr($3, length(v) + 1); sub(/^[0-9]+\./, "", r); if (index(r, s) == 1) {print $3; exit}}')
+              if [ "$REAL" = true ]; then
+                # the real package a merge to devel staged: <version> or <version>-<revision>, never a +git or ~git build
+                pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION" '($3 == v || index($3, v "-") == 1) && $3 !~ /[+~]git/ {print $3; exit}')
+              else
+                # the staged build of the commit, <version>+git<commit time>.<short>, never the newest
+                pinned=$(apt-cache madison "$bin" | awk -v v="$VERSION+git" -v s="$SHORT" 'index($3, v) == 1 {r = substr($3, length(v) + 1); sub(/^[0-9]+\./, "", r); if (index(r, s) == 1) {print $3; exit}}')
+              fi
               if [ -n "$pinned" ] && apt-get install -y --no-install-recommends "$bin=$pinned"; then
                 dpkg-query -W -f='${Package} ${Version}\n' "$bin" | tee /dev/stderr
                 ok=1; break
               fi
-              echo "attempt $try: $bin $VERSION+git$SHORT is not installable yet"; sleep 30
+              echo "attempt $try: $bin ${pinned:-$VERSION} is not installable yet"; sleep 30
             done
-            [ -n "$ok" ] || { echo "::error::$bin $VERSION+git$SHORT does not install from $URL in a clean debian $SUITE"; exit 1; }
+            [ -n "$ok" ] || { echo "::error::$bin $VERSION ($([ "$REAL" = true ] && echo real || echo "+git$SHORT")) does not install from $URL in a clean debian $SUITE"; exit 1; }
           done
 
   # Last, and only after the channel serves the bytes and they install: the GitHub release of the tag that started
