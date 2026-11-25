@@ -246,10 +246,12 @@ cat > "$t/pbin/apt-get" <<'STUB'
 echo "$*" >> "$STATE/apt.log"
 STUB
 printf '#!/bin/bash\nexit 0\n' > "$t/pbin/sleep"
+# shellcheck disable=SC2016 # the stub's own text
 printf '#!/bin/bash\necho "$4 installed"\n' > "$t/pbin/dpkg-query"
 chmod +x "$t/pbin/"*
 python3 -I "$step" "$root" "$pw" verify-rpm "name=Install the promoted version from the channel" "$t/vrpm.sh"
 python3 -I "$step" "$root" "$pw" verify-deb "name=Install the promoted version from the channel" "$t/vdeb.sh"
+# shellcheck disable=SC2016 # an expression of the workflow, literal
 grep -qF 'REAL: ${{ needs.find.outputs.real }}' <(python3 -I -c 'import sys, yaml; j = yaml.safe_load(open(sys.argv[1]))["jobs"]
 for n in ("verify-rpm", "verify-deb"):
     for s in j[n]["steps"]:
@@ -414,7 +416,7 @@ find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built,
     (cd "$r" && export PATH=$t/pbin:$PATH GITHUB_OUTPUT=$o RUNNER_TEMP=$t NAME=omx-a VERSION=1.2.0 RUN_COMMIT=$1 RPM=${2:-true} DEB=${3:-true} \
         CHANNEL=Open-Mixer/open-mixer.github.io DIR=$ch
      bash "$t/f-built.sh" || exit $?
-     built=$(outv commit "$o"); [ -n "$built" ] || exit 0; export RPMV= DEBV=
+     built=$(outv commit "$o"); [ -n "$built" ] || exit 0; export RPMV='' DEBV=''
      for k in rpm deb; do
         [ "$( [ "$k" = rpm ] && echo "${2:-true}" || echo "${3:-true}")" = true ] || continue
         python3 -I "$step" "$root" "$pw" find "id=${k}ver" "$t/f-$k.sh" kind=$k dir="$(outv tree "$o")"
@@ -438,7 +440,7 @@ grep -q 'staging/deb holds no record' "$t/f.out" || { cat "$t/f.out"; fail "the 
 find_real "$B" true false || { cat "$t/f.out"; fail "an rpm-only promotion was refused for the deb record"; }
 echo "$A" > "$ch/staging/deb/built/omx-a/1.2.0.commit"
 # the commit step promotes a real build only on the tie: collect.py's commit real with no tie is refused
-(cd "$r" && GITHUB_OUTPUT=$t/c-gh RPM_COMMIT=real DEB_COMMIT=real VERSION=1.2.0 RUN_COMMIT=$C DEFAULT_BRANCH=main TIED= bash "$t/f-commit.sh") > "$t/c.out" 2>&1 &&
+(cd "$r" && GITHUB_OUTPUT=$t/c-gh RPM_COMMIT=real DEB_COMMIT=real VERSION=1.2.0 RUN_COMMIT=$C DEFAULT_BRANCH=main TIED='' bash "$t/f-commit.sh") > "$t/c.out" 2>&1 &&
     { cat "$t/c.out"; fail "the commit step promoted a real build that no devel commit was tied to"; }
 (cd "$r" && GITHUB_OUTPUT=$t/c-gh RPM_COMMIT=real DEB_COMMIT=real VERSION=1.2.0 RUN_COMMIT=$B DEFAULT_BRANCH=main TIED=true bash "$t/f-commit.sh") > "$t/c.out" 2>&1 ||
     { cat "$t/c.out"; fail "the commit step refused a tied real build"; }

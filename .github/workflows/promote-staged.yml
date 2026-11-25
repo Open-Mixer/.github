@@ -25,6 +25,11 @@ name: Promote a staged version
 # The promoted packages keep the version string of the staged build (<release>.git<commit time>.<sha> and +git<commit time>.<sha>): the bytes
 # are the same, so the name is. The staged files stay under staging/ until the wave's purge (purge-staging.yml).
 #
+# The REAL package a merge to devel staged (<version>-<release>, <version>[-<revision>]: .github#289) names no commit. The
+# merge recorded the commit that built it (staging/<kind>/built/<name>/<version>.commit), and it is promoted only from
+# that commit or one descending from it that carries the same version; the install checks then require that real
+# version (docs/release-operations.md, "A merge to devel publishes the real package to staging").
+#
 # The caller, in the repository that owns the version:
 #
 #   on:
@@ -184,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -d "$DIR/.git" ] || git clone --quiet --depth 1 "https://github.com/$CHANNEL" "$DIR"
-          built= have= lack=
+          built='' have='' lack=''
           for kind in rpm deb; do
             on=$RPM; [ "$kind" = rpm ] || on=$DEB
             [ "$on" = true ] || continue
