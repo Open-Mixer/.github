@@ -231,7 +231,7 @@ jobs:
       first-arch: ${{ steps.matrix.outputs.first-arch }}
       count: ${{ steps.matrix.outputs.count }}
       # the version a merge to devel publishes, empty for every other run (.github#289)
-      devel-version: ${{ steps.devel.outputs.version }}
+      devel-version: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && steps.devel.outputs.version || '' }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
@@ -322,10 +322,11 @@ jobs:
           [ "$got" = "$WANT" ] || { echo "::error::the checkout is $got but the verified tag resolved to $WANT"; exit 1; }
 
       # a merge to devel publishes the real package, built once: the version it carries must be published nowhere yet,
-      # neither in the channel root nor in staging (.github#289)
-      - name: The version a merge to devel publishes
+      # neither in the channel root nor in staging; a staged dispatch snapshots it, and a version published as a real build
+      # is no longer snapshotted (.github#289)
+      - name: The version a merge to devel publishes, or a staged run snapshots
         id: devel
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/devel')
+        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))
         # dpkg-parsechangelog reads it, without the Debian revision: the version a tag and a file name carry (tree-version.sh)
         uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
         with:
@@ -342,7 +343,9 @@ jobs:
           republish: ${{ inputs.republish }}
           catch-up: ${{ inputs.catch-up }}
           kind: deb
-          devel-version: ${{ steps.devel.outputs.version }}
+          devel-version: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && steps.devel.outputs.version || '' }}
+          # a dispatched staged run: refused when the channel root or staging holds a real build of its version
+          staged-version: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/devel') && inputs.staged && steps.devel.outputs.version || '' }}
           # the already-served check reads the releases this run publishes into, no others
           releases: ${{ steps.matrix.outputs.releases }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}

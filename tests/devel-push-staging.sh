@@ -70,7 +70,8 @@ for wf in sys.argv[1:]:
                 "inputs.target-repo": "Open-Mixer/open-mixer.github.io", "github.run_id": "4242", "inputs.matrix": "", "inputs.stage": "all",
                 "inputs.bootstrap-only": False, "inputs.verify-install": True,
                 "needs.preflight.result": "success", "needs.preflight.outputs.count": "1", "needs.build.result": "success",
-                "needs.publish.result": "success", "needs.publish-release.result": "skipped"}
+                "needs.publish.result": "success", "needs.publish-release.result": "skipped",
+                "steps.devel.outputs.version": "1.2.0" if run in ("a push to devel", "a staged dispatch") else ""}
 
     def step(job, pred):
         hits = [s for s in jobs[job]["steps"] if pred(s)]
@@ -87,14 +88,12 @@ for wf in sys.argv[1:]:
     if None in (devel, pre, mtx, build) or len(staging_pub) != 1:
         fails.append(f"{wf}: the steps under test are not all found (publish-{kind}s with staging: {len(staging_pub)})"); continue
     staging_pub = staging_pub[0]
-    if str(pre["with"].get("devel-version")) != "${{ steps.devel.outputs.version }}":
-        fails.append(f"{wf}: release-preflight's devel-version is {pre['with'].get('devel-version')}, not the version the devel step read")
     want = {  # run: devel step, preflight publish, require-tag, real, matrix full, staging publish, publish job, real channel
         "a push to devel":           (True,  True,  False, True,  True,  True,  True,  False),
         "a pull request into devel": (False, False, True,  False, False, False, True,  False),
         "a push of a tag":           (False, True,  True,  False, False, False, False, True),
         "a push to main":            (False, False, True,  False, False, False, True,  False),
-        "a staged dispatch":         (False, True,  False, False, False, True,  True,  False),
+        "a staged dispatch":         (True,  True,  False, False, False, True,  True,  False),
     }
     for run, w in want.items():
         c = ctx(run)
@@ -106,6 +105,13 @@ for wf in sys.argv[1:]:
                  "publishes to staging", "the publish job runs", "the real channel's publish runs")
         for n, g, x in zip(names, got, w):
             if g != x: fails.append(f"{wf}: {run}: {n}={g}, want {x}")
+        # the version the devel step read goes to the preflight as devel-version for a merge to devel, as staged-version
+        # (a real build of it refuses the snapshot, F3) for a staged dispatch, and as neither for any other run
+        dv, sv = (str(ev(pre["with"].get(k, "''"), c)) for k in ("devel-version", "staged-version"))
+        jdv = str(ev(jobs["preflight"]["outputs"]["devel-version"], c))
+        want_v = {"a push to devel": ("1.2.0", ""), "a staged dispatch": ("", "1.2.0")}.get(run, ("", ""))
+        if (dv, sv) != want_v or jdv != want_v[0]:
+            fails.append(f"{wf}: {run}: devel-version={dv!r} (job output {jdv!r}), staged-version={sv!r}, want {want_v}")
         # F2: a merge to devel refuses a file the channel holds, and publishes in a group of its repository and kind
         refuse = truthy(ev(staging_pub["with"].get("refuse-served", "false"), c))
         if refuse != (run == "a push to devel"):

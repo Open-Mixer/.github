@@ -193,6 +193,11 @@ files. The devel build is the real package at its real version, never a pre-rele
   refuses it by name when the channel root or staging holds it already: `release-preflight`'s `devel-version` runs
   `already-served.sh` with `STAGING=true`. So a merge to devel that changes a package carries its version bump, and a
   fix after a published build is a new version. No published version is rebuilt, and no epoch is used.
+- **A snapshot of a published version is retired.** A dispatched staged run (`staged: true`, not a merge to devel)
+  still builds a `+git` snapshot of the tree's version, but the preflight reads that version (`staged-version`) and
+  refuses it when the channel root or staging holds a REAL build of it (`already-served.sh` with `STAGING=true
+  REAL_ONLY=true`: a name carrying `.git`, `+git` or `~git` is a snapshot and does not count), naming the file. Bump
+  the version on devel instead.
 - **The install check** takes the staged package of exactly that version.
 - **A file the channel holds is refused, never kept.** The staging publish of a merge to devel passes `refuse-served`
   to `publish-rpms` and `publish-debs` (`REFUSE_SERVED=true` for `publish-tree.sh`): every package whose file the tree

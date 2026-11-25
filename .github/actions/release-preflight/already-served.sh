@@ -12,6 +12,9 @@
 # version does not refuse its fc45 publish. A file outside those trees is read for every release; empty reads all.
 # STAGING=true reads staging/rpm and staging/deb as well: a merge to devel builds the real package once and publishes it
 # to staging, so a version staged before is published already and is never built again (.github#289).
+# REAL_ONLY=true counts real builds alone: a file whose name carries a snapshot stamp (.git, +git, ~git) is skipped. A
+# dispatched staged run builds a snapshot of the tree's version, and a snapshot of a version published as a real build is
+# retired (.github#289): the version is bumped on devel instead.
 set -uo pipefail
 tag=$1; shift
 ver=${tag#v}
@@ -19,6 +22,9 @@ ver=${tag#v}
 found=
 while IFS= read -r path; do
   base=${path##*/} full=$path
+  if [ "${REAL_ONLY:-false}" = true ]; then
+    case $base in *.git*|*+git*|*~git*) continue ;; esac
+  fi
   if [ "${STAGING:-false}" = true ]; then path=${path#staging/}; fi
   case $path in
     rpm/*.rpm) [ "${KIND:-}" != deb ] || continue ;;
@@ -41,7 +47,11 @@ while IFS= read -r path; do
 done
 if [ -n "$found" ]; then
   for f in $found; do echo "::error::$tag is already served: $f (the channel holds this version; bump the version, or set republish for a rerun that must finish a partial publish)"; done
-  [ "${STAGING:-false}" != true ] || echo "::error::a merge to devel builds the real package once: a change after a published build is a new version, never the same one again (no rebuild of a published version, no epoch)"
+  if [ "${REAL_ONLY:-false}" = true ]; then
+    echo "::error::$tag is published as a real build: a snapshot of a published version is retired: bump the version on devel"
+  elif [ "${STAGING:-false}" = true ]; then
+    echo "::error::a merge to devel builds the real package once: a change after a published build is a new version, never the same one again (no rebuild of a published version, no epoch)"
+  fi
   exit 1
 fi
 echo "$tag is not served yet"

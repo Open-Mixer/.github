@@ -45,7 +45,10 @@ cat > "$tmp/tree.json" <<'J'
  {"path":"deb/debian/trixie/amd64/libbaz-dev_3.1.0_amd64.deb"},
  {"path":"rpm/fedora/44/x86_64/repodata/repomd.xml"},
  {"path":"rpm/fedora/44/noarch/qux-devel-0.5.0-1.fc44.noarch.rpm"},
- {"path":"rpm/fedora/45/x86_64/foo-devel-1.4.0-1.fc45.x86_64.rpm"}]}
+ {"path":"rpm/fedora/45/x86_64/foo-devel-1.4.0-1.fc45.x86_64.rpm"},
+ {"path":"staging/rpm/fedora/45/x86_64/foo-1.5.0-1.fc45.x86_64.rpm"},
+ {"path":"staging/rpm/fedora/45/x86_64/foo-1.6.0-1.git1700000000.0123abc.fc45.x86_64.rpm"},
+ {"path":"staging/deb/debian/trixie/amd64/foo_1.6.0+git1700000000.0123abc_amd64.deb"}]}
 J
 export TREE_DIR=$tmp
 run() { # run <publish> <ref-type> <tag> <packages> [republish] [kind] [releases]
@@ -96,6 +99,25 @@ grep -q 'a merge to devel never catches up' "$tmp/out" || { cat "$tmp/out"; fail
 rundevel 1.2.9 true && { cat "$tmp/out"; fail "a merge to devel of a new version passed with catch-up set"; }
 grep -q 'catch-up of' "$tmp/out" && { cat "$tmp/out"; fail "a merge to devel took the catch-up branch"; }
 echo "ok   a merge to devel never takes catch-up, and its version check runs first"
+# a dispatched staged run (staged-version, not a merge to devel): a snapshot of a version the channel root or staging
+# holds as a REAL build is refused, naming the file; one whose only builds are snapshots, or that nothing holds, passes (F3)
+runstaged() { # runstaged <version> [kind] [releases]
+  PATH=$tmp/bin:$PATH PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/feature \
+    REF_TYPE=branch REQUIRE_TAG=false TAG=feature PACKAGES=foo REPUBLISH=false KIND=${2:-rpm} RELEASES=${3:-} CATCH_UP=false \
+    STAGED_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1
+}
+runstaged 1.5.0 && { cat "$tmp/out"; fail "a staged snapshot of a version staging holds as a real build passed"; }
+grep -q 'staging/rpm/fedora/45/x86_64/foo-1.5.0-1.fc45.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "the staged refusal does not name the real staged file"; }
+grep -q 'a snapshot of a published version is retired: bump the version on devel' "$tmp/out" || { cat "$tmp/out"; fail "the staged refusal does not say to bump the version on devel"; }
+runstaged 1.2.3 && { cat "$tmp/out"; fail "a staged snapshot of a version the channel root holds passed"; }
+grep -q 'rpm/fedora/44/x86_64/foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "the staged refusal does not name the channel root's file"; }
+runstaged 1.6.0 || { cat "$tmp/out"; fail "a staged snapshot was refused by an earlier snapshot of its version"; }
+runstaged 1.6.0 deb || { cat "$tmp/out"; fail "a staged deb snapshot was refused by an earlier +git snapshot of its version"; }
+runstaged 1.7.0 || { cat "$tmp/out"; fail "a staged snapshot of a version nothing holds was refused"; }
+mkdir -p "$tmp/trunc"; jq '.truncated = true' "$tmp/tree.json" > "$tmp/trunc/tree.json"
+TREE_DIR=$tmp/trunc runstaged 1.7.0 && { cat "$tmp/out"; fail "a staged run passed over a truncated tree"; }
+grep -q 'is truncated: cannot prove v1.7.0 unpublished' "$tmp/out" || { cat "$tmp/out"; fail "a truncated tree is not refused by name for a staged run"; }
+echo "ok   a staged snapshot of a version published as a real build is refused by name; snapshots alone do not refuse"
 # sabotage: already-served.sh without the per-release filter refuses the fc45 release again
 mkdir -p "$tmp/sab"
 sed '/^  if \[ -n "\${RELEASES:-}" \]; then$/,/^  fi$/d' "$act/already-served.sh" > "$tmp/sab/already-served.sh"
@@ -104,4 +126,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 28 arms"
+echo "ok   release-preflight-served: 34 arms"
