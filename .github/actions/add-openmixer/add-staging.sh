@@ -4,7 +4,7 @@
 # Add the staging channel of the release wave beside the real one, at a higher priority, on a Fedora or Debian machine
 # that already has the real channel (openmixer-release installed: the key is the one it installs). Runs as root.
 #
-#   BASE_URL=https://www.openmixer.org [SUITE=<debian release>] [STAGING_BOOTSTRAP=true] add-staging.sh
+#   BASE_URL=https://www.openmixer.org [SUITE=<debian release>] [STAGING_BOOTSTRAP=true] [STAGING_FOR_DEVEL=true] add-staging.sh
 #
 # dnf: /etc/yum.repos.d/openmixer-staging.repo, ids openmixer-staging and openmixer-staging-noarch, priority=10 (the
 # real repositories keep dnf's default, 99). apt: /etc/apt/sources.list.d/openmixer-staging.sources and the pin
@@ -22,6 +22,11 @@
 # anything was ever published to it: when this machine's staging index AND the staging key file both answer 404,
 # nothing is added, the script says so and exits 0. Anything else still fails: a staging tree that exists without this
 # release's index fails here, any status but 200 or 404 fails here, and a bad signature fails dnf or apt, as before.
+#
+# STAGING_FOR_DEVEL=true (add-openmixer on a pull request into devel) refuses an absent staging channel by name before
+# anything else, STAGING_BOOTSTRAP or not: such a run builds against staging and never falls back to the real channel.
+# Whether staging is served is judged before the real channel's file is looked for, so that refusal (and the
+# bootstrap skip) never depend on the machine; adding staging still requires the real channel beside it.
 set -euo pipefail
 src=$(dirname "$(readlink -f "$0")")/../../../packaging/staging
 base=${BASE_URL:-https://www.openmixer.org}
@@ -50,6 +55,10 @@ skip_if_never_published() {
     shift 2
     for url in "$@"; do served "$url" || absent+=("$url"); done
     [ "${#absent[@]}" -gt 0 ] || return 0
+    # a pull request into devel builds against staging and nothing else (devel -> staging -> prod, .github#270)
+    if [ "${STAGING_FOR_DEVEL:-false}" = true ]; then
+        die "a pull request into devel builds against the staging channel, and $tree serves no staging repository (${absent[*]} answered 404): it never falls back to the real channel"
+    fi
     if [ "${STAGING_BOOTSTRAP:-false}" != true ]; then
         die "${absent[*]} answered 404: the staging channel $tree serves no index for this machine. A staged build never falls back to the real channel; only the first layer of a wave, before anything was staged, passes staging-bootstrap: true"
     fi
@@ -60,22 +69,22 @@ skip_if_never_published() {
     die "${absent[*]} answered 404, but the staging channel $tree is published: it is not added half-way, staging-bootstrap or not"
 }
 if command -v dnf >/dev/null; then
-    [ -f /etc/yum.repos.d/openmixer.repo ] || die "the real channel is not added (/etc/yum.repos.d/openmixer.repo): staging goes beside it, never alone"
     # shellcheck disable=SC1091
     releasever=$(. /etc/os-release && echo "${VERSION_ID:-}")
     [ -n "$releasever" ] || die "/etc/os-release has no VERSION_ID: the Fedora release of the staging index is unknown"
     skip_if_never_published "$base/staging/rpm" RPM-GPG-KEY-openmixer \
         "$base/staging/rpm/fedora/$releasever/$(uname -m)/repodata/repomd.xml" "$base/staging/rpm/fedora/$releasever/noarch/repodata/repomd.xml"
+    [ -f /etc/yum.repos.d/openmixer.repo ] || die "the real channel is not added (/etc/yum.repos.d/openmixer.repo): staging goes beside it, never alone"
     sed "s|https://www.openmixer.org/|$base/|" "$src/openmixer-staging.repo" > /etc/yum.repos.d/openmixer-staging.repo
     chmod 644 /etc/yum.repos.d/openmixer-staging.repo
     echo "added $base/staging/rpm (openmixer-staging, openmixer-staging-noarch, priority 10)"
 else
-    [ -f /etc/apt/sources.list.d/openmixer.sources ] || die "the real channel is not added (/etc/apt/sources.list.d/openmixer.sources): staging goes beside it, never alone"
     suite=${SUITE:-}
     # shellcheck disable=SC1091
     [ -n "$suite" ] || suite=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
     [ -n "$suite" ] || die "no Debian release named, and /etc/os-release has no VERSION_CODENAME"
     skip_if_never_published "$base/staging/deb" openmixer.asc "$base/staging/deb/debian/$suite/InRelease"
+    [ -f /etc/apt/sources.list.d/openmixer.sources ] || die "the real channel is not added (/etc/apt/sources.list.d/openmixer.sources): staging goes beside it, never alone"
     sed -e "s|@SUITE@|$suite|" -e "s|https://www.openmixer.org/|$base/|" "$src/openmixer-staging.sources.in" \
         > /etc/apt/sources.list.d/openmixer-staging.sources
     install -D -m 644 "$src/openmixer-staging.pref" /etc/apt/preferences.d/openmixer-staging.pref

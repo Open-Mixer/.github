@@ -63,6 +63,7 @@ jobs:
       - run: tests/wave-deps.sh
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
+      - run: tests/devel-pr-staging.sh
       - run: tests/add-openmixer-release-package.sh
       - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
@@ -321,6 +322,19 @@ jobs:
       - name: openmixer-release built here, a staged package on a signed staging tree, the source off, on, off
         shell: bash
         run: tests/testing-source-round-trip.sh
+
+  devel-pr-staged-install:
+    name: a pull request into devel installs the staged lower package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:45
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c dnf5-plugins findutils
+      - uses: actions/checkout@v4
+      - name: builddep takes the staging channel's package, and an absent staging channel is refused
+        shell: bash
+        run: tests/devel-pr-staged-install.sh
 
   staging-installability:
     name: channel-installability judges the real channel alone
