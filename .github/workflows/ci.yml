@@ -323,6 +323,19 @@ jobs:
         shell: bash
         run: tests/testing-source-round-trip.sh
 
+  devel-pr-staged-install:
+    name: a pull request into devel installs the staged lower package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:45
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c dnf5-plugins findutils
+      - uses: actions/checkout@v4
+      - name: builddep takes the staging channel's package, and an absent staging channel is refused
+        shell: bash
+        run: tests/devel-pr-staged-install.sh
+
   staging-installability:
     name: channel-installability judges the real channel alone
     runs-on: ubuntu-latest
