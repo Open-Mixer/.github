@@ -174,6 +174,35 @@ and its staging publish takes every architecture of the releases it built (`stag
 package of a cell outside the run's set, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
 and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
+### A merge to devel publishes the real package to staging
+
+**RULED (owner, 2026-11-25, .github#289):** development happens in devel. A merge to devel builds the RPMs and DEBs once
+and publishes them to the staging channel at once, where the devel box (omx) and the staging box (omx2) install them.
+Staging keeps testing, devel starts the next cycle at once, and promotion to the channel root later copies the same
+files. The devel build is the real package at its real version, never a pre-release.
+
+- **The trigger.** The caller's release workflow runs on `push: {branches: [devel]}` beside its tags. trigger-gate
+  lets a push limited to tags, to `devel`, or to both through, and refuses any other branch filter.
+- **What the build does.** build-rpm.yml and build-deb.yml treat a push to `refs/heads/devel` as a staged run. It
+  builds against the staging channel and publishes to it, never to the channel root. It builds the full matrix, because
+  promotion copies this one build to every cell.
+- **The version.** It builds the tree's own version with no tag and no snapshot suffix: `build-rpm.sh -r` and
+  `build-deb.sh -r` give `<name>-<version>-<release>.fcNN` and `<name>_<version>`, the NEVRA a release of that version
+  has. A dispatched staged run keeps its `+git` snapshot.
+- **A version is built once.** The preflight reads the version (spec `Version:`, or the top of `debian/changelog`) and
+  refuses it by name when the channel root or staging holds it already: `release-preflight`'s `devel-version` runs
+  `already-served.sh` with `STAGING=true`. So a merge to devel that changes a package carries its version bump, and a
+  fix after a published build is a new version. No published version is rebuilt, and no epoch is used.
+- **The install check** takes the staged package of exactly that version.
+- **Promotion copies it.** `promote-staged` finds the real package by its version alone: `collect.py` reports it as
+  commit `real`, and the promotion's own commit stands for it. Promotion copies its bytes, checked checksum for
+  checksum.
+- **Tests.**
+  - `tests/devel-push-staging.sh`: the workflow conditions for each kind of run, the refusal, the promotion's
+    checksums and trigger-gate.
+  - `tests/build-devel-real.sh`: the real NEVRA (Fedora container).
+  - `tests/devel-pr-staged-install.sh`: the next layer takes the staged build.
+
 ### Where it is
 
 The staging channel is a second dnf tree and a second apt tree in the same channel repository

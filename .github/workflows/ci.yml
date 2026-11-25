@@ -64,6 +64,7 @@ jobs:
       - run: tests/wave-deps-released.sh
       - run: tests/staging-channel.sh
       - run: tests/devel-pr-staging.sh
+      - run: tests/devel-push-staging.sh
       - run: tests/add-openmixer-release-package.sh
       - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
@@ -322,6 +323,18 @@ jobs:
       - name: openmixer-release built here, a staged package on a signed staging tree, the source off, on, off
         shell: bash
         run: tests/testing-source-round-trip.sh
+
+  build-devel-real:
+    name: a merge to devel builds the real NEVRA (build-rpm.sh -r)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: fedora:45
+    steps:
+      - run: dnf install -y --setopt=install_weak_deps=False rpm-build git python3
+      - uses: actions/checkout@v4
+      - shell: bash
+        run: tests/build-devel-real.sh
 
   devel-pr-staged-install:
     name: a pull request into devel installs the staged lower package
