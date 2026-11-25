@@ -233,6 +233,19 @@ jobs:
           kind: deb
           dir: ${{ steps.built.outputs.tree }}
 
+      # the bump-exempt the promotion is judged by: the one its caller's workflow had at the recorded build, never one the
+      # promoted commit sets (.github#294)
+      - id: exemptbase
+        if: steps.built.outputs.commit != ''
+        uses: Open-Mixer/.github/.github/actions/base-exempt@openmixer-v1
+        with:
+          commit: ${{ steps.built.outputs.commit }}
+          caller-workflow: ${{ github.workflow_ref }}
+          called: promote-staged.yml
+          exempt: ${{ inputs.bump-exempt }}
+          base-label: the build
+          judged-label: the promoted commit
+
       # what changed from the build to the promotion's commit that can change a package (the one definition: package-paths)
       - id: paths
         if: steps.built.outputs.commit != ''
@@ -240,7 +253,7 @@ jobs:
         with:
           base: ${{ steps.built.outputs.commit }}
           head: ${{ steps.built.outputs.full }}
-          exempt: ${{ inputs.bump-exempt }}
+          exempt: ${{ steps.exemptbase.outputs.value }}
 
       # the tie: the promotion's commit carries the version, is the devel commit that built it or descends from it, and
       # changes no package since it
@@ -256,6 +269,7 @@ jobs:
           DEBV: ${{ steps.debver.outputs.version }}
           COUNT: ${{ steps.paths.outputs.count }}
           PATHS: ${{ steps.paths.outputs.paths }}
+          DIFFERS: ${{ steps.exemptbase.outputs.differs }}
         run: |
           set -euo pipefail
           for v in "rpm:$RPMV" "deb:$DEBV"; do
@@ -272,6 +286,7 @@ jobs:
             while IFS= read -r p; do
               [ -z "$p" ] || echo "::error::$p changes the package since $BUILT, the devel commit that built the real $NAME $VERSION: $FULL is not the build being promoted"
             done <<< "$PATHS"
+            [ -z "${DIFFERS:-}" ] || echo "::error::$DIFFERS: judged by the value at the build, so the changes above are packaged"
             exit 1
           fi
           echo "$FULL is $BUILT or descends from it, at $VERSION, and changes no package since"

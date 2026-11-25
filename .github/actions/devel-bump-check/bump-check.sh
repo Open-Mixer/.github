@@ -8,8 +8,8 @@
 # judged by ../package-paths/served-change.sh, as the merge to devel is (release-preflight): against BUILT, the commit
 # that built it (staging/<kind>/built/<name>/<version>.commit, read by the action), or, with no record, the pull
 # request's own change from CHANGE_BASE (merge-base of its base and head). Every path that can change a package is
-# refused by name; exempt paths alone pass. A version published nowhere passes. BASE_EXEMPT, when set, is the bump-exempt
-# at the merge base and replaces EXEMPT: a pull request is never judged by a value it changes itself (.github#292).
+# refused by name; exempt paths alone pass. A version published nowhere passes. EXEMPT is the bump-exempt at the merge base
+# (the action, base-exempt.sh), and JUDGED names both values when the head's differs (.github#292).
 set -euo pipefail
 usage='usage: bump-check.sh <kind> <version> <name> <package>...'
 kind=${1:?$usage}; version=${2:?$usage}; name=${3:?$usage}
@@ -23,18 +23,10 @@ fi
 served=$(printf '%s\n' "$out" | sed -n 's/^::error::v[^ ]* is already served: \([^ ]*\).*/\1/p' | paste -sd' ')
 [ -n "$served" ] || { printf '%s\n' "$out"; exit 1; }
 echo "::notice::v$version is published already ($served)"
-# the pull request is judged by the bump-exempt at its merge base (BASE_EXEMPT, read by the action from the caller's
-# workflow file there), never by a value it changes itself (.github#292)
-judged=''
-if [ -n "${BASE_EXEMPT+set}" ]; then
-    read -r -a h <<< "${EXEMPT:-}"; read -r -a b <<< "$BASE_EXEMPT"
-    head_exempt=${h[*]+"${h[*]}"} base_exempt=${b[*]+"${b[*]}"}
-    if [ "$head_exempt" != "$base_exempt" ]; then
-        judged="bump-exempt is '$base_exempt' at the merge base and '$head_exempt' at the head"
-        echo "::notice::$judged: this pull request is judged by the base value; a changed bump-exempt takes effect once it is on devel"
-    fi
-    export EXEMPT=$base_exempt
-fi
+# the pull request is judged by the bump-exempt at its merge base: the action sets EXEMPT to it, and JUDGED names both
+# values when the head's differs (base-exempt.sh, .github#292)
+judged=${JUDGED:-}
+[ -z "$judged" ] || echo "::notice::$judged: this pull request is judged by the base value; a changed bump-exempt takes effect once it is on devel"
 "$here/../package-paths/served-change.sh" "$version" "staging/$kind/built/$name/$version.commit" "${BUILT:-}" "${CHANGE_BASE:-}" \
     "this pull request (merge-base..head)" || {
     echo "::error::v$version is published already ($served): a change to the package needs its version bump"

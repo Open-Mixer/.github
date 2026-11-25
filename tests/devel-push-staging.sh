@@ -390,6 +390,8 @@ for kind in ("rpm", "deb"):
     st = [x for x in yaml.safe_load(open(f"{sys.argv[1]}/.github/workflows/build-{kind}.yml"))["jobs"]["preflight"]["steps"]
           if "/actions/devel-bump-check@" in str(x.get("uses", ""))][0]
     assert st["with"].get("caller-workflow") == "${{ github.workflow_ref }}", kind
+    pre = [x for x in yaml.safe_load(open(f"{sys.argv[1]}/.github/workflows/build-{kind}.yml"))["jobs"]["preflight"]["steps"] if x.get("id") == "preflight"][0]
+    assert pre["with"].get("caller-workflow") == "${{ github.workflow_ref }}", f"{kind} preflight (G1a)"
 PY2
 echo "a pull request is judged by the bump-exempt at its merge base; widening it alone passes, and the wider value holds once on the base: ok"
 echo "a pull request into devel changing a package at a published version is refused by name; .github/ alone, a repository's own exempt paths and a bump pass: ok"
@@ -461,12 +463,16 @@ pw=$root/.github/workflows/promote-staged.yml
 python3 -I "$step" "$root" "$pw" find id=built "$t/f-built.sh"
 python3 -I "$step" "$root" "$pw" find id=tie "$t/f-tie.sh"
 python3 -I "$step" "$root" "$pw" find id=commit "$t/f-commit.sh"
-python3 -I - "$pw" <<'PY2' || fail "promote-staged's paths step is not package-paths from the build to the promotion, with the caller's bump-exempt"
+python3 -I - "$pw" <<'PY2' || fail "promote-staged's paths step is not package-paths from the build to the promotion, with the bump-exempt the caller had at the build"
 import sys, yaml
 steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["find"]["steps"]
 p = [s for s in steps if s.get("id") == "paths"][0]
 assert "/actions/package-paths@" in p["uses"]
-assert p["with"] == {"base": "${{ steps.built.outputs.commit }}", "head": "${{ steps.built.outputs.full }}", "exempt": "${{ inputs.bump-exempt }}"}, p["with"]
+assert p["with"] == {"base": "${{ steps.built.outputs.commit }}", "head": "${{ steps.built.outputs.full }}", "exempt": "${{ steps.exemptbase.outputs.value }}"}, p["with"]
+eb = [s for s in steps if s.get("id") == "exemptbase"][0]
+assert "/actions/base-exempt@" in eb["uses"] and eb["with"]["commit"] == "${{ steps.built.outputs.commit }}" \
+    and eb["with"]["caller-workflow"] == "${{ github.workflow_ref }}" and eb["with"]["called"] == "promote-staged.yml" \
+    and eb["with"]["exempt"] == "${{ inputs.bump-exempt }}", eb["with"]
 tie = [s for s in steps if s.get("id") == "tie"][0]
 assert tie["env"]["COUNT"] == "${{ steps.paths.outputs.count }}" and tie["env"]["PATHS"] == "${{ steps.paths.outputs.paths }}"
 PY2
@@ -485,10 +491,19 @@ find_real() { # find_real <promotion commit> [rpm] [deb] -> status of the built,
         export "${k^^}V=$(outv version "$t/f-$k-out")"
      done
      full=$(outv full "$o")
-     python3 -I "$step" "$root" "$pw" find id=paths "$t/f-paths.sh" base="$built" head="$full" exempt="${EXTRA_EXEMPT:-}"
+     # the bump-exempt the promotion is judged by: its caller's at the build (G1a); a workflow without the step judges by
+     # the caller's value as it is
+     ex=${EXTRA_EXEMPT:-}; differs=''
+     if grep -q '^      - id: exemptbase$' "$pw"; then
+         python3 -I "$step" "$root" "$pw" find id=exemptbase "$t/f-eb.sh" commit="$built" caller-workflow="${PROMO_CALLER:-}" \
+            called=promote-staged.yml exempt="$ex" base-label="the build" judged-label="the promoted commit" || exit $?
+         : > "$t/f-eb-out"; GITHUB_OUTPUT=$t/f-eb-out bash "$t/f-eb.sh" || exit $?
+         ex=$(outv value "$t/f-eb-out"); differs=$(outv differs "$t/f-eb-out")
+     fi
+     python3 -I "$step" "$root" "$pw" find id=paths "$t/f-paths.sh" base="$built" head="$full" exempt="$ex"
      : > "$t/f-paths-out"; GITHUB_OUTPUT=$t/f-paths-out bash "$t/f-paths.sh" || exit $?
      COUNT=$(outv count "$t/f-paths-out") PATHS=$(sed -n '/^paths<<PACKAGE_PATHS_EOF$/,/^PACKAGE_PATHS_EOF$/p' "$t/f-paths-out" | sed '1d;$d') \
-     BUILT=$built FULL=$full bash "$t/f-tie.sh") > "$t/f.out" 2>&1
+     DIFFERS=$differs BUILT=$built FULL=$full bash "$t/f-tie.sh") > "$t/f.out" 2>&1
 }
 command -v dpkg-parsechangelog >/dev/null || cp "$t/bin/dpkg-parsechangelog" "$t/pbin/"
 mv "$t/pbin/rpm" "$t/pbin/rpm.stub"   # the find job reads the spec with the real rpmspec
@@ -504,6 +519,15 @@ for p in src/a.c README.md; do grep -q "::error::$p changes the package since $A
 EXTRA_EXEMPT='src/** README.md' find_real "$E" || { cat "$t/f.out"; fail "the paths a repository exempts refused the promotion"; }
 EXTRA_EXEMPT="**" find_real "$B" && { cat "$t/f.out"; fail "the promotion took bump-exempt '**'"; }
 grep -qF "covers every path" "$t/f.out" || { cat "$t/f.out"; fail "the promotion's refusal of bump-exempt '**' is not named"; }
+# G1a: the promotion is judged by the bump-exempt its caller (promote.yml) had at the build, A, where it is absent ('').
+# F widens it to src/** and changes src/a.c after the build: refused, naming both values.
+gitr checkout -q -b widen-promo "$B"; mkdir -p "$r/.github/workflows" "$r/src"
+printf 'jobs:\n  promote:\n    uses: Open-Mixer/.github/.github/workflows/promote-staged.yml@openmixer-v1\n    with:\n      bump-exempt: %s\n' "'src/**'" > "$r/.github/workflows/promote.yml"
+echo f > "$r/src/a.c"; gitr add -A; gitr commit -q -m widen-promo; F=$(gitr rev-parse HEAD); gitr checkout -q main
+PROMO_CALLER=Open-Mixer/omx-a/.github/workflows/promote.yml@refs/tags/v1.2.0 EXTRA_EXEMPT='src/**' find_real "$F" &&
+    { cat "$t/f.out"; fail "a promotion whose tagged commit widened bump-exempt over src/a.c changed since the build passed"; }
+grep -qF "bump-exempt is '' at the build and 'src/**' at the promoted commit" "$t/f.out" || { cat "$t/f.out"; fail "the promotion refusal does not show both bump-exempt values"; }
+grep -qF "::error::src/a.c changes the package since $A" "$t/f.out" || { cat "$t/f.out"; fail "the promotion refusal does not name src/a.c"; }
 rm "$ch/staging/deb/built/omx-a/1.2.0.commit"
 find_real "$B" && { cat "$t/f.out"; fail "promote-staged took a real build whose deb half records no commit"; }
 grep -q 'staging/deb holds no record' "$t/f.out" || { cat "$t/f.out"; fail "the missing deb record is not refused by name"; }

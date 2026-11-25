@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: base-exempt
+description: The bump-exempt a change is judged by, its caller's at the base of the change (../devel-bump-check/base-exempt.sh)
+
+# For a workflow step; release-preflight and devel-bump-check run the script themselves (.github#292, #294).
+
+inputs:
+  commit:
+    description: "the base commit of the change (promote-staged: the recorded build)"
+    required: true
+  caller-workflow:
+    description: github.workflow_ref of the caller; empty judges by exempt as given
+    default: ''
+  called:
+    description: the reusable workflow whose with carries bump-exempt (promote-staged.yml)
+    required: true
+  exempt:
+    description: the bump-exempt at the commit being judged (the caller's input)
+    default: ''
+  base-label:
+    description: what the base commit is, for the messages
+    required: true
+  judged-label:
+    description: what the judged commit is, for the messages
+    required: true
+
+outputs:
+  value:
+    description: the bump-exempt to judge by
+    value: ${{ steps.base.outputs.value }}
+  differs:
+    description: a sentence naming both values when they differ, else empty
+    value: ${{ steps.base.outputs.differs }}
+
+runs:
+  using: composite
+  steps:
+    - id: base
+      shell: bash
+      env:
+        COMMIT: ${{ inputs.commit }}
+        CALLER: ${{ inputs.caller-workflow }}
+        CALLED: ${{ inputs.called }}
+        EXEMPT: ${{ inputs.exempt }}
+        BLABEL: ${{ inputs.base-label }}
+        JLABEL: ${{ inputs.judged-label }}
+      run: |
+        set -euo pipefail
+        if [ -z "$CALLER" ]; then
+          { echo "value=$EXEMPT"; echo "differs="; } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        got=$("$GITHUB_ACTION_PATH/../devel-bump-check/base-exempt.sh" "$COMMIT" "$CALLER" "$CALLED" "$EXEMPT" "$BLABEL" "$JLABEL") || { printf '%s\n' "$got"; exit 1; }
+        printf '%s\n' "$got" >> "$GITHUB_OUTPUT"
+        d=$(sed -n 's/^differs=//p' <<< "$got")
+        [ -z "$d" ] || echo "::notice::$d: judged by the value at $BLABEL"
