@@ -71,7 +71,8 @@ for wf in sys.argv[1:]:
                 "inputs.bootstrap-only": False, "inputs.verify-install": True,
                 "needs.preflight.result": "success", "needs.preflight.outputs.count": "1", "needs.build.result": "success",
                 "needs.publish.result": "success", "needs.publish-release.result": "skipped",
-                "steps.devel.outputs.version": "1.2.0" if run in ("a push to devel", "a staged dispatch") else ""}
+                "steps.devel.outputs.version": "1.2.0" if run != "a push to main" and run != "a push of a tag" else "",
+                "needs.preflight.outputs.skip": "false", "inputs.verify-install": True}
 
     def step(job, pred):
         hits = [s for s in jobs[job]["steps"] if pred(s)]
@@ -90,7 +91,7 @@ for wf in sys.argv[1:]:
     staging_pub = staging_pub[0]
     want = {  # run: devel step, preflight publish, require-tag, real, matrix full, staging publish, publish job, real channel
         "a push to devel":           (True,  True,  False, True,  True,  True,  True,  False),
-        "a pull request into devel": (False, False, True,  False, False, False, True,  False),
+        "a pull request into devel": (True,  False, True,  False, False, False, True,  False),
         "a push of a tag":           (False, True,  True,  False, False, False, False, True),
         "a push to main":            (False, False, True,  False, False, False, True,  False),
         "a staged dispatch":         (True,  True,  False, False, False, True,  True,  False),
@@ -112,6 +113,22 @@ for wf in sys.argv[1:]:
         want_v = {"a push to devel": ("1.2.0", ""), "a staged dispatch": ("", "1.2.0")}.get(run, ("", ""))
         if (dv, sv) != want_v or jdv != want_v[0]:
             fails.append(f"{wf}: {run}: devel-version={dv!r} (job output {jdv!r}), staged-version={sv!r}, want {want_v}")
+        # F5: a merge to devel of a published version (preflight skip=true) builds, publishes and verifies nothing; the
+        # pull request into devel runs the bump check, with the run's own token
+        if run == "a push to devel":
+            for skip, want_runs in (("true", False), ("false", True)):
+                c2 = dict(c, **{"needs.preflight.outputs.skip": skip})
+                for j in ("build", "publish", "verify"):
+                    if truthy(ev(jobs[j]["if"], c2)) != want_runs:
+                        fails.append(f"{wf}: a push to devel with skip={skip}: the {j} job runs={not want_runs}")
+        bump = [x for x in jobs["preflight"]["steps"] if str(x.get("uses", "")).startswith("Open-Mixer/.github/.github/actions/devel-bump-check@")]
+        if len(bump) != 1:
+            fails.append(f"{wf}: {len(bump)} devel-bump-check steps in the preflight job")
+        else:
+            if truthy(ev(bump[0]["if"], c)) != (run == "a pull request into devel"):
+                fails.append(f"{wf}: {run}: the bump check runs={not (run == 'a pull request into devel')}")
+            if bump[0]["with"].get("token") != "${{ github.token }}" or "PAGES_TOKEN" in str(bump[0]):
+                fails.append(f"{wf}: the bump check does not read the channel with github.token alone")
         # F2: a merge to devel refuses a file the channel holds, and publishes in a group of its repository and kind
         refuse = truthy(ev(staging_pub["with"].get("refuse-served", "false"), c))
         if refuse != (run == "a push to devel"):
@@ -286,6 +303,47 @@ for kind in ("rpm", "deb"):
     assert len(hits) == 1, kind
 PY2
 echo "a merge to devel refuses, naming each, the files the channel holds already, and places nothing: ok"
+
+# ---- 8. the pull request into devel is where a missing version bump is red (F5): the workflow's own bump step, run on a
+#      git tree whose head changes src/ while the channel holds its version, is refused naming the path and the served
+#      file; docs, *.md and .github/ alone pass; a new version passes; the channel is read with the run's github.token.
+g=$t/pr; rm -rf "$g"; mkdir -p "$g/src" "$g/docs"
+gitc() { git -C "$g" -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false "$@"; }
+echo a > "$g/src/a.c"; echo d > "$g/docs/x.md"; echo r > "$g/README.md"
+gitc init -q; gitc add -A; gitc commit -q -m base; base=$(gitc rev-parse HEAD)
+cat > "$t/pbin/curl" <<'STUB'
+#!/bin/bash
+out=
+for a in "$@"; do case $a in "Authorization: "*) echo "$a" >> "$STATE/auth" ;; esac; done
+while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; esac; shift; done
+printf '%s' '{"truncated":false,"tree":[{"path":"staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm"},{"path":"deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb"}]}' > "$out"
+printf 200
+STUB
+chmod +x "$t/pbin/curl"
+bumprun() { # bumprun <kind> <version> -> status; log in $t/bump.out
+    local exempt
+    rm -rf "$t/state"; mkdir -p "$t/state"
+    exempt=$(python3 -I -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print((d.get("on") or d[True])["workflow_call"]["inputs"]["bump-exempt"]["default"])' \
+        "$root/.github/workflows/build-$1.yml")
+    python3 -I "$step" "$root" "$root/.github/workflows/build-$1.yml" preflight uses=devel-bump-check "$t/bump-$1.sh" \
+        kind="$1" version="$2" base="$base" packages=omx-a releases= exempt="$exempt" target=Open-Mixer/open-mixer.github.io token=gh-run-token
+    (cd "$g" && STATE=$t/state PATH=$t/pbin:$PATH bash "$t/bump-$1.sh") > "$t/bump.out" 2>&1
+}
+echo b > "$g/docs/x.md"; echo r2 > "$g/README.md"; mkdir -p "$g/.github/workflows"; echo w > "$g/.github/workflows/ci.yml"
+gitc add -A; gitc commit -q -m docs
+for kind in rpm deb; do
+    bumprun "$kind" 1.2.0 || { cat "$t/bump.out"; fail "build-$kind.yml: a pull request into devel changing docs, *.md and .github/ alone was refused"; }
+done
+echo c > "$g/src/a.c"; gitc add -A; gitc commit -q -m code
+bumprun rpm 1.2.0 && { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel changing src/ at a version staging holds passed"; }
+grep -qF "::error::src/a.c changes the package, and the head's version v1.2.0 is published already (staging/rpm/fedora/45/x86_64/omx-a-1.2.0-1.fc45.x86_64.rpm)" "$t/bump.out" ||
+    { cat "$t/bump.out"; fail "build-rpm.yml: the bump refusal does not name the changed path and the served file"; }
+grep '::error::' "$t/bump.out" | grep -q 'docs/x.md\|README.md\|ci.yml' && { cat "$t/bump.out"; fail "the bump refusal names an exempt path"; }
+grep -qx 'Authorization: Bearer gh-run-token' "$t/state/auth" || { cat "$t/state/auth"; fail "the bump check did not read the channel with the run's github.token"; }
+bumprun deb 1.2.0 && { cat "$t/bump.out"; fail "build-deb.yml: a pull request into devel changing src/ at a version the channel root holds passed"; }
+grep -q 'deb/debian/trixie/amd64/omx-a_1.2.0_amd64.deb' "$t/bump.out" || { cat "$t/bump.out"; fail "build-deb.yml: the bump refusal does not name the served deb"; }
+bumprun rpm 1.3.0 || { cat "$t/bump.out"; fail "build-rpm.yml: a pull request into devel carrying a new version was refused"; }
+echo "a pull request into devel changing a package at a published version is refused by name; exempt paths and a bump pass: ok"
 
 # ---- 4. the trigger gate lets the release workflow run on a push to devel, and on no other branch
 bash "$root/.github/actions/trigger-gate/check.sh" --self-test >/dev/null || fail "trigger-gate's self-test"

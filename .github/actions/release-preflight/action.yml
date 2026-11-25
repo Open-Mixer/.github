@@ -49,8 +49,10 @@ inputs:
     description: >-
       The version a merge to devel publishes to the staging channel (its spec's Version, or its debian/changelog's), with
       require-tag false: the already-served check runs for v<devel-version> over the channel root AND staging, and a
-      version either holds is refused by name. A merge to devel builds the real package once; a change after a published
-      build is a new version (.github#289). Empty for every other run.
+      version either holds publishes nothing: the output skip is true, a ::notice:: names the served files, and the step
+      stays green (the pull request into devel is where a change without its version bump is red, devel-bump-check).
+      A merge to devel builds the real package once; a change after a published build is a new version (.github#289).
+      Empty for every other run.
     default: ''
   staged-version:
     description: >-
@@ -66,10 +68,16 @@ inputs:
   pages-token:
     default: ''
 
+outputs:
+  skip:
+    description: "'true' when a merge to devel carries a version published already: the caller builds and publishes nothing"
+    value: ${{ steps.check.outputs.skip || 'false' }}
+
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: check
+      shell: bash
       env:
         PUBLISH: ${{ inputs.publish }}
         TARGET: ${{ inputs.target }}
@@ -148,7 +156,13 @@ runs:
           [ -n "$PACKAGES" ] || { echo "::error::a merge to devel names no packages: cannot tell whether v$DEVEL_VERSION is published"; exit 1; }
           [ "$REPUBLISH" != true ] || { echo "::error::a merge to devel never republishes: a published version is never built again"; exit 1; }
           tree "v$DEVEL_VERSION" strict
-          STAGING=true "$GITHUB_ACTION_PATH/already-served.sh" "v$DEVEL_VERSION" $PACKAGES < /tmp/tree.paths
+          rc=0; STAGING=true ON_SERVED=notice "$GITHUB_ACTION_PATH/already-served.sh" "v$DEVEL_VERSION" $PACKAGES < /tmp/tree.paths || rc=$?
+          case $rc in
+            0) echo "skip=false" >> "$GITHUB_OUTPUT" ;;
+            3) echo "::notice::v$DEVEL_VERSION is published already: this merge to devel builds and publishes nothing. A change to a package carries its version bump, and the pull request into devel refuses one that does not"
+               echo "skip=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$rc" ;;
+          esac
         elif [ -n "${STAGED_VERSION:-}" ]; then
           [ -n "$PACKAGES" ] || { echo "::error::a staged run names no packages: cannot tell whether v$STAGED_VERSION is published"; exit 1; }
           tree "v$STAGED_VERSION" strict

@@ -15,6 +15,8 @@
 # REAL_ONLY=true counts real builds alone: a file whose name carries a snapshot stamp (.git, +git, ~git) is skipped. A
 # dispatched staged run builds a snapshot of the tree's version, and a snapshot of a version published as a real build is
 # retired (.github#289): the version is bumped on devel instead.
+# ON_SERVED=notice reports a served version as ::notice:: lines and exits 3, not 1: a merge to devel whose version is
+# published already publishes nothing and stays green (the pull request into devel is where a missing bump is red).
 set -uo pipefail
 tag=$1; shift
 ver=${tag#v}
@@ -45,6 +47,10 @@ while IFS= read -r path; do
     esac
   done
 done
+if [ -n "$found" ] && [ "${ON_SERVED:-error}" = notice ]; then
+  for f in $found; do echo "::notice::$tag is published already: $f"; done
+  exit 3
+fi
 if [ -n "$found" ]; then
   for f in $found; do echo "::error::$tag is already served: $f (the channel holds this version; bump the version, or set republish for a rerun that must finish a partial publish)"; done
   if [ "${REAL_ONLY:-false}" = true ]; then

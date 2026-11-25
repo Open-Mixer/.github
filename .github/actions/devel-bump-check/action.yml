@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: devel-bump-check
+description: Refuse a pull request into devel that changes a package while its version is published already
+
+# A merge to devel whose version the channel root or staging holds publishes nothing and stays green (.github#289), so the
+# "a changed package carries its version bump" check is here, red, on the pull request: bump-check.sh beside this file.
+# The channel is public: its tree is read with the run's own github.token, never PAGES_TOKEN.
+
+inputs:
+  kind:
+    description: "'rpm' or 'deb': the half of the channel read"
+    required: true
+  version:
+    description: the version at the head of the pull request (tree-version)
+    required: true
+  base:
+    description: the commit the pull request is based on; the paths changed since it are judged
+    required: true
+  packages:
+    description: the binary package names, space separated (globs allowed)
+    required: true
+  releases:
+    description: the Fedora releases or Debian suites the version is read for, space separated; empty reads every one
+    default: ''
+  exempt:
+    description: globs, space separated, of paths that change no package
+    default: 'docs/** **/*.md .github/**'
+  target:
+    description: the channel repository
+    default: Open-Mixer/open-mixer.github.io
+  token:
+    description: a token that reads the public channel; the caller passes github.token
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        VERSION: ${{ inputs.version }}
+        BASE: ${{ inputs.base }}
+        PACKAGES: ${{ inputs.packages }}
+        RELEASES: ${{ inputs.releases }}
+        EXEMPT: ${{ inputs.exempt }}
+        TARGET: ${{ inputs.target }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        changed=$(mktemp)
+        git -c safe.directory="$PWD" diff --name-only "$BASE...HEAD" > "$changed"
+        echo "the pull request changes $(wc -l < "$changed") path(s) since $BASE"
+        code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/bump-tree.json -w '%{http_code}' \
+          -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/$TARGET/git/trees/HEAD?recursive=1")
+        [ "$code" = 200 ] || { echo "::error::the tree of $TARGET answered HTTP $code; cannot tell whether v$VERSION is published"; exit 1; }
+        [ "$(jq -r '.truncated' /tmp/bump-tree.json)" != true ] || { echo "::error::the tree of $TARGET is truncated: cannot prove v$VERSION unpublished"; exit 1; }
+        jq -r '.tree[].path' /tmp/bump-tree.json > /tmp/bump-tree.paths
+        # shellcheck disable=SC2086 # PACKAGES is a list of names, split on purpose
+        "$GITHUB_ACTION_PATH/bump-check.sh" "$KIND" "$VERSION" "$changed" $PACKAGES < /tmp/bump-tree.paths

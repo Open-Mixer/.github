@@ -189,10 +189,18 @@ files. The devel build is the real package at its real version, never a pre-rele
 - **The version.** It builds the tree's own version with no tag and no snapshot suffix: `build-rpm.sh -r` and
   `build-deb.sh -r` give `<name>-<version>-<release>.fcNN` and `<name>_<version>`, the NEVRA a release of that version
   has. A dispatched staged run keeps its `+git` snapshot.
-- **A version is built once.** The preflight reads the version (spec `Version:`, or the top of `debian/changelog`) and
-  refuses it by name when the channel root or staging holds it already: `release-preflight`'s `devel-version` runs
-  `already-served.sh` with `STAGING=true`. So a merge to devel that changes a package carries its version bump, and a
-  fix after a published build is a new version. No published version is rebuilt, and no epoch is used.
+- **A version is built once.** The preflight reads the version with the packaging tool (`tree-version`: `rpmspec -q
+  --srpm --qf '%{VERSION}'` of the spec, macros expanded, or `dpkg-parsechangelog -S Version` without the Debian
+  revision). When the channel root or staging (of that kind) holds it already, the merge publishes NOTHING and stays
+  green: `release-preflight`'s `devel-version` runs `already-served.sh` with `STAGING=true ON_SERVED=notice`, a
+  `::notice::` names the served version and files, the output `skip` is `true`, and the build, publish and verify
+  jobs skip on it. No published version is rebuilt, and no epoch is used.
+- **The missing bump is red on the pull request.** A pull request into devel that changes any path outside
+  `bump-exempt` (default `docs/** **/*.md .github/**`; a glob starting `**/` matches at the top too) while its head
+  version is published already, in the channel root or staging, is refused by `devel-bump-check`, naming every changed
+  path and the served file. So a merge to devel that changes a package carries its version bump, and a fix after a
+  published build is a new version. The channel is public: that check reads its tree with the run's own
+  `github.token`, never `PAGES_TOKEN`.
 - **A snapshot of a published version is retired.** A dispatched staged run (`staged: true`, not a merge to devel)
   still builds a `+git` snapshot of the tree's version, but the preflight reads that version (`staged-version`) and
   refuses it when the channel root or staging holds a REAL build of it (`already-served.sh` with `STAGING=true

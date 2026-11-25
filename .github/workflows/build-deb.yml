@@ -137,6 +137,10 @@ on:
         type: string
         default: ''
         description: 'Ignored, kept so existing callers still validate: no CHANGELOG.md check remains'
+      bump-exempt:
+        type: string
+        default: 'docs/** **/*.md .github/**'
+        description: 'Globs, space separated, of paths that change no package: a pull request into devel that changes any other path while its version is published already is refused (a merge to devel of a published version publishes nothing)'
       source-repository:
         type: string
         default: ''
@@ -232,6 +236,9 @@ jobs:
       count: ${{ steps.matrix.outputs.count }}
       # the version a merge to devel publishes, empty for every other run (.github#289)
       devel-version: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && steps.devel.outputs.version || '' }}
+      # 'true' when a merge to devel carries a version published already: nothing is built or published, and the run is
+      # green with a notice (release-preflight); the pull request into devel is where the missing bump is red
+      skip: ${{ steps.preflight.outputs.skip }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
@@ -326,14 +333,30 @@ jobs:
       # is no longer snapshotted (.github#289)
       - name: The version a merge to devel publishes, or a staged run snapshots
         id: devel
-        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))
+        if: (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel'))
         # dpkg-parsechangelog reads it, without the Debian revision: the version a tag and a file name carry (tree-version.sh)
         uses: Open-Mixer/.github/.github/actions/tree-version@openmixer-v1
         with:
           kind: deb
 
+      # a pull request into devel that changes a package while its version is published already is refused by name: its
+      # merge would publish nothing. The public channel is read with the run's own token (.github#289)
+      - name: A pull request into devel that changes a package carries its version bump
+        if: (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')
+        uses: Open-Mixer/.github/.github/actions/devel-bump-check@openmixer-v1
+        with:
+          kind: deb
+          version: ${{ steps.devel.outputs.version }}
+          base: ${{ github.event.pull_request.base.sha }}
+          packages: ${{ inputs.binary-names || inputs.package-name }}
+          releases: ${{ steps.matrix.outputs.releases }}
+          exempt: ${{ inputs.bump-exempt }}
+          target: ${{ inputs.target-repo }}
+          token: ${{ github.token }}
+
       # a staged run publishes too (to the staging channel): its secrets and target are checked, never a tag
-      - uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
+      - id: preflight
+        uses: Open-Mixer/.github/.github/actions/release-preflight@openmixer-v1
         with:
           publish: ${{ inputs.publish || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           require-tag: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
@@ -355,7 +378,8 @@ jobs:
     name: Build (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: preflight
     # a catch-up of a version served in every cell plans nothing: no build, no publish, and the first job said so
-    if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0'
+    # a merge to devel of a version published already builds nothing (needs.preflight.outputs.skip, release-preflight)
+    if: inputs.stage != 'publish' && needs.preflight.outputs.count != '0' && needs.preflight.outputs.skip != 'true'
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     # a library whose package build runs its whole test suite (omx-dsp: the oracles at nine rates) takes 31 to 45
     # minutes on a hosted runner; 45 cancelled two omx-dsp releases (v0.23.0, v0.24.0), so the bound is 90
@@ -557,7 +581,7 @@ jobs:
     needs: [preflight, build]
     # the publish stage takes the packages a build stage of this run left; channel-installability inside the
     # publish action refuses a release that would leave a package of the channel uninstallable
-    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && !(inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
+    if: ${{ !cancelled() && inputs.stage != 'build' && needs.preflight.result == 'success' && needs.preflight.outputs.count != '0' && needs.preflight.outputs.skip != 'true' && (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped')) && !(inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
     outputs:
       commit: ${{ steps.staged.outputs.commit }}
     runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner }}
@@ -744,7 +768,7 @@ jobs:
   verify:
     name: Install check (${{ matrix.suite }}, ${{ matrix.arch }})
     needs: [preflight, publish, publish-release, release, live]
-    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) }}
+    if: ${{ !cancelled() && needs.preflight.outputs.skip != 'true' && (needs.publish.result == 'success' || needs.publish-release.result == 'success') && inputs.verify-install && ((inputs.publish && (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) || (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel'))) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || (startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') && github.event.repository.private == false && 'ubuntu-latest' || inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 30
     container:

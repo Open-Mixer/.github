@@ -89,9 +89,9 @@ grep -q 'catch-up and republish' "$tmp/out" || { cat "$tmp/out"; fail "catch-up 
 ! grep -q git/trees "$tmp/asked" || fail "a dry-run catch-up read the tree"
 # a merge to devel (devel-version, require-tag false): its check runs first and a catch-up never skips it (F6a). The
 # tree's foo 1.2.3 is served; a merge to devel carrying it with catch-up set must not take the catch-up branch.
-rundevel() { # rundevel <devel version> [catch-up]
+rundevel() { # rundevel <devel version> [catch-up] [releases]
   PATH=$tmp/bin:$PATH PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
-    REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=44 CATCH_UP=${2:-false} \
+    REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=${3-44} CATCH_UP=${2:-false} \
     DEVEL_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1
 }
 rundevel 1.2.3 true && { cat "$tmp/out"; fail "a merge to devel with catch-up set skipped its version check"; }
@@ -99,6 +99,17 @@ grep -q 'a merge to devel never catches up' "$tmp/out" || { cat "$tmp/out"; fail
 rundevel 1.2.9 true && { cat "$tmp/out"; fail "a merge to devel of a new version passed with catch-up set"; }
 grep -q 'catch-up of' "$tmp/out" && { cat "$tmp/out"; fail "a merge to devel took the catch-up branch"; }
 echo "ok   a merge to devel never takes catch-up, and its version check runs first"
+# a merge to devel of a version published already publishes nothing and stays GREEN, with a notice naming the served file
+# and skip=true for the jobs after it; a new version gives skip=false (F5)
+: > "$tmp/gh-out"; rundevel 1.2.3 || { cat "$tmp/out"; fail "a merge to devel of a published version is red; it must publish nothing and pass"; }
+grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "a merge to devel of a published version does not output skip=true"; }
+grep -q '::notice::v1.2.3 is published already: rpm/fedora/44/x86_64/foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "the skip does not name the served file in a notice"; }
+grep -q '::error::' "$tmp/out" && { cat "$tmp/out"; fail "a merge to devel that skips printed an error"; }
+: > "$tmp/gh-out"; rundevel 1.5.0 false 45 || { cat "$tmp/out"; fail "a merge to devel of a version staging holds is red"; }
+grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "a merge to devel of a version staging holds does not skip"; }
+: > "$tmp/gh-out"; rundevel 1.2.9 || { cat "$tmp/out"; fail "a merge to devel of a new version was refused"; }
+grep -qx 'skip=false' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "a merge to devel of a new version does not output skip=false"; }
+echo "ok   a merge to devel of a published version is green, publishes nothing, and names what is served"
 # a dispatched staged run (staged-version, not a merge to devel): a snapshot of a version the channel root or staging
 # holds as a REAL build is refused, naming the file; one whose only builds are snapshots, or that nothing holds, passes (F3)
 runstaged() { # runstaged <version> [kind] [releases]
@@ -126,4 +137,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 34 arms"
+echo "ok   release-preflight-served: 37 arms"
