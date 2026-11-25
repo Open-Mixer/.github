@@ -33,21 +33,11 @@ import sys
 import rpm
 
 NOT_ARCH = ("noarch", "SRPMS")
-# the frozen releases (release-matrix/frozen.txt, as promote-staged/collect.py reads it): served, never built again, so
-# never judged here; a skew left in one is no run's doing and no run could mend it. PROMOTE_FROZEN names another list.
-FROZEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "release-matrix", "frozen.txt")
-
-
-def frozen_rpm():
-    """The Fedora releases the frozen list names (lines 'rpm <release>'; '#' comments)."""
-    path = os.environ.get("PROMOTE_FROZEN") or FROZEN
-    out = set()
-    with open(path, encoding="utf-8") as h:
-        for line in h:
-            words = line.split("#", 1)[0].split()
-            if len(words) == 2 and words[0] == "rpm":
-                out.add(words[1])
-    return out
+# the frozen releases (release-matrix/frozen.txt): served, never built again, so never judged here; a skew left in one is
+# no run's doing and no run could mend it. Read by promote-staged/collect.py's frozen(), the one reader of that list
+# (PROMOTE_FROZEN names another).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "promote-staged"))
+from collect import frozen  # noqa: E402
 SENSE = rpm.RPMSENSE_LESS | rpm.RPMSENSE_GREATER | rpm.RPMSENSE_EQUAL
 
 OPS = {"=": rpm.RPMSENSE_EQUAL, "<": rpm.RPMSENSE_LESS, ">": rpm.RPMSENSE_GREATER,
@@ -272,7 +262,7 @@ def judge(tree, names):
     """One line per unexplained difference of the newest noarch build across the architecture views of a release."""
     out = []
     fedora = os.path.join(tree, "fedora")
-    skip = frozen_rpm()
+    skip = frozen("rpm")
     for rel in sorted(os.listdir(fedora)) if os.path.isdir(fedora) else []:
         if rel in skip:
             continue
