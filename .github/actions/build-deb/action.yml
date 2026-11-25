@@ -13,6 +13,9 @@ inputs:
   tag:
     description: release tag the tree must be at; empty builds a snapshot
     default: ''
+  real:
+    description: "'true': the tree's own version at HEAD, no tag and no snapshot suffix: a merge to devel builds the real package once, for the staging channel and the promotion that copies it (.github#289). Excludes tag"
+    default: 'false'
   out:
     description: directory the DEBs are copied to
     default: debs
@@ -39,6 +42,7 @@ runs:
         MAX_JOBS: ${{ inputs.max-jobs }}
         TREE: ${{ inputs.tree }}
         TAG: ${{ inputs.tag }}
+        REAL: ${{ inputs.real }}
         OUT: ${{ inputs.out }}
         SEPARATOR: ${{ inputs.separator }}
         STAGED: ${{ inputs.staged }}
@@ -51,4 +55,5 @@ runs:
         git config --global --add safe.directory "$(readlink -f "$TREE")"
         args=(-C "$TREE" -s "$("$GITHUB_ACTION_PATH/separator.sh" "$SEPARATOR" "$STAGED" "$DRY_RUN")")
         [ -z "$TAG" ] || args+=(-t "$TAG")
+        [ "$REAL" != true ] || args+=(-r)
         "$GITHUB_ACTION_PATH/build-deb.sh" "${args[@]}" "$OUT"
