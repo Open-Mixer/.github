@@ -213,7 +213,10 @@ files. The devel build is the real package at its real version, never a pre-rele
   preflight, the pull request's check and the promotion), naming the glob and the file: anything under `packaging/`
   or `debian/`, a `%doc` or `%license` file of the spec's `%files` sections, a `debian/*.docs` entry, the source of a
   `debian/*.install` entry, or every path (`**`, `*`). A pull request cannot widen its own exemption over packaged
-  files. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
+  files, nor change the value it is judged by: `devel-bump-check` reads `bump-exempt` from the caller's workflow file
+  (`github.workflow_ref`) at the merge base, and when the head's value differs it judges with the base value, naming
+  both (`exempt-at.py`, .github#292). A pull request that only widens `bump-exempt` and changes `.github/**` passes;
+  the wider value applies once it is on devel, where a push to devel already reads it. The channel is public: the check reads its tree and the record with the run's own `github.token`, never
   `PAGES_TOKEN`.
 - **A snapshot of a published version is retired.** A dispatched staged run (`staged: true`, not a merge to devel)
   still builds a `+git` snapshot of the tree's version, but the preflight reads that version (`staged-version`) and

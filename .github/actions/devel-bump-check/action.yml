@@ -33,6 +33,9 @@ inputs:
   target:
     description: the channel repository
     default: Open-Mixer/open-mixer.github.io
+  caller-workflow:
+    description: "github.workflow_ref of the caller (owner/repo/<path>@<ref>): the bump-exempt its file has at the merge base is the value the pull request is judged by (.github#292); empty judges by exempt"
+    default: ''
   token:
     description: a token that reads the public channel; the caller passes github.token
     required: true
@@ -51,6 +54,7 @@ runs:
         EXEMPT: ${{ inputs.exempt }}
         TARGET: ${{ inputs.target }}
         TOKEN: ${{ inputs.token }}
+        CALLER: ${{ inputs.caller-workflow }}
       run: |
         set -euo pipefail
         code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/bump-tree.json -w '%{http_code}' \
@@ -77,5 +81,15 @@ runs:
           CHANGE_BASE=$(git -c safe.directory="$PWD" merge-base "$BASE" HEAD 2>/dev/null || true)
         fi
         export BUILT CHANGE_BASE
+        # the bump-exempt the caller's workflow file has at the merge base: a pull request never judges itself by a value
+        # it changes (.github#292)
+        if [ -n "$CALLER" ]; then
+          wf=${CALLER%%@*}; wf=${wf#*/*/}
+          [ -n "$CHANGE_BASE" ] || { echo "::error::no merge base of $BASE and HEAD: the bump-exempt of $wf there cannot be read"; exit 1; }
+          at=$(mktemp)
+          git -c safe.directory="$PWD" show "$CHANGE_BASE:$wf" > "$at" 2>/dev/null || rm -f "$at"
+          BASE_EXEMPT=$(python3 -I "$GITHUB_ACTION_PATH/exempt-at.py" "$at" "$KIND") || { echo "::error::the bump-exempt of $wf at $CHANGE_BASE cannot be read"; exit 1; }
+          export BASE_EXEMPT
+        fi
         # shellcheck disable=SC2086 # PACKAGES is a list of names, split on purpose
         "$GITHUB_ACTION_PATH/bump-check.sh" "$KIND" "$VERSION" "$NAME" $PACKAGES < /tmp/bump-tree.paths
