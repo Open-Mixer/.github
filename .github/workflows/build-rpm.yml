@@ -244,8 +244,10 @@ jobs:
         uses: Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1
         with:
           kind: rpm
-          # a merge to devel builds every cell: promotion copies that one build to the channel root (.github#289)
-          matrix: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && 'full' || inputs.matrix }}
+          # a merge to devel builds every cell: promotion copies that one build to the channel root (.github#289). While
+          # the organisation variable OMX_DEVEL_MATRIX is rpm-x86_64 (owner ruling 2026-11-26) it builds the quick rpm
+          # cell alone, fc45 x86_64, and build-deb.yml builds nothing; read on a merge to devel only, never by a tag
+          matrix: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && (vars.OMX_DEVEL_MATRIX == 'rpm-x86_64' && 'quick' || 'full') || inputs.matrix }}
           wave: ${{ vars.OMX_RELEASE_MATRIX }}
           staged: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           source-ref: ${{ inputs.source-ref }}

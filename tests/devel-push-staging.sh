@@ -74,7 +74,9 @@ for wf in sys.argv[1:]:
                 "needs.preflight.result": "success", "needs.preflight.outputs.count": "1", "needs.build.result": "success",
                 "needs.publish.result": "success", "needs.publish-release.result": "skipped",
                 "steps.devel.outputs.version": "1.2.0" if run != "a push to main" and run != "a push of a tag" else "",
-                "needs.preflight.outputs.skip": "false", "inputs.verify-install": True}
+                "needs.preflight.outputs.skip": "false", "inputs.verify-install": True,
+                # the devel matrix switch unset: every run as before (owner ruling 2026-11-26; on, below)
+                "vars.OMX_DEVEL_MATRIX": "", "inputs.enabled": True}
 
     def step(job, pred):
         hits = [s for s in jobs[job]["steps"] if pred(s)]
@@ -142,9 +144,26 @@ for wf in sys.argv[1:]:
             fails.append(f"{wf}: {run}: the publish job's concurrency group is {group}, want {want_group}")
         if str(jobs["publish"]["concurrency"].get("cancel-in-progress")).lower() != "false":
             fails.append(f"{wf}: the publish job cancels a publish in progress")
+    # the devel matrix switch on (OMX_DEVEL_MATRIX=rpm-x86_64): a push to devel still builds the real rpm and publishes it
+    # to staging, on the quick set (fc45 x86_64, tests/release-matrix.sh), and the deb preflight does not run, so no deb
+    # job does (tests/deb-disabled.sh); every other run reads as with it unset
+    for run in RUNS:
+        c = dict(ctx(run), **{"vars.OMX_DEVEL_MATRIX": "rpm-x86_64"})
+        m = ev(mtx["with"]["matrix"], c)
+        pre_runs = truthy(ev(jobs["preflight"].get("if", "true"), c))
+        on = run == "a push to devel"
+        want_m = ("quick" if kind == "rpm" else "full") if on else ev(mtx["with"]["matrix"], ctx(run))
+        if m != want_m or pre_runs != (kind == "rpm" or not on):
+            fails.append(f"{wf}: {run} with OMX_DEVEL_MATRIX=rpm-x86_64: matrix={m!r} preflight runs={pre_runs}, want {want_m!r} {kind == 'rpm' or not on}")
+        if on and kind == "rpm":
+            for n, e in (("real build", build["with"]["real"]), ("publishes to staging", staging_pub["if"]), ("the publish job runs", jobs["publish"]["if"]),
+                         ("the install check runs", jobs["verify"]["if"])):
+                if not truthy(ev(e, c)):
+                    fails.append(f"{wf}: a push to devel with OMX_DEVEL_MATRIX=rpm-x86_64: {n} is off")
 if fails:
     print("\n".join(f"FAIL: {f}" for f in fails), file=sys.stderr); sys.exit(1)
 print("a push to devel publishes the real build to staging; a pull request publishes nothing; tags unchanged: ok")
+print("OMX_DEVEL_MATRIX=rpm-x86_64: a push to devel stages and install-checks the quick rpm, runs no deb job; other runs unchanged: ok")
 PY
 
 t=$(mktemp -d "${TMPDIR:-/tmp}/devel-push-staging.XXXXXX"); trap 'rm -rf -- "$t"' EXIT
@@ -643,6 +662,12 @@ for kind in ("rpm", "deb"):
     assert "skip" in pre and "devel-version" in pre, f"{kind}: the preflight job lost skip or devel-version"
     for name, src in (("skipped", "skip"), ("devel-version", "devel-version")):
         val = str((outs.get(name) or {}).get("value", ""))
+        # build-deb.yml's skipped is 'true' too while the devel matrix switch keeps its preflight from running (owner ruling
+        # 2026-11-26, tests/release-matrix.sh renders it); past that prefix it is the preflight's own output
+        sw = "(github.event_name == 'push' && github.ref == 'refs/heads/devel' && vars.OMX_DEVEL_MATRIX == 'rpm-x86_64') && 'true' || "
+        if kind == "deb" and name == "skipped":
+            assert sw in val, f"build-deb.yml: workflow_call output skipped is {val!r}, without the devel matrix switch"
+            val = val.replace(sw, "")
         m = re.fullmatch(r"\$\{\{\s*jobs\.preflight\.outputs\.([a-z-]+)\s*\}\}", val.strip())
         assert m and m.group(1) == src, f"build-{kind}.yml: workflow_call output {name} is {val!r}, not jobs.preflight.outputs.{src}"
 PY2
