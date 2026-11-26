@@ -36,12 +36,12 @@ act = f"{here}/.github/actions/release-matrix"
 class O(dict):
     __getattr__ = dict.get
 
-def ev(expr, inputs, event="push", ref_type="branch", var=None, steps=None, needs=None, matrix=None):
+def ev(expr, inputs, event="push", ref_type="branch", var=None, steps=None, needs=None, matrix=None, branch="main", dvar=None, jobs=None):
     e = str(expr).strip()
     if "${{" not in e:
         return expr
     if e.count("${{") > 1 or (e.count("${{") == 1 and not (e.startswith("${{") and e.endswith("}}"))):
-        return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(ev("${{" + m.group(1) + "}}", inputs, event, ref_type, var, steps, needs, matrix)), e)
+        return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(ev("${{" + m.group(1) + "}}", inputs, event, ref_type, var, steps, needs, matrix, branch, dvar, jobs)), e)
     if e.startswith("${{") and e.endswith("}}"):
         e = e[3:-2].strip()
     e = re.sub(r"\binputs\.([a-z0-9-]+)", lambda m: f'inputs["{m.group(1)}"]', e)
@@ -50,9 +50,11 @@ def ev(expr, inputs, event="push", ref_type="branch", var=None, steps=None, need
     e = re.sub(r"!(?!=)", " not ", e)
     env = {"inputs": inputs, "fromJSON": json.loads, "true": True, "false": False,
            "join": lambda a, s=",": s.join(a),
-           "github": O(ref_type=ref_type, event_name=event, ref_name="v1.2.0" if ref_type == "tag" else "main"),
-           "vars": O(OMX_RELEASE_MATRIX=var or ""), "steps": steps or O(), "needs": needs or O(), "matrix": matrix or O(),
-           "secrets": O()}
+           "github": O(ref_type=ref_type, event_name=event, ref_name="v1.2.0" if ref_type == "tag" else branch,
+                       ref="refs/tags/v1.2.0" if ref_type == "tag" else f"refs/heads/{branch}"),
+           # OMX_DEVEL_MATRIX: the devel matrix switch (owner ruling 2026-11-26), read on a merge to devel alone
+           "vars": O(OMX_RELEASE_MATRIX=var or "", OMX_DEVEL_MATRIX=dvar or ""), "steps": steps or O(), "needs": needs or O(),
+           "matrix": matrix or O(), "jobs": jobs or O(), "secrets": O()}
     return eval(e, {"__builtins__": {}}, env)
 
 def text(v):
@@ -84,9 +86,12 @@ for kind, (path, rel_in, key) in WF.items():
     assert len(ms) == 1 and ms[0].get("id") == "matrix" and "if" not in ms[0], f"{path}: the first job does not ask release-matrix once, always"
     assert ms[0]["uses"] == "Open-Mixer/.github/.github/actions/release-matrix@openmixer-v1", ms[0]["uses"]
     w = {k: str(v).replace(" ", "") for k, v in ms[0]["with"].items()}
-    # a merge to devel is staged, and builds the full matrix: promotion copies that one build to every cell (.github#289)
+    # a merge to devel is staged, and builds the full matrix: promotion copies that one build to every cell (.github#289);
+    # while OMX_DEVEL_MATRIX is rpm-x86_64 it builds the quick set (owner ruling 2026-11-26), and build-deb.yml's
+    # preflight does not run at all (below)
     devel = "(github.event_name=='push'&&github.ref=='refs/heads/devel')"
-    assert w == {"kind": kind, "matrix": "${{%s&&'full'||inputs.matrix}}" % devel, "wave": "${{vars.OMX_RELEASE_MATRIX}}",
+    dm = "(vars.OMX_DEVEL_MATRIX=='rpm-x86_64'&&'quick'||'full')" if kind == "rpm" else "'full'"
+    assert w == {"kind": kind, "matrix": "${{%s&&%s||inputs.matrix}}" % (devel, dm), "wave": "${{vars.OMX_RELEASE_MATRIX}}",
                  "staged": "${{(inputs.staged||%s)}}" % devel,
                  "source-ref": "${{inputs.source-ref}}", "releases": "${{inputs.%s}}" % rel_in, "arches": "${{inputs.arch-matrix}}",
                  # a catch-up (tests/catch-up-plan.sh): the packages, and the channel whose cells.tsv it subtracts
@@ -112,19 +117,22 @@ for kind, (path, rel_in, key) in WF.items():
         assert raw.count("needs.preflight.outputs.first-arch") == 3, f"{path}: the source and noarch packages do not ship from the first architecture the set builds"
 print("ok   build-rpm.yml and build-deb.yml: one release-matrix call, the build and the install check take its cells")
 
-def run(kind, inputs, event, ref_type, var):
-    """the cells of a run: the matrix step's `with`, evaluated, given to matrix.sh as the action gives it"""
+def run(kind, inputs, event, ref_type, var, branch="main", dvar=None):
+    """the cells of a run: the matrix step's `with`, evaluated, given to matrix.sh as the action gives it. A first job
+    whose `if:` is false runs nothing, and every job after it reads skipped (tests/deb-disabled.sh): set None, no jobs"""
     path, rel_in, key = WF[kind]
     d = docs[kind]
     on = d.get(True) or d.get("on")
     full = {k: v.get("default") for k, v in on["workflow_call"]["inputs"].items()}
     full.update(inputs)
+    if "if" in d["jobs"]["preflight"] and not ev(d["jobs"]["preflight"]["if"], full, event, ref_type, var, branch=branch, dvar=dvar):
+        return O(set=None, jobs=[], first=None, releases=None), ""
     ms = [s for s in d["jobs"]["preflight"]["steps"] if "/actions/release-matrix@" in s.get("uses", "")][0]
-    w = {k: text(ev(v, full, event, ref_type, var)) for k, v in ms["with"].items()}
+    w = {k: text(ev(v, full, event, ref_type, var, branch=branch, dvar=dvar)) for k, v in ms["with"].items()}
     env = {"PATH": os.environ["PATH"], "GITHUB_OUTPUT": f"{tmp}/out"}
     for name, expr in action["runs"]["steps"][0]["env"].items():
         expr = re.sub(r"\binputs\.([a-z0-9-]+)", lambda m: f'inputs["{m.group(1)}"]', expr)
-        env[name] = text(ev(expr, {k: w.get(k, action["inputs"][k].get("default", "")) for k in action["inputs"]}, event, ref_type, var))
+        env[name] = text(ev(expr, {k: w.get(k, action["inputs"][k].get("default", "")) for k in action["inputs"]}, event, ref_type, var, branch=branch, dvar=dvar))
     open(env["GITHUB_OUTPUT"], "w").close()
     p = subprocess.run([f"{act}/matrix.sh"], env=env, capture_output=True, text=True)
     if p.returncode:
@@ -134,7 +142,7 @@ def run(kind, inputs, event, ref_type, var):
     # none of these runs is one
     steps = O(matrix=O(outputs=out), devel=O(outputs=O(version="")), preflight=O(outputs=O(skip="")))
     pre = d["jobs"]["preflight"]
-    needs = O(preflight=O(outputs=O({k: ev(v, full, event, ref_type, var, steps=steps) for k, v in pre["outputs"].items()})))
+    needs = O(preflight=O(outputs=O({k: ev(v, full, event, ref_type, var, steps=steps, branch=branch, dvar=dvar) for k, v in pre["outputs"].items()})))
     names = {}
     for job in ("build", "verify"):
         j = d["jobs"][job]
@@ -235,6 +243,62 @@ for what, inputs, var, word in (("matrix: fast", {"matrix": "fast"}, None, "matr
         got, log = run(kind, inputs, "push", "tag", var)
         assert got is None and word in log, f"{kind}: {what} is not refused by name: {got} {log}"
 print("ok   a matrix or a variable that is neither quick nor full fails the first job, by name")
+
+# ---- the devel matrix switch (owner ruling 2026-11-26): OMX_DEVEL_MATRIX=rpm-x86_64 makes a merge to devel build and stage
+# the fc45 x86_64 rpm alone, and run no deb job; unset or any other value, a merge to devel is the full matrix as before,
+# and nothing but a push to devel reads it
+NONE = {"rpm": None, "deb": []}
+DEVEL_ON = {"rpm": ["fc45, x86_64"], "deb": []}
+# (what, inputs, event, ref type, branch, OMX_RELEASE_MATRIX, OMX_DEVEL_MATRIX, the set per kind, the jobs per kind)
+devel_cases = [
+    ("a merge to devel, the switch on", {}, "push", "branch", "devel", None, "rpm-x86_64", {"rpm": "quick", "deb": None}, DEVEL_ON),
+    ("a merge to devel, the switch on, while the wave is open", {}, "push", "branch", "devel", "quick", "rpm-x86_64", {"rpm": "quick", "deb": None}, DEVEL_ON),
+    ("a merge to devel, the switch on, a caller listing fc44 fc45", {"fedora-versions": '["44", "45"]'}, "push", "branch", "devel", None, "rpm-x86_64",
+     {"rpm": "quick", "deb": None}, DEVEL_ON),
+    ("a merge to devel, the switch unset", {}, "push", "branch", "devel", None, None, {"rpm": "full", "deb": "full"}, FULL),
+    ("a merge to devel, the switch unset, while the wave is open", {}, "push", "branch", "devel", "quick", None, {"rpm": "full", "deb": "full"}, FULL),
+    ("a merge to devel, the switch some other value", {}, "push", "branch", "devel", None, "rpm", {"rpm": "full", "deb": "full"}, FULL),
+    ("a merge to devel, the switch some other value (quick)", {}, "push", "branch", "devel", None, "quick", {"rpm": "full", "deb": "full"}, FULL),
+    ("a tag push, the switch on", {"publish": True}, "push", "tag", "main", None, "rpm-x86_64", {"rpm": "full", "deb": "full"}, FULL),
+    ("a tag push while the wave is open, the switch on", {"publish": True}, "push", "tag", "main", "quick", "rpm-x86_64", {"rpm": "quick", "deb": "quick"}, QUICK),
+    ("a release of another tag (source-ref), the switch on", {"publish": True, "source-ref": "v1.2.0"}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64",
+     {"rpm": "full", "deb": "full"}, FULL),
+    ("a staged dispatch from devel, the switch on", {"staged": True}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64", {"rpm": "quick", "deb": "quick"}, QUICK),
+    ("a staged promotion candidate, the switch on", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64",
+     {"rpm": "full", "deb": "full"}, FULL),
+    ("a push to main, the switch on", {}, "push", "branch", "main", None, "rpm-x86_64", {"rpm": "full", "deb": "full"}, FULL),
+    ("a pull request into devel, the switch on", {}, "pull_request", "branch", "devel", None, "rpm-x86_64", {"rpm": "full", "deb": "full"}, FULL),
+]
+n = 0
+for what, inputs, event, rt, br, var, dvar, want_set, want in devel_cases:
+    for kind in ("rpm", "deb"):
+        got, log = run(kind, inputs, event, rt, var, branch=br, dvar=dvar)
+        assert got is not None, f"{kind}: {what}: the first job failed: {log}"
+        assert (got.set, got.jobs) == (want_set[kind], want[kind]), f"{kind}: {what} builds {got.set} {got.jobs}, want {want_set[kind]} {want[kind]}"
+        n += 1
+# the deb call tells its caller it built nothing while the switch is on, and passes the preflight's own word otherwise
+deb_on = docs["deb"].get(True) or docs["deb"].get("on")
+sk = deb_on["workflow_call"]["outputs"]["skipped"]["value"]
+for br, dvar, pre_skip, want in (("devel", "rpm-x86_64", "", "true"), ("devel", None, "", ""), ("devel", None, "true", "true"),
+                                 ("devel", "other", "", ""), ("main", "rpm-x86_64", "", "")):
+    got = text(ev(sk, {}, "push", "branch", branch=br, dvar=dvar, jobs=O(preflight=O(outputs=O(skip=pre_skip)))))
+    assert got == want, f"build-deb.yml: skipped on a push to {br} with OMX_DEVEL_MATRIX={dvar!r} (preflight skip {pre_skip!r}) is {got!r}, want {want!r}"
+# the rpm call keeps its skipped output as it was: the x86_64 rpm still builds and stages
+rpm_on = docs["rpm"].get(True) or docs["rpm"].get("on")
+assert rpm_on["workflow_call"]["outputs"]["skipped"]["value"].replace(" ", "") == "${{jobs.preflight.outputs.skip}}", "build-rpm.yml: skipped changed"
+# SABOTAGE: the switch taken out of build-deb.yml's preflight `if:`, then out of build-rpm.yml's matrix: each arm goes red
+import copy
+real_docs = docs
+for kind, label, mutate in (
+        ("deb", "the switch out of the deb preflight", lambda d: d["jobs"]["preflight"].__setitem__("if", "${{ inputs.enabled }}")),
+        ("rpm", "the switch out of the rpm matrix", lambda d: [st["with"].__setitem__("matrix", "${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') && 'full' || inputs.matrix }}")
+                                                         for st in d["jobs"]["preflight"]["steps"] if "/actions/release-matrix@" in st.get("uses", "")])):
+    docs = dict(real_docs); docs[kind] = copy.deepcopy(real_docs[kind]); mutate(docs[kind])
+    got, log = run(kind, {}, "push", "branch", None, branch="devel", dvar="rpm-x86_64")
+    docs = real_docs
+    assert got is None or got.jobs != DEVEL_ON[kind], f"sabotage ({label}) went unseen: {got} {log}"
+print(f"ok   {n} runs rendered: OMX_DEVEL_MATRIX=rpm-x86_64 makes a merge to devel fc45 x86_64 and no deb job (skipped 'true'); unset, "
+      "another value, a tag, a staged run, a pull request and another branch are as before; sabotage of either arm is red")
 
 # a staged run never leaves the tested platforms unless its matrix input says full (owner ruling 2026-11-23, .github#233;
 # #273): given a caller whose releases hold no quick cell, its first job fails by name instead of staging another cell

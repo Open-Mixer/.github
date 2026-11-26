@@ -14,7 +14,11 @@ on = d.get(True) or d.get("on")
 decl = on["workflow_call"]["inputs"]
 assert decl.get("enabled", {}).get("type") == "boolean" and decl["enabled"].get("default") is True, "build-deb.yml: no boolean input `enabled` defaulting on"
 jobs = d["jobs"]
-assert re.sub(r"\s", "", str(jobs["preflight"].get("if", ""))) == "${{inputs.enabled}}", "build-deb.yml: the preflight is not gated on inputs.enabled"
+# enabled, and the devel matrix switch (owner ruling 2026-11-26): a merge to devel while OMX_DEVEL_MATRIX is rpm-x86_64
+# runs no deb job either, by the same one gate (tests/release-matrix.sh renders it)
+assert re.sub(r"\s", "", str(jobs["preflight"].get("if", ""))) == \
+    "${{inputs.enabled&&!(github.event_name=='push'&&github.ref=='refs/heads/devel'&&vars.OMX_DEVEL_MATRIX=='rpm-x86_64')}}", \
+    "build-deb.yml: the preflight is not gated on inputs.enabled and the devel matrix switch"
 def needs(j):
     n = jobs[j].get("needs", [])
     return [n] if isinstance(n, str) else n
@@ -44,7 +48,7 @@ def can_run(j, memo={}):
     return memo[j]
 bad = [j for j in jobs if j != "preflight" and can_run(j)]
 assert not bad, f"build-deb.yml: with enabled false these jobs can still run: {bad}"
-print("ok   build-deb.yml: enabled false skips every job")
+print("ok   build-deb.yml: enabled false, or a merge to devel with OMX_DEVEL_MATRIX=rpm-x86_64, skips every job")
 PY
 
 # clap-headers-deb.yml is a workflow of its own (a tag clap-headers-*), not a call of build-deb: it ships no Debian

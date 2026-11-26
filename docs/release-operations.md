@@ -186,6 +186,13 @@ files. The devel build is the real package at its real version, never a pre-rele
 - **What the build does.** build-rpm.yml and build-deb.yml treat a push to `refs/heads/devel` as a staged run. It
   builds against the staging channel and publishes to it, never to the channel root. It builds the full matrix, because
   promotion copies this one build to every cell.
+- **The devel matrix switch (owner ruling 2026-11-26).** While the organisation variable `OMX_DEVEL_MATRIX` is
+  `rpm-x86_64`, a merge to devel builds, stages and install-checks the quick rpm cell alone (fc45 x86_64,
+  `release-matrix/quick.txt`), recorded as the quick set, and build-deb.yml runs no job: its preflight's `if:` is false,
+  so every deb job reads skipped and its `skipped` output is `'true'`. Unset, or any other value, a merge to devel
+  builds the full rpm and deb matrix as above. Only a push to `refs/heads/devel` reads it: a tag, a staged dispatch and
+  a pull request never do. One switch for every repository, no caller changes; revert by deleting the variable
+  (`tests/release-matrix.sh`, `tests/deb-disabled.sh`).
 - **The version.** It builds the tree's own version with no tag and no snapshot suffix: `build-rpm.sh -r` and
   `build-deb.sh -r` give `<name>-<version>-<release>.fcNN` and `<name>_<version>`, the NEVRA a release of that version
   has. A dispatched staged run keeps its `+git` snapshot.
