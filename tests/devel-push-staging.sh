@@ -89,7 +89,9 @@ for wf in sys.argv[1:]:
     mtx = step("preflight", lambda s: s.get("id") == "matrix")
     build = step("build", lambda s: str(s.get("uses", "")).startswith(f"Open-Mixer/.github/.github/actions/build-{kind}@"))
     pubs = [s for s in jobs["publish"]["steps"] if str(s.get("uses", "")).startswith(f"Open-Mixer/.github/.github/actions/publish-{kind}s@")]
-    staging_pub = [s for s in pubs if truthy(s.get("with", {}).get("staging"))]
+    # the publish that is always staging (a literal 'true'): the dry assembly's staging is an expression, on for a
+    # staging dry run only (tests/staging-channel.sh), and is not the staged publish
+    staging_pub = [s for s in pubs if s.get("with", {}).get("staging") == "true"]
     if None in (devel, pre, mtx, build) or len(staging_pub) != 1:
         fails.append(f"{wf}: the steps under test are not all found (publish-{kind}s with staging: {len(staging_pub)})"); continue
     staging_pub = staging_pub[0]

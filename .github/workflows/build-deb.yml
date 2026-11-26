@@ -686,7 +686,9 @@ jobs:
           channel: ${{ inputs.target-repo }}
           requires: ${{ inputs.requires }}
           changelogs-url: ${{ inputs.base-url }}/deb/changelogs
-          staging: 'false'
+          # the channel the build read: a dry run built against staging (staging: true, a devel-wave branch) is assembled
+          # as a staged run is, never judged against the real channel alone; a tag and a plain dry run read the real one
+          staging: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) || inputs.staging }}
           # a catch-up adds cells to a version: cells.tsv keeps the set the version was published for
           matrix-set: ${{ !inputs.catch-up && needs.preflight.outputs.set || '' }}
           catch-up: ${{ inputs.catch-up }}

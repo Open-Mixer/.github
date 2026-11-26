@@ -10,7 +10,9 @@
 #     unless told full: tests/release-matrix.sh), never narrowed by staged anywhere else, with the
 #     staging channel added, and publishes through publish-rpms / publish-debs with staging on, into the live publish group; a tag release and a
 #     dry run publish into rpm/ and deb/ with the staging channel never added; staging alone adds the channel to the
-#     build and publishes nothing; the install check of a staged run adds the staging channel, a release's does not;
+#     build and publishes nothing, and its dry assembly reads staging as the build did (the build's own expression), so
+#     it is never judged against the real channel alone; a tag and a plain dry run never read it; the install check
+#     of a staged run adds the staging channel, a release's does not;
 #   - the precheck, run as written: staged and staging never on a tag, never with source-ref, never with publish, and a
 #     staged run builds the calling repository only;
 #   - the publish actions write staging/<kind> with staging on and <kind> otherwise, in the first assembly, the
@@ -157,7 +159,16 @@ def check(path, kind):
     sst = [x for x in pub["steps"] if x.get("id") == "staged"][0]
     dst = [x for x in pub["steps"] if x.get("id") == "dry"][0]
     assert sst["with"]["sign"] == "true" and sst["with"]["staging"] == "true", f"{path}: the staged publish is not sign true, staging true"
-    assert dst["with"]["sign"] == "false" and dst["with"]["staging"] == "false", f"{path}: the dry assembly is not sign false, staging false"
+    assert dst["with"]["sign"] == "false", f"{path}: the dry assembly is not sign false"
+    # the dry assembly reads the channel the build read (plugin-hostd#277, run 45833790971: a dry run built against
+    # staging, then judged against the real channel alone, "needs libomx-domain.so.0 ... which nothing meets"): the
+    # same expression as the build's add-openmixer staging, true for a staging dry run, false for a tag and a plain one
+    assert dst["with"]["staging"] == s["with"]["staging"], \
+        f"{path}: the dry assembly's staging {dst['with']['staging']!r} is not the build's {s['with']['staging']!r}"
+    for name, inp, rt, want in (("a staging dry run", staging, "branch", True), ("a plain dry run", dry, "branch", False),
+                                ("a tag", caller, "tag", False), ("a tag release", tag, "tag", False)):
+        assert truthy(ev(dst["with"]["staging"], inp, ref_type=rt)) == want, \
+            f"{path}: the dry assembly of {name} {'does not read' if want else 'reads'} the staging channel"
     for name, inp, rt, want_stage, want_dry in (("staged", staged, "branch", True, False), ("a dry run", dry, "branch", False, True),
                                                 ("staging", staging, "branch", False, True)):
         assert truthy(ev(sst["if"], inp, ref_type=rt)) == want_stage, f"{path}: the staged publish step for {name}"
