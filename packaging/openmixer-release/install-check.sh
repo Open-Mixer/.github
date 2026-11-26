@@ -47,6 +47,12 @@ if command -v dnf >/dev/null; then
     dnf -y --setopt=retries=10 --setopt=skip_if_unavailable=False makecache --repo openmixer --repo openmixer-noarch ||
         fail "the openmixer repositories do not load"
     dnf repolist | tee "$work/repolist"
+    # every OpenMixer repository carries priority=50, the testing ones too: a third-party repository that republishes
+    # one of our package names at a higher version must never win (.github#308)
+    for id in openmixer openmixer-noarch openmixer-testing openmixer-testing-noarch; do
+        p=$(awk -v s="[$id]" '$0 == s {on = 1; next} /^\[/ {on = 0} on && /^priority=/ {sub(/^priority=/, ""); print}' /etc/yum.repos.d/openmixer.repo)
+        [ "$p" = 50 ] || fail "[$id] in openmixer.repo has priority '${p:-none}', not 50: a third-party repository could replace our packages"
+    done
     for id in openmixer openmixer-noarch; do
         grep -q "^$id " "$work/repolist" || fail "dnf repolist names no $id"
     done
