@@ -66,6 +66,8 @@ SOURCE_DATE_EPOCH=$(dpkg-parsechangelog -S Timestamp) python3 "$here/floors-deb.
 python3 "$here/floors-deb.py" check "${built[@]}"
 
 changes=$(ls ../"${name}"_*.changes)
+# a repacked .deb has new sums: the .buildinfo and the .changes are rewritten to them before lintian reads them
+python3 "$here/floors-deb.py" restamp "$changes"
 suppress=()
 [ -n "$tag" ] || [ -n "$real" ] || suppress=(--suppress-tags package-has-long-file-name)
 [ "$lint" = 0 ] || lintian --fail-on error,warning "${suppress[@]}" "$changes"

@@ -8,6 +8,10 @@
                                            each .deb is unpacked, floored and packed again in place. The source tree's
                                            debian/control is never touched, so a repository's own no-typed-floors test,
                                            which runs inside the build, still reads its bare names
+                                           A package with nothing to floor is left as dpkg-buildpackage wrote it.
+    floors-deb.py restamp <changes>        the sizes and md5/sha1/sha256 sums of every file a .changes lists, and of the
+                                           .debs its .buildinfo lists, rewritten from the files beside it (a repacked .deb
+                                           changed them; both files are unsigned at this point, -uc -us)
     floors-deb.py apply <debian/control>   the same on a control file (the tests' entry; build-deb.sh uses apply-deb)
     floors-deb.py check <deb>...           fails, naming each, a built package depending on an installed OpenMixer
                                            package with no version
@@ -82,7 +86,7 @@ def floor_field(value, sep=',\n '):
     return sep.join(out), n
 
 
-def apply(path, sep=',\n '):
+def apply(path, sep=',\n ', say=print):
     text = open(path, encoding='utf-8').read()
     stanzas = re.split(r'\n\s*\n', text.strip('\n'))
     total = 0
@@ -102,8 +106,8 @@ def apply(path, sep=',\n '):
             out.append(f'{m.group(1)}: {new}')
         stanzas[i] = '\n'.join(out)
     open(path, 'w', encoding='utf-8').write('\n\n'.join(stanzas) + '\n')
-    print(f'floors: {total} generated in {path}')
-    return 0
+    say(f'floors: {total} generated in {path}')
+    return total
 
 
 def apply_deb(debs):
@@ -114,11 +118,54 @@ def apply_deb(debs):
         try:
             root = os.path.join(work, 'root')
             subprocess.run([DPKG_DEB, '-R', deb, root], check=True)
-            print(f'{os.path.basename(deb)}:')
-            apply(os.path.join(root, 'DEBIAN', 'control'), sep=', ')
-            subprocess.run([DPKG_DEB, '--root-owner-group', '-b', root, deb], check=True, stdout=subprocess.DEVNULL)
+            n = apply(os.path.join(root, 'DEBIAN', 'control'), sep=', ', say=lambda m: print(f'{os.path.basename(deb)}: {m}'))
+            if n:
+                subprocess.run([DPKG_DEB, '--root-owner-group', '-b', root, deb], check=True, stdout=subprocess.DEVNULL)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+    return 0
+
+
+def _sums(path):
+    import hashlib
+    data = open(path, 'rb').read()
+    return {'md5': hashlib.md5(data).hexdigest(), 'sha1': hashlib.sha1(data).hexdigest(),
+            'sha256': hashlib.sha256(data).hexdigest(), 'size': str(len(data))}
+
+
+SUM_FIELDS = {'Files': 'md5', 'Checksums-Md5': 'md5', 'Checksums-Sha1': 'sha1', 'Checksums-Sha256': 'sha256'}
+
+
+def _restamp_file(path):
+    """Rewrite the checksum lines of a .changes or .buildinfo from the files beside it; returns the names it touched."""
+    d = os.path.dirname(os.path.abspath(path))
+    lines, out, field, touched = open(path, encoding='utf-8').read().split('\n'), [], None, set()
+    for line in lines:
+        m = re.match(r'^([A-Za-z0-9-]+):', line)
+        if m:
+            field = m.group(1)
+        elif field in SUM_FIELDS and line.startswith(' ') and line.strip():
+            parts = line.split()
+            name = parts[-1]
+            f = os.path.join(d, name)
+            if os.path.exists(f):
+                s = _sums(f)
+                parts[0], parts[1] = s[SUM_FIELDS[field]], s['size']
+                line = ' ' + ' '.join(parts)
+                touched.add(name)
+        out.append(line)
+    open(path, 'w', encoding='utf-8').write('\n'.join(out))
+    return touched
+
+
+def restamp(changes):
+    d = os.path.dirname(os.path.abspath(changes))
+    text = open(changes, encoding='utf-8').read()
+    for name in sorted(set(re.findall(r'(\S+\.buildinfo)\s*$', text, re.M))):
+        b = os.path.join(d, name)
+        if os.path.exists(b):
+            print(f'restamped {name}: {len(_restamp_file(b))} file(s)')
+    print(f'restamped {os.path.basename(changes)}: {len(_restamp_file(changes))} file(s)')
     return 0
 
 
@@ -138,10 +185,14 @@ def check(debs):
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == 'apply':
-        sys.exit(apply(sys.argv[2]))
+        apply(sys.argv[2])
+        sys.exit(0)
     if len(sys.argv) >= 3 and sys.argv[1] == 'apply-deb':
         sys.exit(apply_deb(sys.argv[2:]))
+    if len(sys.argv) == 3 and sys.argv[1] == 'restamp':
+        sys.exit(restamp(sys.argv[2]))
     if len(sys.argv) >= 3 and sys.argv[1] == 'check':
         sys.exit(check(sys.argv[2:]))
-    print('usage: floors-deb.py apply-deb <deb>... | apply <debian/control> | check <deb>...', file=sys.stderr)
+    print('usage: floors-deb.py apply-deb <deb>... | restamp <changes> | apply <debian/control> | check <deb>...',
+          file=sys.stderr)
     sys.exit(2)
