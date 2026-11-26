@@ -88,8 +88,72 @@ if command -v dpkg-deb >/dev/null; then
     cmp -s "$work/demo.deb" "$work/demo2.deb" || fail "apply-deb: two repacks with one SOURCE_DATE_EPOCH differ"
     FLOORS_DPKG_DEB=$real_deb python3 "$F" check "$work/demo.deb" > "$work/out" 2>&1 || fail "check refused the floored deb: $(cat "$work/out")"
     echo "ok   apply-deb: the built package carries the floor, the same bytes twice, and passes check"
+
+    # restamp: a .changes and a .buildinfo written for the package BEFORE its repack name its old sums; after restamp
+    # every size and sum they list is the file's own. A package with nothing to floor is not repacked at all.
+    rm -rf "$work/pkg2"; cp -r "$work/pkg" "$work/pkg2"; sed -i 's/^Depends: .*/Depends: python3/' "$work/pkg2/DEBIAN/control"
+    mkdir -p "$work/out2"; dpkg-deb --root-owner-group -b "$work/pkg" "$work/out2/demo_1.0_all.deb" >/dev/null
+    dpkg-deb --root-owner-group -b "$work/pkg2" "$work/out2/plain_1.0_all.deb" >/dev/null
+    python3 - "$work/out2" <<'X'
+import hashlib, os, sys
+d = sys.argv[1]
+def line(algo, f):
+    b = open(os.path.join(d, f), 'rb').read(); return f' {hashlib.new(algo, b).hexdigest()} {len(b)} {f}'
+debs = ['demo_1.0_all.deb', 'plain_1.0_all.deb']
+open(f'{d}/demo_1.0_all.buildinfo', 'w').write('Format: 1.0\nSource: demo\nChecksums-Sha256:\n' + '\n'.join(line('sha256', f) for f in debs) + '\n')
+files = debs + ['demo_1.0_all.buildinfo']
+ch = 'Format: 1.8\nSource: demo\nChecksums-Sha1:\n' + '\n'.join(line('sha1', f) for f in files) + '\nChecksums-Sha256:\n' + '\n'.join(line('sha256', f) for f in files)
+ch += '\nFiles:\n' + '\n'.join(line('md5', f).replace(f' {f}', f' misc optional {f}') for f in files) + '\n'
+open(f'{d}/demo_1.0_all.changes', 'w').write(ch)
+X
+    plain_before=$(sha256sum < "$work/out2/plain_1.0_all.deb")
+    SOURCE_DATE_EPOCH=1795600000 FLOORS_DPKG_DEB=$real_deb python3 "$F" apply-deb "$work/out2/demo_1.0_all.deb" "$work/out2/plain_1.0_all.deb" > "$work/out"
+    [ "$(sha256sum < "$work/out2/plain_1.0_all.deb")" = "$plain_before" ] || fail "apply-deb repacked a package with nothing to floor"
+    python3 "$F" restamp "$work/out2/demo_1.0_all.changes" > "$work/out" || fail "restamp failed: $(cat "$work/out")"
+    python3 - "$work/out2" <<'X' || fail "restamp left a sum that is not the file's"
+import hashlib, os, re, sys
+d = sys.argv[1]; algos = {'Files': 'md5', 'Checksums-Sha1': 'sha1', 'Checksums-Sha256': 'sha256'}
+for name in ('demo_1.0_all.changes', 'demo_1.0_all.buildinfo'):
+    field = None
+    for l in open(os.path.join(d, name)).read().split('\n'):
+        m = re.match(r'^([A-Za-z0-9-]+):', l)
+        if m: field = m.group(1); continue
+        if field in algos and l.startswith(' ') and l.strip():
+            p = l.split(); b = open(os.path.join(d, p[-1]), 'rb').read()
+            assert p[0] == hashlib.new(algos[field], b).hexdigest() and p[1] == str(len(b)), (name, l)
+X
+    echo "ok   restamp: every sum the .changes and the .buildinfo list is the repacked file's; a package with no floor is not repacked"
 else
     echo "skip apply-deb arm: no dpkg-deb here (CI runs it)"
+fi
+
+# end to end (needs dpkg-buildpackage, debhelper and lintian): a real package whose Depends names an OpenMixer package
+# goes through build-deb.sh with lintian on; the floor lands in the built .deb and lintian passes on the restamped
+# .changes (it failed with checksum-mismatch-in-changes-file before restamp, .github#312)
+if command -v dpkg-buildpackage >/dev/null && command -v lintian >/dev/null && command -v dh >/dev/null; then
+    src=$work/e2e/demo; mkdir -p "$src/debian/source"; git -C "$work/e2e" init -q demo 2>/dev/null || git init -q "$src"
+    echo '3.0 (native)' > "$src/debian/source/format"
+    printf 'demo (1.0.0) unstable; urgency=medium\n\n  * Initial release.\n\n -- Tools Test <tools-test@example.invalid>  Thu, 26 Nov 2026 00:00:00 +0000\n' > "$src/debian/changelog"
+    printf '%s\n' 'Source: demo' 'Section: misc' 'Priority: optional' 'Maintainer: Tools Test <tools-test@example.invalid>' \
+        'Build-Depends: debhelper-compat (= 13)' 'Standards-Version: 4.7.0' 'Rules-Requires-Root: no' '' 'Package: demo' \
+        'Architecture: all' 'Depends: ${misc:Depends}, omx-contract' 'Description: fixture of the generated floors test' \
+        ' A fixture whose dependency on an OpenMixer package gets its floor.' > "$src/debian/control"
+    mkdir -p "$src/data"; echo fixture > "$src/data/fixture.txt"; echo 'data/fixture.txt usr/share/demo' > "$src/debian/demo.install"
+    printf '#!/usr/bin/make -f\n%%:\n\tdh $@\n' > "$src/debian/rules"; chmod +x "$src/debian/rules"
+    printf 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n\nFiles: *\nCopyright: 2026 Tools Test\nLicense: GPL-3+\n On Debian systems, see /usr/share/common-licenses/GPL-3.\n' > "$src/debian/copyright"
+    git -C "$src" -c user.name=t -c user.email=t@t add -A; git -C "$src" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm demo
+    mkdir -p "$work/e2e/out"
+    if (cd "$src" && env -u FLOORS_DPKG_DEB FLOORS_DPKG_QUERY=$work/dpkg-query FLOORS_APT_CACHE=$work/apt-cache \
+            bash "$here/.github/actions/build-deb/build-deb.sh" -r "$work/e2e/out") > "$work/e2e.log" 2>&1; then
+        d=$(dpkg-deb -f "$work/e2e/out/demo_1.0.0_all.deb" Depends)
+        case $d in *'omx-contract (>= 0.23.2)'*) ;; *) fail "e2e: the built Depends is $d" ;; esac
+        ! grep -q -E 'checksum-mismatch-in-changes-file|file-size-mismatch' "$work/e2e.log" || fail "e2e: lintian found stale sums"
+        echo "ok   e2e: build-deb.sh floors the built package and lintian passes on its restamped .changes"
+    else
+        tail -25 "$work/e2e.log" >&2; fail "e2e: build-deb.sh failed (lintian on the restamped .changes?)"
+    fi
+else
+    echo "skip e2e arm: no dpkg-buildpackage/debhelper/lintian here (CI's deb job runs it)"
 fi
 
 sed "s/out.append(f'{d} (>= {v})')/out.append(d)/" "$F" > "$work/sab.py"
