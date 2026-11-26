@@ -1,3 +1,11 @@
+openmixer-release (1-12) unstable; urgency=medium
+
+  * Released with the RPM, whose repositories gain priority=50 so that a
+    third-party repository republishing one of our package names never
+    replaces ours; the Debian sources are unchanged.
+
+ -- Pau Aliagas <linuxnow@gmail.com>  Thu, 26 Nov 2026 22:30:00 +0100
+
 openmixer-release (1-11) unstable; urgency=medium
 
   * The testing source, /etc/apt/sources.list.d/openmixer-testing.sources:

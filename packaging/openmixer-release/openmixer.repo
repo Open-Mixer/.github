@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# priority=50 on every OpenMixer repository: above dnf's default 99, so a third-party repository that republishes one of
+# our package names (the audinux COPR serves omx-contract-data 3.9.1, older than our 0.23.x but numbered higher) never
+# replaces ours; below the CI staging channel's 10 (add-openmixer). Our packages win by repository, then by version.
 [openmixer]
 name=OpenMixer
 baseurl=https://www.openmixer.org/rpm/fedora/$releasever/$basearch/
@@ -7,6 +10,7 @@ enabled=1
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=50
 
 [openmixer-noarch]
 name=OpenMixer (noarch)
@@ -15,11 +19,12 @@ enabled=1
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=50
 
 # The testing repositories, as Fedora's updates-testing: the staging channel of the release wave, the builds the wave
 # proved together before the release tag publishes them above. Disabled: `dnf --enablerepo=openmixer-testing
 # --enablerepo=openmixer-testing-noarch upgrade`, or `dnf config-manager setopt openmixer-testing*.enabled=1`, is the
-# whole opt-in. No priority: enabled, the newer build wins, as with updates-testing.
+# whole opt-in. The same priority as the repositories above: enabled, the newer build wins, as with updates-testing.
 [openmixer-testing]
 name=OpenMixer testing
 baseurl=https://www.openmixer.org/staging/rpm/fedora/$releasever/$basearch/
@@ -27,6 +32,7 @@ enabled=0
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=50
 
 [openmixer-testing-noarch]
 name=OpenMixer testing (noarch)
@@ -35,3 +41,4 @@ enabled=0
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=50

@@ -42,7 +42,7 @@ curl_body='out=; while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; [ 
 d=$w/rpm; prepare rpm; real_path "$d/bin"
 stub "$d/bin" dnf "
 case \"\$*\" in
-  *openmixer-release.pkg*) printf '[openmixer]\n[openmixer-noarch]\n' > '$d/etc/yum.repos.d/openmixer.repo' ;;
+  *openmixer-release.pkg*) cp '$here/../packaging/openmixer-release/openmixer.repo' '$d/etc/yum.repos.d/openmixer.repo' ;;
   'repolist --disabled') printf 'openmixer-testing x\nopenmixer-testing-noarch x\n' ;;
   repolist) printf 'openmixer x\nopenmixer-noarch x\n' ;;
   *'repoquery --installed'*) echo openmixer ;;

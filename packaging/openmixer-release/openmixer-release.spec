@@ -6,7 +6,7 @@
 # Version-Release is the release of debian/changelog too: build.sh refuses a build where the two differ.
 Name:           openmixer-release
 Version:        1
-Release:        11%{?dist}
+Release:        12%{?dist}
 Summary:        OpenMixer package repository configuration for dnf
 License:        GPL-3.0-or-later
 URL:            https://www.openmixer.org
@@ -31,6 +31,9 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-openmixer
 
 %changelog
+* Thu Nov 26 2026 Pau Aliagas <linuxnow@gmail.com> - 1-12
+- Every OpenMixer repository at priority=50: a third-party repository that republishes one of our package names at a higher version (the audinux COPR's omx-contract-data 3.9.1 against our 0.23.2) no longer replaces ours on dnf upgrade. The testing repositories carry the same priority, so enabled they still win by version.
+
 * Mon Nov 23 2026 Pau Aliagas <linuxnow@gmail.com> - 1-11
 - License GPL-3.0-or-later, as every file of the package already said (the tag said MIT); released at 1-11 with the DEB, which gains the testing source (openmixer-testing.sources, the staging channel for trixie, Enabled: no).
 
