@@ -34,6 +34,15 @@ v=$(dpkg-parsechangelog -S Version)
 n=$(dpkg-parsechangelog -S Source)
 touch "../${n}_${v}_arm64.changes" "../${n}_${v}_arm64.deb"
 STUB
+# build-deb.sh adds the generated floors to the built .debs (floors-deb.py apply-deb): the stubbed build writes empty
+# files, so dpkg-deb is a stub too: -R unpacks a control with no OpenMixer dependency, -b and -f do nothing
+cat > bin/dpkg-deb <<'STUB'
+#!/bin/bash
+case $1 in
+    -R) mkdir -p "$3/DEBIAN"; printf 'Package: x\nVersion: 1\nArchitecture: all\nDescription: x\n x\n' > "$3/DEBIAN/control" ;;
+esac
+exit 0
+STUB
 cat > bin/lintian <<'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "$LINTIAN_ARGS"
@@ -45,7 +54,7 @@ long=plugin-db-qualification
 git init -q -b main "$long"
 mkdir "$long/debian"
 printf '%s (1.0.0) unstable; urgency=medium\n\n  * x\n\n -- t <t@t>  Wed, 30 Sep 2026 12:00:00 +0000\n' "$long" > "$long/debian/changelog"
-# build-deb.sh generates the floors in debian/control (floors-deb.py, .github#312): every source has one
+# every source build-deb.sh builds has a debian/control
 printf 'Source: %s\n\nPackage: %s\nArchitecture: any\nDepends: ${misc:Depends}\n' "$long" "$long" > "$long/debian/control"
 git -C "$long" add -A
 GIT_COMMITTER_DATE=2026-09-30T12:00:00Z git -C "$long" commit -q -m "First version" --date 2026-09-30T12:00:00Z

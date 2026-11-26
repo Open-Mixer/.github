@@ -73,6 +73,25 @@ grep -q 'bare.deb Depends omx-contract with no version' "$work/out" || fail "che
 python3 "$F" check "$work/good.deb" > "$work/out" 2>&1 || fail "check refused a floored deb: $(cat "$work/out")"
 echo "ok   check: an unversioned OpenMixer dependency fails, a floored one passes"
 
+# apply-deb on a real package (needs dpkg-deb): the BUILT control gets the floors on one line, the package still
+# unpacks, and two repacks with one SOURCE_DATE_EPOCH are the same bytes
+if command -v dpkg-deb >/dev/null; then
+    real_deb=$(command -v dpkg-deb)
+    mkdir -p "$work/pkg/DEBIAN" "$work/pkg/usr/share/demo"; echo x > "$work/pkg/usr/share/demo/x"
+    printf '%s\n' 'Package: demo' 'Version: 1.0' 'Architecture: all' 'Maintainer: t <t@t>' \
+        'Depends: omx-contract, python3' 'Description: demo' ' demo' > "$work/pkg/DEBIAN/control"
+    FLOORS_DPKG_DEB=$real_deb dpkg-deb --root-owner-group -b "$work/pkg" "$work/demo.deb" >/dev/null
+    cp "$work/demo.deb" "$work/demo2.deb"
+    SOURCE_DATE_EPOCH=1795600000 FLOORS_DPKG_DEB=$real_deb python3 "$F" apply-deb "$work/demo.deb" > "$work/out"
+    SOURCE_DATE_EPOCH=1795600000 FLOORS_DPKG_DEB=$real_deb python3 "$F" apply-deb "$work/demo2.deb" > /dev/null
+    [ "$(dpkg-deb -f "$work/demo.deb" Depends)" = 'omx-contract (>= 0.23.2), python3' ] || fail "apply-deb: built Depends is $(dpkg-deb -f "$work/demo.deb" Depends)"
+    cmp -s "$work/demo.deb" "$work/demo2.deb" || fail "apply-deb: two repacks with one SOURCE_DATE_EPOCH differ"
+    FLOORS_DPKG_DEB=$real_deb python3 "$F" check "$work/demo.deb" > "$work/out" 2>&1 || fail "check refused the floored deb: $(cat "$work/out")"
+    echo "ok   apply-deb: the built package carries the floor, the same bytes twice, and passes check"
+else
+    echo "skip apply-deb arm: no dpkg-deb here (CI runs it)"
+fi
+
 sed "s/out.append(f'{d} (>= {v})')/out.append(d)/" "$F" > "$work/sab.py"
 cp "$work/control.orig" "$work/control"; python3 "$work/sab.py" apply "$work/control" >/dev/null
 ! grep -q 'omx-contract (>= 0.23.2)' "$work/control" || fail "the sabotage did not take"

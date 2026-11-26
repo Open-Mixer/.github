@@ -3,8 +3,12 @@
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 """Generated lower-layer floors for debs (owner ruling 2026-11-26, .github#312), the twin of build-rpm/floors.sh.
 
-    floors-deb.py apply <debian/control>   every bare name in a binary package's Depends/Pre-Depends that is an installed
-                                           OpenMixer package becomes "<name> (>= <its upstream version>)"; in place
+    floors-deb.py apply-deb <deb>...       every bare name in a BUILT package's Depends/Pre-Depends (DEBIAN/control) that
+                                           is an installed OpenMixer package becomes "<name> (>= <its upstream version>)";
+                                           each .deb is unpacked, floored and packed again in place. The source tree's
+                                           debian/control is never touched, so a repository's own no-typed-floors test,
+                                           which runs inside the build, still reads its bare names
+    floors-deb.py apply <debian/control>   the same on a control file (the tests' entry; build-deb.sh uses apply-deb)
     floors-deb.py check <deb>...           fails, naming each, a built package depending on an installed OpenMixer
                                            package with no version
 
@@ -61,7 +65,7 @@ def ours(name, cache={}):
     return got
 
 
-def floor_field(value):
+def floor_field(value, sep=',\n '):
     out, n = [], 0
     for dep in value.split(','):
         d = dep.strip()
@@ -75,10 +79,10 @@ def floor_field(value):
                 n += 1
                 continue
         out.append(d)
-    return ',\n '.join(out), n
+    return sep.join(out), n
 
 
-def apply(path):
+def apply(path, sep=',\n '):
     text = open(path, encoding='utf-8').read()
     stanzas = re.split(r'\n\s*\n', text.strip('\n'))
     total = 0
@@ -93,12 +97,28 @@ def apply(path):
             value, j = m.group(2), j + 1
             while j < len(lines) and lines[j][:1] in (' ', '\t'):
                 value += ' ' + lines[j].strip(); j += 1
-            new, n = floor_field(value)
+            new, n = floor_field(value, sep)
             total += n
             out.append(f'{m.group(1)}: {new}')
         stanzas[i] = '\n'.join(out)
     open(path, 'w', encoding='utf-8').write('\n\n'.join(stanzas) + '\n')
     print(f'floors: {total} generated in {path}')
+    return 0
+
+
+def apply_deb(debs):
+    import shutil
+    import tempfile
+    for deb in debs:
+        work = tempfile.mkdtemp()
+        try:
+            root = os.path.join(work, 'root')
+            subprocess.run([DPKG_DEB, '-R', deb, root], check=True)
+            print(f'{os.path.basename(deb)}:')
+            apply(os.path.join(root, 'DEBIAN', 'control'), sep=', ')
+            subprocess.run([DPKG_DEB, '--root-owner-group', '-b', root, deb], check=True, stdout=subprocess.DEVNULL)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
     return 0
 
 
@@ -119,7 +139,9 @@ def check(debs):
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == 'apply':
         sys.exit(apply(sys.argv[2]))
+    if len(sys.argv) >= 3 and sys.argv[1] == 'apply-deb':
+        sys.exit(apply_deb(sys.argv[2:]))
     if len(sys.argv) >= 3 and sys.argv[1] == 'check':
         sys.exit(check(sys.argv[2:]))
-    print('usage: floors-deb.py apply <debian/control> | check <deb>...', file=sys.stderr)
+    print('usage: floors-deb.py apply-deb <deb>... | apply <debian/control> | check <deb>...', file=sys.stderr)
     sys.exit(2)
