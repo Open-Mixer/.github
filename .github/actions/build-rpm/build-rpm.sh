@@ -13,6 +13,9 @@
 # %check (rpmbuild --nocheck): a sibling built for another repository's tests (wave-deps), whose own CI runs its tests.
 # -r builds the spec's own version at HEAD with no tag and no snapshot stamp: a merge to devel builds the real package,
 # once, and that build is what the staging channel serves and promotion copies to the channel root (.github#289).
+# Every bare Requires of an OpenMixer package installed in the build root gets its floor, ">= <installed version>",
+# in the build copy of the spec, and a built package requiring one with no version fails the build (floors.sh,
+# .github#312): the spec in the tree names them bare, never with a hand-typed version.
 set -euo pipefail
 
 tree=.
@@ -68,7 +71,12 @@ grep -q '^%changelog' "$spec" || printf '\n%%changelog\n' >> "$spec"
 sed -i '/^%changelog/q' "$spec"
 "$(dirname "$(readlink -f "$0")")/../changelog/changelog.sh" rpm -C "$tree" "$ref" "$version-$release" >> "$spec"
 
+here=$(dirname "$(readlink -f "$0")")
+"$here/floors.sh" apply "$spec"
+
 git -C "$tree" archive --prefix="$name-$version/" HEAD | gzip -n > "$top/SOURCES/$name-$version.tar.gz"
 rpmbuild --define "_topdir $top" "${check[@]}" -ba "$spec"
+mapfile -t built < <(find "$top/RPMS" -name '*.rpm')
+"$here/floors.sh" check "${built[@]}"
 find "$top/RPMS" "$top/SRPMS" -name '*.rpm' -exec cp {} "$out/" \;
 ls "$out"/*.rpm

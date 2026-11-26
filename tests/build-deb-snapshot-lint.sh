@@ -45,6 +45,8 @@ long=plugin-db-qualification
 git init -q -b main "$long"
 mkdir "$long/debian"
 printf '%s (1.0.0) unstable; urgency=medium\n\n  * x\n\n -- t <t@t>  Wed, 30 Sep 2026 12:00:00 +0000\n' "$long" > "$long/debian/changelog"
+# build-deb.sh generates the floors in debian/control (floors-deb.py, .github#312): every source has one
+printf 'Source: %s\n\nPackage: %s\nArchitecture: any\nDepends: ${misc:Depends}\n' "$long" "$long" > "$long/debian/control"
 git -C "$long" add -A
 GIT_COMMITTER_DATE=2026-09-30T12:00:00Z git -C "$long" commit -q -m "First version" --date 2026-09-30T12:00:00Z
 git -C "$long" tag v1.0.0

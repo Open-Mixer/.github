@@ -68,6 +68,8 @@ jobs:
       - run: tests/add-openmixer-release-package.sh
       - run: tests/install-check-one-channel.sh
       - run: tests/build-rpm-channel-repos.sh
+      - run: tests/build-rpm-floors.sh
+      - run: tests/build-deb-floors.sh
       - run: tests/publish-served-url.sh
       - run: tests/release-matrix.sh
       - run: tests/action-metadata-expressions.sh

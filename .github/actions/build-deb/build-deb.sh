@@ -16,7 +16,9 @@
 # override covers; a tag build has no suffix and lints in full, and no other tag is suppressed. -s replaces the snapshot's ~git: +git sorts above the release, so a sibling built
 # for another repository's tests (wave-deps) meets a (>= <version>) range; -L skips lintian for such a build, whose own CI
 # lints it. -r builds the changelog's own version at HEAD with no tag and no snapshot suffix, and lints in full: a merge
-# to devel builds the real package once (.github#289).
+# to devel builds the real package once (.github#289). After the build dependencies are installed, every bare
+# Depends/Pre-Depends of an OpenMixer package installed in the build root gets its floor, (>= <upstream version>), and a
+# built package depending on one with no version fails the build (floors-deb.py, .github#312).
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 
@@ -55,7 +57,11 @@ done
 "$here/render-changelog.sh" -C . ${tag:+-t "$tag"} ${real:+-r} -s "$sep" >/dev/null
 
 apt-get build-dep -y --no-install-recommends ./
+command -v python3 >/dev/null || apt-get install -y --no-install-recommends python3-minimal
+python3 "$here/floors-deb.py" apply debian/control
 dpkg-buildpackage -b -uc -us
+mapfile -t built < <(find .. -maxdepth 1 -name '*.deb' ! -name '*-dbgsym_*')
+python3 "$here/floors-deb.py" check "${built[@]}"
 
 changes=$(ls ../"${name}"_*.changes)
 suppress=()
