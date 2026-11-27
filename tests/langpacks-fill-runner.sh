@@ -27,6 +27,10 @@ chk = [i for i, x in enumerate(steps) if "pulls?head=" in str(x.get("run", "")) 
 fill = [i for i, x in enumerate(steps) if "actions/langpacks@" in str(x.get("uses", ""))]
 assert chk and fill and chk[0] < fill[0], "the open-pull-request check does not come before the fill"
 assert "steps.pr.outputs.head-sha" in str(steps[fill[0]]["with"].get("dispatch-head")), "the fill is not given the proved head sha"
+# the caller's packages are OpenMixer's (omx-contract-devel): installed only once the OpenMixer channel is added (.github#333)
+add = [i for i, x in enumerate(steps) if "actions/add-openmixer@" in str(x.get("uses", ""))]
+pk = [i for i, x in enumerate(steps) if "inputs.packages" in str(x.get("run", ""))]
+assert add and len(pk) == 1 and add[0] < pk[0] < fill[0], f"the caller's packages install at step {pk}, not once after the channel (step {add}) and before the fill"
 print("ok   langpacks-fill.yml fill")
 PY
 check() { python3 -I "$t/check.py" "$1"; }
@@ -46,6 +50,7 @@ sab "a fill that is dispatch only" "s/if: github.event_name == 'pull_request' \&
 sab "a fill not told the proved head" 's/dispatch-head: /x-head: /'
 sab "no cluster DNS" 's/--dns 10.43.0.10 //'
 sab "a fill for a fork" "s/ && !github.event.pull_request.head.repo.fork//"
+sab "the caller's packages before the channel" 's/^      - run: dnf install -y --setopt=install_weak_deps=False git python3 nodejs gnupg2$/& ${{ inputs.packages }}/'
 
 # fill.py refuses by name a push to the default branch or a kept name (main, openmixer-v*, release/*, settle/*), on the pull
 # request (GITHUB_HEAD_REF) and the dispatch (GITHUB_REF_NAME, which the action hands over as GITHUB_HEAD_REF) path alike
