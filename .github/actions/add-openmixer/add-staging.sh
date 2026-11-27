@@ -27,11 +27,28 @@
 # anything else, STAGING_BOOTSTRAP or not: such a run builds against staging and never falls back to the real channel.
 # Whether staging is served is judged before the real channel's file is looked for, so that refusal (and the
 # bootstrap skip) never depend on the machine; adding staging still requires the real channel beside it.
+#
+# LEVEL=devel/<wave> adds the devel channel of that wave instead (docs/release-operations.md, "The three channel
+# levels"), above staging: dnf /etc/yum.repos.d/openmixer-devel.repo, ids openmixer-devel and openmixer-devel-noarch,
+# priority=5; apt /etc/apt/sources.list.d/openmixer-devel.sources and the pin /etc/apt/preferences.d/openmixer-devel.pref,
+# Pin-Priority 650 for the index labelled OpenMixer-Devel. The files are packaging/devel, the wave written in. A wave's
+# tree that was never published (index and key both 404) is skipped with a notice whatever STAGING_BOOTSTRAP says: the
+# first line of a wave builds before anything was published to it, and every later line reads what the earlier ones
+# published. A tree that is published without this machine's index still fails. Only one wave is ever added.
 set -euo pipefail
-src=$(dirname "$(readlink -f "$0")")/../../../packaging/staging
+here=$(dirname "$(readlink -f "$0")")
+level=${LEVEL:-staging}
 base=${BASE_URL:-https://www.openmixer.org}
 base=${base%/}
 die() { echo "add-staging: $*" >&2; exit 1; }
+if [ "$level" = staging ]; then
+    src=$here/../../../packaging/staging path=staging name=openmixer-staging what="the staging channel"
+else
+    wave=$("$here/../publish-rpms/channel-level.sh" wave "$level") || exit 1
+    src=$here/../../../packaging/devel path=devel/$wave name=openmixer-devel what="the devel channel of $wave"
+    # a wave's first line builds before its tree exists: an absent tree is skipped, never a fallback once it exists
+    STAGING_BOOTSTRAP=true STAGING_FOR_DEVEL=false
+fi
 
 # 0 when <url> is served, 1 when it answers 404 (a missing file, for file://); anything else stops the script
 served() {
@@ -63,31 +80,32 @@ skip_if_never_published() {
         die "${absent[*]} answered 404: the staging channel $tree serves no index for this machine. A staged build never falls back to the real channel; only the first layer of a wave, before anything was staged, passes staging-bootstrap: true"
     fi
     if [ "${#absent[@]}" -eq "$#" ] && ! served "$tree/$key"; then
-        echo "add-staging: the staging channel $tree has not been published yet (${absent[*]} and $tree/$key answered 404): nothing added, as staging-bootstrap asks; the first staged publish creates it"
+        echo "add-staging: $what ($tree) has not been published yet (${absent[*]} and $tree/$key answered 404): nothing added, as staging-bootstrap asks; the first staged publish creates it"
         exit 0
     fi
-    die "${absent[*]} answered 404, but the staging channel $tree is published: it is not added half-way, staging-bootstrap or not"
+    die "${absent[*]} answered 404, but $what ($tree) is published: it is not added half-way, staging-bootstrap or not"
 }
 if command -v dnf >/dev/null; then
     # shellcheck disable=SC1091
     releasever=$(. /etc/os-release && echo "${VERSION_ID:-}")
     [ -n "$releasever" ] || die "/etc/os-release has no VERSION_ID: the Fedora release of the staging index is unknown"
-    skip_if_never_published "$base/staging/rpm" RPM-GPG-KEY-openmixer \
-        "$base/staging/rpm/fedora/$releasever/$(uname -m)/repodata/repomd.xml" "$base/staging/rpm/fedora/$releasever/noarch/repodata/repomd.xml"
-    [ -f /etc/yum.repos.d/openmixer.repo ] || die "the real channel is not added (/etc/yum.repos.d/openmixer.repo): staging goes beside it, never alone"
-    sed "s|https://www.openmixer.org/|$base/|" "$src/openmixer-staging.repo" > /etc/yum.repos.d/openmixer-staging.repo
-    chmod 644 /etc/yum.repos.d/openmixer-staging.repo
-    echo "added $base/staging/rpm (openmixer-staging, openmixer-staging-noarch, priority 10)"
+    skip_if_never_published "$base/$path/rpm" RPM-GPG-KEY-openmixer \
+        "$base/$path/rpm/fedora/$releasever/$(uname -m)/repodata/repomd.xml" "$base/$path/rpm/fedora/$releasever/noarch/repodata/repomd.xml"
+    [ -f /etc/yum.repos.d/openmixer.repo ] || die "the real channel is not added (/etc/yum.repos.d/openmixer.repo): $what goes beside it, never alone"
+    repo=$("$here/../publish-rpms/channel-level.sh" repo-file "$level" "$(mktemp -d)")
+    sed "s|https://www.openmixer.org/|$base/|" "$repo" > "/etc/yum.repos.d/$name.repo"
+    chmod 644 "/etc/yum.repos.d/$name.repo"
+    echo "added $base/$path/rpm ($name, $name-noarch, priority $(sed -n 's/^priority=//p' "/etc/yum.repos.d/$name.repo" | head -1))"
 else
     suite=${SUITE:-}
     # shellcheck disable=SC1091
     [ -n "$suite" ] || suite=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
     [ -n "$suite" ] || die "no Debian release named, and /etc/os-release has no VERSION_CODENAME"
-    skip_if_never_published "$base/staging/deb" openmixer.asc "$base/staging/deb/debian/$suite/InRelease"
-    [ -f /etc/apt/sources.list.d/openmixer.sources ] || die "the real channel is not added (/etc/apt/sources.list.d/openmixer.sources): staging goes beside it, never alone"
-    sed -e "s|@SUITE@|$suite|" -e "s|https://www.openmixer.org/|$base/|" "$src/openmixer-staging.sources.in" \
-        > /etc/apt/sources.list.d/openmixer-staging.sources
-    install -D -m 644 "$src/openmixer-staging.pref" /etc/apt/preferences.d/openmixer-staging.pref
-    chmod 644 /etc/apt/sources.list.d/openmixer-staging.sources
-    echo "added $base/staging/deb/debian/$suite (pinned 600)"
+    skip_if_never_published "$base/$path/deb" openmixer.asc "$base/$path/deb/debian/$suite/InRelease"
+    [ -f /etc/apt/sources.list.d/openmixer.sources ] || die "the real channel is not added (/etc/apt/sources.list.d/openmixer.sources): $what goes beside it, never alone"
+    sed -e "s|@SUITE@|$suite|" -e "s|@WAVE@|${wave:-}|" -e "s|https://www.openmixer.org/|$base/|" "$src/$name.sources.in" \
+        > "/etc/apt/sources.list.d/$name.sources"
+    install -D -m 644 "$src/$name.pref" "/etc/apt/preferences.d/$name.pref"
+    chmod 644 "/etc/apt/sources.list.d/$name.sources"
+    echo "added $base/$path/deb/debian/$suite (pinned $(sed -n 's/^Pin-Priority: //p' "$src/$name.pref"))"
 fi

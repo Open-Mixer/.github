@@ -89,6 +89,10 @@ on:
         type: boolean
         default: false
         description: 'With staged or staging: a staging channel never published (its index and key both 404) is skipped with a notice instead of failing the build. Only for the first layer of a wave, whose build runs before anything was staged.'
+      channel-level:
+        type: string
+        default: ''
+        description: 'The channel level a staged run publishes to and builds against (docs/release-operations.md, "The three channel levels"): empty or staging is the staging channel, as before; devel/<wave> ([a-z0-9-]+) the devel channel of that wave, above staging, and only it is written. A merge to devel with none takes the calling repository''s variable OMX_DEVEL_CHANNEL (the coordinator''s wave tool sets it for a wave''s line). With staging alone, a dry run, the build reads that wave''s channel too and publishes nothing. Never on a tag or a release.'
       matrix:
         type: string
         default: ''
@@ -251,6 +255,8 @@ jobs:
       # 'true' when a merge to devel carries a version published already: nothing is built or published, and the run is
       # green with a notice (release-preflight); the pull request into devel is where the missing bump is red
       skip: ${{ steps.preflight.outputs.skip }}
+      # devel/<wave> when this run reads and publishes a wave's devel channel, empty otherwise (the level step)
+      devel-channel: ${{ steps.level.outputs.devel }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
@@ -287,6 +293,25 @@ jobs:
           [ -z "$SOURCE_REF" ] || no "staged and staging take no source-ref: source-ref builds a release of a tag, against the real channel alone"
           [ "$PUBLISH" != true ] || no "staged and staging exclude publish: a staged run publishes to the staging channel only, and a release never builds against it"
           [ "$STAGED" != true ] || [ -z "$SOURCE_REPOSITORY" ] || no "a staged run builds the calling repository only"
+
+      # the level of the three-channel model a staged run publishes to and builds against: staging, or a wave's devel
+      # channel, devel/<wave>, which only that wave's lines and boxes read (docs/release-operations.md)
+      - name: The channel level of a staged run
+        id: level
+        env:
+          LEVEL: ${{ inputs.channel-level || ((github.event_name == 'push' && github.ref == 'refs/heads/devel') && vars.OMX_DEVEL_CHANNEL || '') }}
+          STAGED: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
+          STAGING: ${{ inputs.staging }}
+        run: |
+          no() { echo "::error::$*"; exit 1; }
+          case $LEVEL in
+            '' | staging) echo "devel=" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            devel/*) [[ ${LEVEL#devel/} =~ ^[a-z0-9-]+$ ]] || no "channel-level '$LEVEL' is not devel/<wave> with <wave> of [a-z0-9-]+" ;;
+            *) no "channel-level is staging or devel/<wave>, not '$LEVEL'" ;;
+          esac
+          [ "$STAGED" = true ] || [ "$STAGING" = true ] || no "channel-level $LEVEL is for a staged run or a staging dry run: a release and a plain dry run read the real channel alone"
+          echo "devel=$LEVEL" >> "$GITHUB_OUTPUT"
+          echo "::notice::this run reads the devel channel $LEVEL above staging, and a staged run publishes there alone"
 
       # bootstrap: each entry names one sibling commit in full; bootstrap-only releases exactly one such package, of the
       # version source-ref names, against the real channel, from the sibling's source and not this repository's
@@ -392,6 +417,8 @@ jobs:
           caller-workflow: ${{ github.workflow_ref }}
           # a dispatched staged run: refused when the channel root or staging holds a real build of its version
           staged-version: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/devel') && inputs.staged && steps.devel.outputs.version || '' }}
+          # a wave's devel channel counts beside staging for the version checks, another wave's never
+          channel-level: ${{ steps.level.outputs.devel }}
           # the already-served check reads the releases this run publishes into, no others
           releases: ${{ steps.matrix.outputs.releases }}
           gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
@@ -457,6 +484,8 @@ jobs:
           release-package: ${{ inputs.release-package }}
           staging: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) || inputs.staging }}
           staging-bootstrap: ${{ inputs.staging-bootstrap }}
+          # a wave's devel channel above staging: the build takes what the wave's earlier lines published
+          devel-channel: ${{ needs.preflight.outputs.devel-channel }}
 
       # a staged snapshot or a dry run (a run not at a release tag) is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
       # floor, above the staged build of any earlier commit, and is not pruned behind a published <version> by the installability gate
@@ -649,8 +678,10 @@ jobs:
           site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
           channel: ${{ inputs.target-repo }}
           requires: ${{ inputs.requires }}
-          changelogs-url: ${{ inputs.base-url }}/${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && 'staging/deb' || 'deb' }}/changelogs
+          changelogs-url: ${{ inputs.base-url }}/${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && (needs.preflight.outputs.devel-channel != '' && format('{0}/deb', needs.preflight.outputs.devel-channel) || 'staging/deb') || 'deb' }}/changelogs
           staging: 'true'
+          # a wave's devel channel instead of staging: devel/<wave>/deb alone is written
+          channel-level: ${{ needs.preflight.outputs.devel-channel }}
           # a merge to devel refuses, by name, a file the channel holds already, never keeps it (.github#289)
           refuse-served: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/devel') }}
           # ... and records the commit that built the real package, which the promotion is tied to
@@ -813,6 +844,8 @@ jobs:
           base-url: ${{ inputs.base-url }}
           release-package: ${{ inputs.release-package }}
           staging: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
+          # a wave's install check reads its devel channel above staging, where its publish went
+          devel-channel: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && needs.preflight.outputs.devel-channel || '' }}
 
       - name: Install the new version from the channel
         if: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
@@ -845,7 +878,7 @@ jobs:
         env:
           NAME: ${{ inputs.package-name }}
           BINARIES: ${{ inputs.binary-names }}
-          URL: ${{ inputs.base-url }}/staging/deb
+          URL: ${{ inputs.base-url }}/${{ needs.preflight.outputs.devel-channel || 'staging' }}/deb
           SUITE: ${{ matrix.suite }}
           DEVEL_VERSION: ${{ needs.preflight.outputs.devel-version }}
         run: |
@@ -878,7 +911,7 @@ jobs:
               echo "attempt $try: the staged $bin of $GITHUB_SHA is not the candidate yet (candidate: ${cand:-none})"; sleep 30
             done
             [ -n "$ok" ] || { echo "::error::the staged $bin of $GITHUB_SHA does not install from $URL in a clean debian $SUITE"; exit 1; }
-            apt-cache policy "$bin" | grep -B1 -A1 'staging/deb' || true
+            apt-cache policy "$bin" | grep -B1 -A1 "${URL#*://*/}" || true
           done
 
   # A tag that ends without packages must not be silent: the repository gets an issue naming the tag and the

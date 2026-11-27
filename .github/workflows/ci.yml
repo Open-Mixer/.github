@@ -257,7 +257,7 @@ jobs:
   staging-publish:
     name: Staging channel, publish and purge (${{ matrix.kind }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     container:
       image: ${{ matrix.image }}
     strategy:
@@ -266,7 +266,7 @@ jobs:
         include:
           - kind: rpm
             image: fedora:45
-            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git
+            tools: dnf install -y --setopt=install_weak_deps=False rpm-build rpm-sign createrepo_c python3-rpm python3-pyyaml gnupg2 pinentry findutils git diffutils zstd
           - kind: deb
             image: debian:trixie
             tools: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv dpkg-dev python3 python3-yaml git ca-certificates
@@ -284,6 +284,10 @@ jobs:
       - name: A staged build is promoted to the channel root with the same bytes, and only when the release key vouches for it
         shell: bash
         run: tests/promote-publish.sh ${{ matrix.kind }}
+
+      - name: A wave's devel publish writes devel/<wave> alone, and a client takes it above staging
+        shell: bash
+        run: tests/devel-channel-publish.sh ${{ matrix.kind }}
 
   staging-bootstrap:
     name: First staged run into a channel with no staging path (${{ matrix.kind }})

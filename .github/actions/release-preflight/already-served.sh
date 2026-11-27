@@ -12,6 +12,8 @@
 # version does not refuse its fc45 publish. A file outside those trees is read for every release; empty reads all.
 # STAGING=true reads staging/rpm and staging/deb as well: a merge to devel builds the real package once and publishes it
 # to staging, so a version staged before is published already and is never built again (.github#289).
+# DEVEL_TREE=devel/<wave> reads that wave's devel channel, devel/<wave>/rpm and devel/<wave>/deb, as well (a run that
+# publishes into it: docs/release-operations.md, "The three channel levels"); another wave's tree is never read.
 # REAL_ONLY=true counts real builds alone: a file whose name carries a snapshot stamp (.git, +git, ~git) is skipped. A
 # dispatched staged run builds a snapshot of the tree's version, and a snapshot of a version published as a real build is
 # retired (.github#289): the version is bumped on devel instead.
@@ -27,6 +29,7 @@ while IFS= read -r path; do
   if [ "${REAL_ONLY:-false}" = true ]; then
     case $base in *.git*|*+git*|*~git*) continue ;; esac
   fi
+  if [ -n "${DEVEL_TREE:-}" ]; then path=${path#"$DEVEL_TREE"/}; fi
   if [ "${STAGING:-false}" = true ]; then path=${path#staging/}; fi
   case $path in
     rpm/*.rpm) [ "${KIND:-}" != deb ] || continue ;;

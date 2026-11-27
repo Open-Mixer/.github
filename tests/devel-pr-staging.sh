@@ -51,7 +51,8 @@ act_path, *wfs = sys.argv[1:]
 
 # ---- 1. add-openmixer: the staging step
 act = yaml.safe_load(open(act_path))
-st = [s for s in act["runs"]["steps"] if "add-staging.sh" in s.get("run", "")]
+# the staging step; the devel step (LEVEL=devel/<wave>, add-openmixer devel-channel) is tests/devel-channel-publish.sh's
+st = [s for s in act["runs"]["steps"] if "add-staging.sh" in s.get("run", "") and "LEVEL=" not in s.get("run", "")]
 if len(st) != 1:
     fails.append(f"add-openmixer: {len(st)} steps run add-staging.sh")
 else:
@@ -74,7 +75,7 @@ else:
     ]
     for name, event, base, staging, boot, pkg, want_run, want_dev, want_boot in cases:
         ctx = {"github.event_name": event, "github.base_ref": base, "inputs.staging": staging,
-               "inputs.staging-bootstrap": boot, "inputs.release-package": pkg}
+               "inputs.staging-bootstrap": boot, "inputs.release-package": pkg, "inputs.devel-channel": ""}
         run = truthy(ev(st["if"], ctx))
         if run != want_run:
             fails.append(f"add-openmixer: {name}: the staging step runs={run}, want {want_run}"); continue

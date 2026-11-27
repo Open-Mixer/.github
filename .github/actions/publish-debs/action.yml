@@ -15,6 +15,11 @@ description: Sign DEBs and publish them into the deb/ tree of an Open-Mixer Page
 # docs/release-operations.md): the same tree script, keys and channel-push, the index labelled OpenMixer-Staging (the
 # label the staging pin names), every Debian release of `suites` indexed even with nothing staged for it, and a
 # `requires` package may be one the real deb/ tree serves. deb/ is never written.
+#
+# channel-level: devel/<wave> publishes into devel/<wave>/deb of the same channel instead, the devel channel of one wave
+# (docs/release-operations.md, "The three channel levels"): staged as staging is, its own cells.tsv and signed index,
+# labelled OpenMixer-Devel (the label the devel pin names, 650, above staging's 600). Nothing outside devel/<wave>/deb
+# is written.
 
 inputs:
   deb-dir:
@@ -75,6 +80,9 @@ inputs:
   staging:
     description: "'true' publishes into the staging channel, staging/deb of the channel, and never touches deb/"
     default: 'false'
+  channel-level:
+    description: "devel/<wave> ([a-z0-9-]+) publishes into devel/<wave>/deb of the channel, the devel channel of that wave, staged as staging is and never touching deb/ or staging/; empty (the default) leaves the tree to staging"
+    default: ''
   suites:
     description: with staging, the Debian releases (space separated) whose staging index exists even when empty
     default: ''
@@ -97,7 +105,7 @@ inputs:
 outputs:
   commit:
     description: the commit pushed to the channel; empty when nothing was pushed (a dry run, or the channel already carried the tree)
-    value: ${{ steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
+    value: ${{ steps.push-devel.outputs.commit || steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
 
 runs:
   using: composite
@@ -107,10 +115,12 @@ runs:
       run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv git curl ca-certificates findutils dpkg-dev
 
     - name: Prove the packages are there before anything signs them
+      id: collect
       shell: bash
       env:
         DEB_DIR: ${{ inputs.deb-dir }}
         STAGING: ${{ inputs.staging }}
+        LEVEL: ${{ inputs.channel-level }}
         MATRIX_SET: ${{ inputs.matrix-set }}
         CATCH_UP: ${{ inputs.catch-up }}
         REFUSE_SERVED_IN: ${{ inputs.refuse-served }}
@@ -134,7 +144,7 @@ runs:
           pins=$(mktemp -d)/pinned.txt; printf '%s packages the channel key named by the caller\n' "${SIGNING_FPR^^}" > "$pins"
           { echo "SERVED_KEYS_DIR=none"; echo "PINNED_FINGERPRINTS=$pins"; } >> "$GITHUB_ENV"
         fi
-        [ -z "$LABEL_IN" ] || [ "$STAGING" = true ] || echo "LABEL=$LABEL_IN" >> "$GITHUB_ENV"
+        [ -z "$LABEL_IN" ] || [ "$STAGING" = true ] || [ -n "$LEVEL" ] || echo "LABEL=$LABEL_IN" >> "$GITHUB_ENV"
         # the set this run built, for cells.tsv: in the job's environment, so a lost-race rebuild records it too
         echo "MATRIX_SET=$MATRIX_SET" >> "$GITHUB_ENV"
         # a catch-up, for the tree script and the lost-race rebuild alike
@@ -143,8 +153,17 @@ runs:
         echo "REFUSE_SERVED=$REFUSE_SERVED_IN" >> "$GITHUB_ENV"
         echo "BUILT_COMMIT=$BUILT_COMMIT_IN" >> "$GITHUB_ENV"
         echo "BUILT_NAME=$BUILT_NAME_IN" >> "$GITHUB_ENV"
-        # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/
-        if [ "$STAGING" = true ]; then
+        # where the packages go in the channel: deb/, or staging/deb/ with its label and skeleton, requires met from deb/,
+        # or a wave's devel/<wave>/deb/, staged the same way under its own label (channel-level.sh names the tree)
+        if [ -n "$LEVEL" ]; then
+          case $LEVEL in devel/*) ;; *) echo "::error::channel-level is devel/<wave> or empty, not '$LEVEL' (staging is staging: true)"; exit 1 ;; esac
+          tree=$("$GITHUB_ACTION_PATH/../publish-rpms/channel-level.sh" tree deb "$LEVEL") || exit 1
+          { echo "DEB_TREE=$tree"; echo "LABEL=OpenMixer-Devel"; echo "SKELETON=$SUITES"
+            echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"
+            echo "SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb "$DEB_DIR")"; } >> "$GITHUB_ENV"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          STAGING=true # staged: the checks of a staged run below
+        elif [ "$STAGING" = true ]; then
           { echo "DEB_TREE=staging/deb"; echo "LABEL=OpenMixer-Staging"; echo "SKELETON=$SUITES"
             echo "REQUIRES_TREE=build/channel/deb"; echo "NEWEST_ONLY=true"
             echo "SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb "$DEB_DIR")"; } >> "$GITHUB_ENV"
@@ -193,7 +212,7 @@ runs:
     - name: Check no package of the channel becomes uninstallable
       # a staged run publishes to the staging channel, which no client installs from by default: the check judges the
       # channel a release lands in, so it runs for a release and a dry run, not for a staged publish
-      if: inputs.installability != 'false' && inputs.staging != 'true'
+      if: inputs.installability != 'false' && inputs.staging != 'true' && inputs.channel-level == ''
       shell: bash
       env:
         PKG_DIR: ${{ inputs.deb-dir }}
@@ -248,9 +267,23 @@ runs:
       shell: bash
       run: echo "PUBLISH_DEBS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
+    # a wave's devel channel: the one tree channel-level.sh named, committed alone (channel-push adds that path only)
+    - id: push-devel
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.channel-level != ''
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.tag }}
+        what: ${{ steps.collect.outputs.tree }}
+        # LABEL, SKELETON and REQUIRES_TREE are in the job's environment (the first step)
+        rebuild: 'REQUIRES="${{ inputs.requires }}" CHANGELOGS_URL="${{ inputs.changelogs-url }}" "$PUBLISH_DEBS_ACTION/publish-tree.sh" "build/channel/$DEB_TREE" "${{ inputs.deb-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+
     - id: push-staging
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true' && inputs.staging == 'true'
+      if: inputs.sign == 'true' && inputs.staging == 'true' && inputs.channel-level == ''
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}
@@ -263,7 +296,7 @@ runs:
 
     - id: push-real
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true' && inputs.staging != 'true'
+      if: inputs.sign == 'true' && inputs.staging != 'true' && inputs.channel-level == ''
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}

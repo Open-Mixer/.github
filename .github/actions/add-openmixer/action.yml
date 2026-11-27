@@ -19,6 +19,10 @@ description: Add the OpenMixer repository to a Fedora or Debian container by ins
 # prod, a lower level merged into devel is staged (its release.yml dispatched staged from devel), never in the real
 # channel, so such a run builds and tests against staging, and a staging channel absent or purged REFUSES it by name
 # (staging-bootstrap never applies to it): a green that never saw staging is a false signal (.github#270).
+# With devel-channel <wave> the devel channel of that wave, devel/<wave>, is added above staging (dnf priority 5, apt pin
+# 650; add-staging.sh LEVEL=devel/<wave>, docs/release-operations.md "The three channel levels"), and staging beneath it:
+# a wave's builds, install checks and boxes read what the wave published, then staging, then the real channel, and never
+# another wave's tree. A wave's tree never published yet (its first line) is skipped with a notice.
 
 inputs:
   base-url:
@@ -36,6 +40,9 @@ inputs:
   staging-bootstrap:
     description: "'true' lets a staging channel never published (index and key both 404) be skipped with a notice; only for the first layer of a wave. Off, the 404 fails the step"
     default: 'false'
+  devel-channel:
+    description: "a wave's name, <wave> or devel/<wave> ([a-z0-9-]+): adds the devel channel of that wave above staging (priority 5 / pin 650), and staging with it; empty adds none"
+    default: ''
 
 runs:
   using: composite
@@ -75,7 +82,7 @@ runs:
           apt-get update -qq
         fi
 
-    - if: inputs.staging == 'true' || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release')
+    - if: inputs.staging == 'true' || inputs.devel-channel != '' || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' && inputs.release-package == 'openmixer-release')
       shell: bash
       env:
         BASE_URL: ${{ inputs.base-url }}
@@ -94,4 +101,23 @@ runs:
         else
           apt-get update -qq
           apt-cache policy | grep -A1 'staging/deb' || true
+        fi
+
+    - if: inputs.devel-channel != '' && inputs.release-package == 'openmixer-release'
+      shell: bash
+      env:
+        BASE_URL: ${{ inputs.base-url }}
+        SUITE: ${{ inputs.suite }}
+        WAVE: ${{ inputs.devel-channel }}
+      run: |
+        set -euo pipefail
+        LEVEL=devel/${WAVE#devel/} "$GITHUB_ACTION_PATH/add-staging.sh"
+        # add-staging.sh adds nothing and exits 0 when the wave's tree was never published (its first line)
+        if [ ! -f /etc/yum.repos.d/openmixer-devel.repo ] && [ ! -f /etc/apt/sources.list.d/openmixer-devel.sources ]; then
+          echo "::notice::the devel channel of ${WAVE#devel/} has not been published yet: this job reads staging and the real channel"
+        elif command -v dnf >/dev/null; then
+          dnf -y --setopt=skip_if_unavailable=False makecache --repo openmixer-devel --repo openmixer-devel-noarch
+        else
+          apt-get update -qq
+          apt-cache policy | grep -A1 "devel/${WAVE#devel/}/deb" || true
         fi

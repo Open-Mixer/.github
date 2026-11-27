@@ -183,6 +183,15 @@ STAGING=true bash "$served" v1.1.0 omx-a < "$t/tree" > "$t/out" 2>&1 && { cat "$
 STAGING=true bash "$served" v1.3.0 omx-a < "$t/tree" > "$t/out" 2>&1 || { cat "$t/out"; fail "a version published nowhere was refused"; }
 bash "$served" v1.2.0 omx-a < "$t/tree" > "$t/out" 2>&1 || { cat "$t/out"; fail "a tag release read staging (it must not)"; }
 echo "a merge to devel of a version the channel root or staging holds is refused by name; a new one passes: ok"
+# a wave's devel channel (DEVEL_TREE, docs/release-operations.md "The three channel levels"): its own tree counts beside
+# staging, another wave's never does
+printf '%s\n' devel/wave-a/rpm/fedora/45/x86_64/omx-a-1.4.0-1.fc45.x86_64.rpm devel/wave-b/rpm/fedora/45/x86_64/omx-a-1.5.0-1.fc45.x86_64.rpm >> "$t/tree"
+STAGING=true DEVEL_TREE=devel/wave-a bash "$served" v1.4.0 omx-a < "$t/tree" > "$t/out" 2>&1 && { cat "$t/out"; fail "a merge into wave-a of a version wave-a published passed"; }
+grep -q 'v1.4.0 is already served: devel/wave-a/rpm/fedora/45/x86_64/omx-a-1.4.0-1.fc45.x86_64.rpm' "$t/out" || { cat "$t/out"; fail "the refusal does not name the wave's file"; }
+STAGING=true DEVEL_TREE=devel/wave-a bash "$served" v1.2.0 omx-a < "$t/tree" > "$t/out" 2>&1 && { cat "$t/out"; fail "a wave's merge of a version staging holds passed"; }
+STAGING=true DEVEL_TREE=devel/wave-a bash "$served" v1.5.0 omx-a < "$t/tree" > "$t/out" 2>&1 || { cat "$t/out"; fail "another wave's tree refused wave-a's version"; }
+STAGING=true bash "$served" v1.4.0 omx-a < "$t/tree" > "$t/out" 2>&1 || { cat "$t/out"; fail "a staging merge read a wave's devel tree"; }
+echo "a wave's merge is refused by a version its own devel tree or staging holds, never by another wave's: ok"
 
 # ---- 3. the promotion copies the staged real package, checksum for checksum
 ch=$t/channel; s=$ch/staging/rpm/fedora/45; d=$ch/staging/deb/debian/trixie

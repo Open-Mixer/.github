@@ -14,7 +14,12 @@ The rules, each a string comparison:
     starts with staging/ : the stage builds and the purge of staging, which feed the next layer and are not the
     release channel consumers install from; (b) a step of a composite action whose own `if` is exactly one of the three
     canonical sign gates, when the CALLER gives that action a literal sign of false (or none, the default being false):
-    it assembles a tree and pushes nothing. Any expression where a literal is needed is not a proof.
+    it assembles a tree and pushes nothing. Any expression where a literal is needed is not a proof. A gate may carry
+    the narrowing conjunct  && inputs.channel-level == ''  (the publish actions' level input) and is read as the gate
+    without it: one more condition can only stop a push. (c) a step whose own `if` is exactly SIGN_DEVEL writes a wave's
+    devel channel, devel/<wave>/<kind>, alone (publish-rpms/channel-level.sh is the one name of that path, refusing any
+    level that is not devel/[a-z0-9-]+, and tests/devel-channel-publish.sh proves nothing outside it is written): like
+    staging/ it feeds the wave's next lines, never the release channel consumers install from.
 A workflow a person can start by hand takes no input named like a publish switch. .yml and .yaml, workflows and
 composite actions, are all read. LIMIT: a script of the repository that itself does the push or the upload, and is not in
 an action directory, is invisible (Open-Mixer/.github#132).  Usage: publish_only_by_tag.py <repo root> | --selftest
@@ -25,7 +30,17 @@ import yaml
 TAG = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
 SIGN_REAL = "inputs.sign == 'true' && inputs.staging != 'true'"
 SIGN_STAGING = "inputs.sign == 'true' && inputs.staging == 'true'"
-SIGN_GATES = {"inputs.sign == 'true'", SIGN_REAL, SIGN_STAGING}
+NO_LEVEL = " && inputs.channel-level == ''"
+SIGN_DEVEL = "inputs.sign == 'true' && inputs.channel-level != ''"
+SIGN_GATES = {"inputs.sign == 'true'", SIGN_REAL, SIGN_STAGING, SIGN_REAL + NO_LEVEL, SIGN_STAGING + NO_LEVEL, SIGN_DEVEL}
+
+
+def gate_of(st):
+    """the canonical sign gate of a step's own `if`, its narrowing level conjunct taken off; None when it is none"""
+    if "if" not in st: return None
+    t = norm_if(st["if"])
+    if t not in SIGN_GATES: return None
+    return t[: -len(NO_LEVEL)] if t.endswith(NO_LEVEL) else t
 PUSH_HELPER = "channel-push"
 # A push to the TRIGGERING pull request's own head branch is not a publish (no tag, release, package or channel; ruling of the
 # coordinator, Open-Mixer/.github#177, the language-pack fill): every publishing thing in the job is such a push AND the
@@ -140,7 +155,7 @@ class Repo:
         out = []
         for st in steps:
             for f in self.step_findings(st, stack + (name,)):
-                f = dict(f); f["gated"] = norm_if(st["if"]) if "if" in st and norm_if(st["if"]) in SIGN_GATES else None
+                f = dict(f); f["gated"] = gate_of(st)
                 out.append(f)
         d = os.path.join(self.root, ".github", "actions", name)
         for fn in sorted(os.listdir(d)):
@@ -155,7 +170,7 @@ class Repo:
             if not what: continue
             prhead = (what == "git push" and only_git_push(txt) and pr_head_only(txt, py=fn.endswith(".py"))) or None
             for st in [x for x in steps if fn in str(x.get("run", ""))] or [{}]:
-                out.append({"what": what + " in " + fn, "dest": None, "prhead": prhead, "gated": norm_if(st["if"]) if "if" in st and norm_if(st["if"]) in SIGN_GATES else None})
+                out.append({"what": what + " in " + fn, "dest": None, "prhead": prhead, "gated": gate_of(st)})
         self.memo[name] = out
         return out
 
@@ -191,6 +206,7 @@ def publishing(f):
     if f["dest"] is not None and staging_literal(f["dest"]): return False
     if f["gated"]:
         if f.get("sign") == "false": return False
+        if f["gated"] == SIGN_DEVEL: return False
         if f["gated"] == SIGN_REAL and f.get("staging") == "true": return False
         if f["gated"] == SIGN_STAGING and f.get("staging") == "false": return False
     return True
@@ -264,6 +280,9 @@ PUB_ACTION = ("name: pub\ninputs:\n  sign:\n    default: 'false'\n  staging:\n  
               "    - id: r\n      if: inputs.sign == 'true' && inputs.staging != 'true'\n      uses: ./.github/actions/channel-push\n      with:\n        what: %s\n")
 HELPER = "name: channel-push\ninputs:\n  what:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: git push origin HEAD\n"
 CP = "./.github/actions/channel-push"
+# a devel push of a wave (publish-rpms push-devel): its `what` an expression, its gate the one exact SIGN_DEVEL
+DEVEL_ACTION = ("name: pubd\ninputs:\n  sign:\n    default: 'false'\n  channel-level:\n    default: ''\nruns:\n  using: composite\n  steps:\n"
+                "    - id: d\n      if: %s\n      uses: ./.github/actions/channel-push\n      with:\n        what: ${{ steps.x.outputs.tree }}\n")
 
 
 def selftest(real):
@@ -272,6 +291,8 @@ def selftest(real):
     pub = dict(helper, **{"actions/pub/action.yml": PUB_ACTION % "rpm"})
     P = "./.github/actions/pub"
     reds = {
+        "a devel push gated by anything but exactly SIGN_DEVEL": dict(helper, **{
+            "actions/pubd/action.yml": DEVEL_ACTION % (SIGN_DEVEL + " || inputs.x == 'y'"), "workflows/a.yml": call("./.github/actions/pubd", "          sign: 'true'\n          channel-level: devel/w\n")}),
         "gh release upload, no condition": {"workflows/a.yml": wf()},
         "npm publish, no condition": {"workflows/a.yml": wf(run="npm publish --provenance")},
         "aws s3 sync, no condition": {"workflows/a.yml": wf(run="aws s3 sync out s3://b")},
@@ -324,6 +345,8 @@ def selftest(real):
         "a sign-gated action given sign true in a tag job": dict(pub, **{"workflows/a.yml": call(P, "          sign: 'true'\n", job_if="${{ " + T + " }}")}),
         "a push of a literal staging path": dict(helper, **{"workflows/a.yml": call(CP, "          what: staging/rpm\n")}),
         "a dry-run npm publish": {"workflows/a.yml": wf(run="npm publish --dry-run")},
+        "a wave's devel push, exactly SIGN_DEVEL, sign true from a dispatch job": dict(helper, **{
+            "actions/pubd/action.yml": DEVEL_ACTION % SIGN_DEVEL, "workflows/a.yml": call("./.github/actions/pubd", "          sign: 'true'\n          channel-level: devel/w\n")}),
     }
     PRON = "pull_request: {}"
     PRJ = "${{ " + PR_JOB + " }}"
