@@ -58,19 +58,19 @@ step "$act" '^Prove the packages are there' "$work/first.sh"
 step "$act" '^Assemble the tree' "$work/assemble.sh"
 # the two steps of a publish: <staging true|false> <package dir> <log>
 publish() {
-    local staging=$1 dir=$2 log=$3
+    local staging=$1 dir=$2 log=$3 w=${4:-$ws}
     unset RPM_TREE REPO_FILE SKELETON DEB_TREE LABEL REQUIRES_TREE
     : > "$work/env"
     if [ "$kind" = rpm ]; then
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms GITHUB_ENV=$work/env RPM_DIR=$dir STAGING=$staging RELEASES="44 45" \
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-rpms GITHUB_ENV=$work/env RPM_DIR=$dir STAGING=$staging RELEASES="44 45" \
             bash -e "$work/first.sh" >/dev/null)
         envfile "$work/env"
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID bash -e "$work/assemble.sh") > "$log" 2>&1
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID bash -e "$work/assemble.sh") > "$log" 2>&1
     else
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-debs GITHUB_ENV=$work/env DEB_DIR=$dir STAGING=$staging SUITES="bookworm trixie" \
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-debs GITHUB_ENV=$work/env DEB_DIR=$dir STAGING=$staging SUITES="bookworm trixie" \
             bash -e "$work/first.sh" >/dev/null)
         envfile "$work/env"
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-debs DEB_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID REQUIRES=libmod-host-protocol0 \
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-debs DEB_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID REQUIRES=libmod-host-protocol0 \
             CHANGELOGS_URL=https://www.openmixer.org/deb/changelogs bash -e "$work/assemble.sh") > "$log" 2>&1
     fi
 }
@@ -83,10 +83,12 @@ unvouched() { # <what> <pattern> <channel> <dir>
 
 case $kind in
 rpm)
-    mkpkg() { # <name> <version> <release> <out dir>: the noarch package and its source package
+    mkpkg() { # <name> <version> <release> <out dir> [requires]: the noarch package and its source package
         local d=$work/rb-$1-$2-$3
         mkdir -p "$d" "$4"
-        printf '%s\n' "Name: $1" "Version: $2" "Release: $3" 'Summary: t' 'License: MIT' 'BuildArch: noarch' '%description' 't' '%files' > "$d/p.spec"
+        { printf '%s\n' "Name: $1" "Version: $2" "Release: $3" 'Summary: t' 'License: MIT' 'BuildArch: noarch'
+          [ -z "${5:-}" ] || printf 'Requires: %s\n' "$5"
+          printf '%s\n' '%description' 't' '%files'; } > "$d/p.spec"
         rpmbuild -ba --quiet --define "_topdir $d" "$d/p.spec" >/dev/null 2>&1 || fail "rpmbuild $1 $2-$3"
         find "$d/RPMS" "$d/SRPMS" -name '*.rpm' -exec cp {} "$4/" \;
     }
@@ -148,8 +150,29 @@ if PINNED_FINGERPRINTS=$work/pinned-other.txt "$vouch" "$ch" "$kind" "$work/prom
 grep -q 'not one this repository pins' "$work/vouch.log" || fail "the unpinned key file is not named: $(cat "$work/vouch.log")"
 ok "$kind: refused: everything, when the channel's key file is not one this repository pins"
 
-# ---- the promotion: the publish with staging off
+# ---- the promotion is gated: the channel as it will be after the move is judged before anything is assembled
+# omx-app 1.0, served by the real channel, needs omx-lib below 3.14: promoting 3.14.0 would leave it uninstallable, so the
+# promotion is refused, naming it, and the channel root is as it was. On a copy of the workspace: the real flow below
+# promotes into the channel without that consumer.
+gated=$work/gated; cp -a "$ws" "$gated"; gch=$gated/build/channel
+if [ "$kind" = rpm ]; then
+    for rel in 44 45; do mkpkg omx-app 1.0 "1.fc$rel" "$work/consumer" '(omx-lib >= 3.13 with omx-lib < 3.14)'; done
+    "$actions/publish-rpms/publish-tree.sh" "$gch/rpm" "$work/consumer" "$NEW_ID" >/dev/null
+else
+    for suite in bookworm trixie; do mkdeb omx-app 1.0 "$work/consumer/$suite" 'omx-lib (>= 3.13), omx-lib (<< 3.14~)'; done
+    REQUIRES=libmod-host-protocol0 "$actions/publish-debs/publish-tree.sh" "$gch/deb" "$work/consumer" "$NEW_ID" >/dev/null
+fi
+root_sum() { (cd "$1" && find "$kind" -type f -print0 | sort -z | xargs -0 sha256sum); }
+root_sum "$gch" > "$work/gated.before"
+if publish false "$work/promo" "$work/gated.log" "$gated"; then cat "$work/gated.log"; fail "a promotion that leaves the served omx-app outside its ceiling went through"; fi
+grep -q "channel-installability $kind: RED" "$work/gated.log" || { cat "$work/gated.log"; fail "the promotion did not fail on the gate's verdict"; }
+grep -q 'omx-app' "$work/gated.log" || { cat "$work/gated.log"; fail "the refusal does not name omx-app"; }
+root_sum "$gch" | cmp -s - "$work/gated.before" || fail "a refused promotion changed the channel root: $(root_sum "$gch" | diff "$work/gated.before" - | head)"
+ok "$kind: refused, naming omx-app: a promotion the served consumer's ceiling excludes; the channel root is as it was"
+
+# ---- the promotion: the publish with staging off, through the same gate, green
 publish false "$work/promo" "$work/promote.log" || { cat "$work/promote.log"; fail "the promotion publish failed"; }
+grep -q "channel-installability $kind: GREEN" "$work/promote.log" || { cat "$work/promote.log"; fail "the promotion did not pass through the gate"; }
 (cd "$ch" && sha256sum -c --quiet "$work/promo.sha256") || fail "the channel root does not hold the bytes staging held"
 staging_sum | cmp -s - "$work/staging.before" || fail "the promotion changed the staging tree: $(staging_sum | diff "$work/staging.before" - | head)"
 if [ "$kind" = rpm ]; then
