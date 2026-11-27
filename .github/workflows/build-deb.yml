@@ -257,6 +257,8 @@ jobs:
       skip: ${{ steps.preflight.outputs.skip }}
       # devel/<wave> when this run reads and publishes a wave's devel channel, empty otherwise (the level step)
       devel-channel: ${{ steps.level.outputs.devel }}
+      # the base waves read below devel-channel and above staging, space-separated devel/<wave>, empty otherwise (the level step)
+      devel-base: ${{ steps.level.outputs.base }}
     steps:
       # the cells this run builds and checks: the quick set or the full matrix (docs/release-operations.md)
       - id: matrix
@@ -305,16 +307,25 @@ jobs:
           STAGED: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           STAGING: ${{ inputs.staging }}
           DEVEL_PR: ${{ startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' }}
+          # the waves a wave one step behind another reads below its own tree and above staging (devel-chain.sh
+          # DC_BASE_CHANNEL sets the repository's OMX_DEVEL_BASE beside OMX_DEVEL_CHANNEL): read only where the wave is
+          BASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')) && vars.OMX_DEVEL_BASE || '' }}
         run: |
           no() { echo "::error::$*"; exit 1; }
           case $LEVEL in
-            '' | staging) echo "devel=" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            '' | staging) printf 'devel=\nbase=\n' >> "$GITHUB_OUTPUT"; exit 0 ;;
             devel/*) [[ ${LEVEL#devel/} =~ ^[a-z0-9-]+$ ]] || no "channel-level '$LEVEL' is not devel/<wave> with <wave> of [a-z0-9-]+" ;;
             *) no "channel-level is staging or devel/<wave>, not '$LEVEL'" ;;
           esac
           [ "$STAGED" = true ] || [ "$STAGING" = true ] || [ "$DEVEL_PR" = true ] || no "channel-level $LEVEL is for a staged run, a staging dry run or a pull request into devel: a release and a plain dry run read the real channel alone"
+          for b in $BASE; do
+            [[ $b =~ ^devel/[a-z0-9-]+$ ]] || no "OMX_DEVEL_BASE names '$b', not devel/<wave> with <wave> of [a-z0-9-]+"
+            [ "$b" != "$LEVEL" ] || no "OMX_DEVEL_BASE names '$b', the wave's own channel: a base is another wave's tree, read below it"
+          done
           echo "devel=$LEVEL" >> "$GITHUB_OUTPUT"
+          echo "base=$(echo $BASE)" >> "$GITHUB_OUTPUT"
           echo "::notice::this run reads the devel channel $LEVEL above staging, and a staged run publishes there alone"
+          [ -z "$BASE" ] || echo "::notice::below $LEVEL and above staging it reads the base waves $(echo $BASE), and never publishes there"
 
       # bootstrap: each entry names one sibling commit in full; bootstrap-only releases exactly one such package, of the
       # version source-ref names, against the real channel, from the sibling's source and not this repository's
@@ -489,6 +500,7 @@ jobs:
           staging-bootstrap: ${{ inputs.staging-bootstrap }}
           # a wave's devel channel above staging: the build takes what the wave's earlier lines published
           devel-channel: ${{ needs.preflight.outputs.devel-channel }}
+          devel-base: ${{ needs.preflight.outputs.devel-base }}
 
       # a staged snapshot or a dry run (a run not at a release tag) is <version>+git<commit time>.<sha>, above the release, so it meets a consumer's (>= <version>)
       # floor, above the staged build of any earlier commit, and is not pruned behind a published <version> by the installability gate
@@ -849,6 +861,7 @@ jobs:
           staging: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           # a wave's install check reads its devel channel above staging, where its publish went
           devel-channel: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && needs.preflight.outputs.devel-channel || '' }}
+          devel-base: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) && needs.preflight.outputs.devel-base || '' }}
 
       - name: Install the new version from the channel
         if: ${{ !(inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}

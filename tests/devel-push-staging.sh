@@ -174,7 +174,7 @@ for wf in sys.argv[1:]:
         for run, (event, ref, base, staged, publish) in lruns.items():
             c = dict(ctx("a push to main"), **{"github.event_name": event, "github.ref": ref, "github.base_ref": base,
                                                "inputs.staged": staged, "inputs.publish": publish,
-                                               "inputs.channel-level": "", "vars.OMX_DEVEL_CHANNEL": "devel/wave-a"})
+                                               "inputs.channel-level": "", "vars.OMX_DEVEL_CHANNEL": "devel/wave-a", "vars.OMX_DEVEL_BASE": ""})
             env = {k: str(ev(v, c)).lower() if isinstance(ev(v, c), bool) else str(ev(v, c)) for k, v in level["env"].items()}
             with tempfile.NamedTemporaryFile("r") as out:
                 p = subprocess.run(["bash", "-c", level["run"]], env=dict(env, GITHUB_OUTPUT=out.name, PATH="/usr/bin:/bin"),
@@ -184,6 +184,42 @@ for wf in sys.argv[1:]:
             if p.returncode != 0 or got != [want]:
                 fails.append(f"{wf}: {run} with OMX_DEVEL_CHANNEL=devel/wave-a: the level step exit {p.returncode}, devel={got}, "
                              f"want exit 0 devel={want!r} ({p.stdout.strip()} {p.stderr.strip()})")
+        # a wave's BASE waves (OMX_DEVEL_BASE, set by devel-chain.sh DC_BASE_CHANNEL beside OMX_DEVEL_CHANNEL): a wave one
+        # step behind another reads that wave's tree below its own and above staging, only where it reads its own; a base
+        # that is not devel/[a-z0-9-]+, or names the wave itself, is refused by name
+        def render(run, devel, base):
+            event, ref, br, staged, publish = lruns[run]
+            c = dict(ctx("a push to main"), **{"github.event_name": event, "github.ref": ref, "github.base_ref": br,
+                                               "inputs.staged": staged, "inputs.publish": publish, "inputs.channel-level": "",
+                                               "vars.OMX_DEVEL_CHANNEL": devel, "vars.OMX_DEVEL_BASE": base})
+            env = {k: str(ev(v, c)).lower() if isinstance(ev(v, c), bool) else str(ev(v, c)) for k, v in level["env"].items()}
+            with tempfile.NamedTemporaryFile("r") as out:
+                p = subprocess.run(["bash", "-c", level["run"]], env=dict(env, GITHUB_OUTPUT=out.name, PATH="/usr/bin:/bin"),
+                                   capture_output=True, text=True)
+                return p, re.findall(r"^base=(.*)$", open(out.name).read(), re.M)
+        for run in lruns:
+            p, got = render(run, "devel/wave-a", "devel/wave-b devel/wave-c")
+            want = "devel/wave-b devel/wave-c" if run in wants else ""
+            if p.returncode != 0 or got != [want]:
+                fails.append(f"{wf}: {run} with OMX_DEVEL_BASE='devel/wave-b devel/wave-c': the level step exit {p.returncode}, "
+                             f"base={got}, want exit 0 base={want!r} ({p.stderr.strip()})")
+        p, got = render("a push to devel", "", "devel/wave-b")
+        if p.returncode != 0 or got != [""]:
+            fails.append(f"{wf}: a base with no wave of its own is read: exit {p.returncode} base={got}")
+        for bad in ("devel/wave-a", "devel/Wave_B", "staging", "devel/../rpm"):
+            p, got = render("a push to devel", "devel/wave-a", bad)
+            if p.returncode == 0 or bad not in p.stdout + p.stderr:
+                fails.append(f"{wf}: OMX_DEVEL_BASE={bad!r} beside devel/wave-a was not refused by name (exit {p.returncode}, base={got})")
+        if "devel-base" not in jobs["preflight"].get("outputs", {}):
+            fails.append(f"{wf}: the preflight has no devel-base output")
+        # every add-openmixer that reads the wave's channel reads its base waves with it, under the same condition
+        for jn, job in jobs.items():
+            for s in job.get("steps", []):
+                w = s.get("with") or {}
+                if "add-openmixer" in str(s.get("uses", "")) and "devel-channel" in w:
+                    dc = str(w["devel-channel"]); db = str(w.get("devel-base", ""))
+                    if db != dc.replace("devel-channel", "devel-base"):
+                        fails.append(f"{wf}: job {jn}: add-openmixer reads devel-channel {dc!r} but devel-base {db!r}")
 if fails:
     print("\n".join(f"FAIL: {f}" for f in fails), file=sys.stderr); sys.exit(1)
 print("a push to devel publishes the real build to staging; a pull request publishes nothing; tags unchanged: ok")

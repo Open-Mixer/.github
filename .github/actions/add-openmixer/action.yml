@@ -23,6 +23,9 @@ description: Add the OpenMixer repository to a Fedora or Debian container by ins
 # 650; add-staging.sh LEVEL=devel/<wave>, docs/release-operations.md "The three channel levels"), and staging beneath it:
 # a wave's builds, install checks and boxes read what the wave published, then staging, then the real channel, and never
 # another wave's tree. A wave's tree never published yet (its first line) is skipped with a notice.
+# With devel-base too (space-separated <wave> or devel/<wave>, a wave one step behind another: devel-chain.sh
+# DC_BASE_CHANNEL), each base wave's tree is added below the wave's own and above staging (dnf priority 7; add-staging.sh
+# BASE=true), skipped with a notice when it was never published or has been promoted away. devel-base needs devel-channel.
 
 inputs:
   base-url:
@@ -42,6 +45,9 @@ inputs:
     default: 'false'
   devel-channel:
     description: "a wave's name, <wave> or devel/<wave> ([a-z0-9-]+): adds the devel channel of that wave above staging (priority 5 / pin 650), and staging with it; empty adds none"
+    default: ''
+  devel-base:
+    description: "the base waves of devel-channel, space-separated <wave> or devel/<wave>: each added below the wave's own tree and above staging (priority 7); needs devel-channel"
     default: ''
 
 runs:
@@ -121,3 +127,27 @@ runs:
           apt-get update -qq
           apt-cache policy | grep -A1 "devel/${WAVE#devel/}/deb" || true
         fi
+
+    - if: inputs.devel-base != '' && inputs.release-package == 'openmixer-release'
+      shell: bash
+      env:
+        BASE_URL: ${{ inputs.base-url }}
+        SUITE: ${{ inputs.suite }}
+        WAVE: ${{ inputs.devel-channel }}
+        BASES: ${{ inputs.devel-base }}
+      run: |
+        set -euo pipefail
+        [ -n "$WAVE" ] || { echo "::error::devel-base '$BASES' without devel-channel: a base is read below a wave's own tree"; exit 1; }
+        for b in $BASES; do
+          b=${b#devel/}
+          [ "$b" != "${WAVE#devel/}" ] || { echo "::error::devel-base names $b, the wave's own channel"; exit 1; }
+          LEVEL=devel/$b BASE=true "$GITHUB_ACTION_PATH/add-staging.sh"
+          if [ ! -f "/etc/yum.repos.d/openmixer-base-$b.repo" ] && [ ! -f "/etc/apt/sources.list.d/openmixer-base-$b.sources" ]; then
+            echo "::notice::the base wave $b serves nothing for this machine (never published, or promoted away): this job reads ${WAVE#devel/}, staging and the real channel"
+          elif command -v dnf >/dev/null; then
+            dnf -y --setopt=skip_if_unavailable=False makecache --repo "openmixer-base-$b" --repo "openmixer-base-$b-noarch"
+          else
+            apt-get update -qq
+            apt-cache policy | grep -A1 "devel/$b/deb" || true
+          fi
+        done

@@ -14,6 +14,9 @@
 #   - a client with the real channel, staging and wave-a's devel channel takes wave-a's build over staging's (priority 5
 #     over 10, pin 650 over 600) and never wave-b's higher one; without the devel channel it takes staging's again;
 #   - add-staging.sh with a wave never published adds nothing and says so (a wave's first line).
+#   - a BASE wave (add-staging.sh BASE=true, a wave one step behind another): wave-b added as wave-a's base sits below
+#     wave-a's own tree and above staging (rpm priority 7: wave-a's 3.15.0 over wave-b's higher 3.16.0, and wave-b's over
+#     staging's without wave-a; deb: under the devel pin, above staging); a base never published is skipped, said so.
 #   - add-staging.sh with a wave published, but for no index of this machine (forky, outside the wave's skeleton), adds
 #     nothing and says so: the job reads staging (.github#331).
 # Sabotage: channel-level.sh joining the devel tree without its devel/<wave>/ prefix makes the first arm red.
@@ -196,6 +199,22 @@ if [ "$kind" = rpm ]; then
     q makecache --refresh >/dev/null; q install omx-lib >/dev/null
     [ "$(rpm -q --qf '%{VERSION}' omx-lib)" = 3.14.0 ] || fail "without the devel channel the client took omx-lib $(rpm -q --qf '%{VERSION}' omx-lib), not staging's 3.14.0"
     q remove omx-lib >/dev/null
+    # wave-b as wave-a's BASE: below wave-a's own tree, above staging
+    mv "$work/openmixer-devel.repo" /etc/yum.repos.d/
+    out=$(BASE_URL=$base LEVEL=devel/wave-b BASE=true "$actions/add-openmixer/add-staging.sh")
+    grep -q 'priority 7' <<< "$out" || fail "the base wave was not added at priority 7: $out"
+    grep -qx '\[openmixer-base-wave-b\]' /etc/yum.repos.d/openmixer-base-wave-b.repo 2>/dev/null || fail "no openmixer-base-wave-b repository: $(ls /etc/yum.repos.d)"
+    grep -q 'devel/wave-a' /etc/yum.repos.d/openmixer-devel.repo || fail "adding a base replaced the wave's own devel repository"
+    q makecache --refresh >/dev/null; q install omx-lib >/dev/null
+    got=$(rpm -q --qf '%{VERSION}' omx-lib); repo=$(dnf -q repoquery --installed --qf '%{from_repo}' omx-lib)
+    case "$got $repo" in "3.15.0 "openmixer-devel*) ;; *) fail "with wave-a's own tree and wave-b as its base the client took omx-lib $got from $repo, not wave-a's 3.15.0" ;; esac
+    q remove omx-lib >/dev/null
+    mv /etc/yum.repos.d/openmixer-devel.repo "$work/"
+    q makecache --refresh >/dev/null; q install omx-lib >/dev/null
+    got=$(rpm -q --qf '%{VERSION}' omx-lib); repo=$(dnf -q repoquery --installed --qf '%{from_repo}' omx-lib)
+    case "$got $repo" in "3.16.0 "openmixer-base-wave-b*) ;; *) fail "with the base wave-b above staging the client took omx-lib $got from $repo, not wave-b's 3.16.0" ;; esac
+    q remove omx-lib >/dev/null
+    rm -f /etc/yum.repos.d/openmixer-base-wave-b.repo
 else
     # a container an earlier test of the job used: what it installed or added is gone first
     for p in omx-lib omx-new; do dpkg -P "$p" >/dev/null 2>&1 || true; done
@@ -216,8 +235,24 @@ else
     apt-get update -qq
     cand=$(apt-cache policy omx-lib | awk '/Candidate:/ {print $2}')
     [ "$cand" = 3.14.0 ] || fail "without the devel channel the candidate is omx-lib $cand, not staging's 3.14.0"
+    # wave-b as a BASE: its own sources file under the devel pin, above staging
+    out=$(BASE_URL=$base SUITE=trixie LEVEL=devel/wave-b BASE=true "$actions/add-openmixer/add-staging.sh")
+    grep -q 'pinned 650' <<< "$out" || fail "the base wave was not under the devel pin: $out"
+    [ -f /etc/apt/sources.list.d/openmixer-base-wave-b.sources ] || fail "no openmixer-base-wave-b.sources: $(ls /etc/apt/sources.list.d)"
+    apt-get update -qq -o APT::Update::Error-Mode=any
+    cand=$(apt-cache policy omx-lib | awk '/Candidate:/ {print $2}')
+    [ "$cand" = 3.16.0 ] || fail "with the base wave-b the candidate is omx-lib $cand, not wave-b's 3.16.0: $(apt-cache policy omx-lib)"
+    rm -f /etc/apt/sources.list.d/openmixer-base-wave-b.sources /etc/apt/preferences.d/openmixer-devel.pref
+    apt-get update -qq
 fi
 ok "$kind: a client with wave-a's devel channel takes its build over staging's, never wave-b's; without it, staging's"
+ok "$kind: a base wave sits below the wave's own tree and above staging"
+
+# ---- a base wave never published (or promoted away): nothing added, said so
+out=$(BASE_URL=$base SUITE=trixie LEVEL=devel/wave-c BASE=true "$actions/add-openmixer/add-staging.sh" 2>&1) || fail "a base wave never published failed add-staging.sh: $out"
+grep -q 'base wave wave-c' <<< "$out" || fail "add-staging.sh does not name the base wave it skipped: $out"
+[ ! -e /etc/yum.repos.d/openmixer-base-wave-c.repo ] && [ ! -e /etc/apt/sources.list.d/openmixer-base-wave-c.sources ] || fail "a base wave never published was added"
+ok "$kind: a base wave never published is skipped with a notice, nothing added"
 
 # ---- a wave never published: nothing added, said so (the wave's first line)
 out=$(BASE_URL=$base SUITE=trixie LEVEL=devel/wave-c "$actions/add-openmixer/add-staging.sh" 2>&1) || fail "a wave never published failed add-staging.sh: $out"
