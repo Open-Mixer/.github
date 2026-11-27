@@ -20,7 +20,7 @@
 //               package is served at all; served in any version it is an ordinary floor there (below it: refused). The
 //               next regeneration then writes the plain floor
 // <package> is a binary package name, or source:<name> for every package built from that source. <distro/arch>
-// is e.g. fedora/45/*, debian/bookworm/amd64.
+// is e.g. fedora/45/*, debian/trixie/amd64.
 //
 // The sources (read from the default branch, or from a --local checkout):
 //   the worker image's repository (private: --worker-image <owner/repo> or OMX_WORKER_IMAGE_REPO; it is named
@@ -123,14 +123,14 @@ export function pinsTxtRows(text, pin) {
 }
 
 // install_openmixer.sh: PACKAGES="a b c". The recipe installs on a Zynthian, and Zynthian runs on the Pi: the set
-// pins arm64 only (ruled 2026-11-16). As debian/<suite>/* it also pinned amd64, where nothing installs it: the
+// pins arm64 only (ruled 2026-11-16), on trixie alone (Debian bookworm dropped from the matrix, owner 2026-11-27). As debian/<suite>/* it also pinned amd64, where nothing installs it: the
 // trixie/amd64 retirement of plugin-qualify 0.20.3 (no amd64 build installs there) met a pin it did not owe.
 export const INSTALL_SET_ARCH = 'arm64';
 export function installSet(text, pin) {
   const m = text.match(/^PACKAGES="([^"]*)"/m);
   if (!m) return [];
   return m[1].split(/\s+/).filter(Boolean).flatMap((pkg) =>
-    ['bookworm', 'trixie'].map((s) => ({ pkg, version: 'newest', where: `debian/${s}/${INSTALL_SET_ARCH}`, pin })));
+    ['trixie'].map((s) => ({ pkg, version: 'newest', where: `debian/${s}/${INSTALL_SET_ARCH}`, pin })));
 }
 
 // the plugin-qualify action: apt-get install ... plugin-hostd plugin-hostd-tests; dpkg --compare-versions ... ge X
