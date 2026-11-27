@@ -9,7 +9,8 @@
 #     channel root serves the package for and the promotion does not cover;
 #   - the workflow, rendered: nothing in it builds; a run that is not a tag push signs and pushes nothing and creates
 #     no release; a tag push publishes with staging off, in the live publish group, and creates the release only after
-#     the channel serves the bytes staging served and the install checks passed; no job creates the tag.
+#     the channel serves the bytes staging served and the install checks passed; no job creates the tag; the publish
+#     keeps the channel-installability gate on, so the move is judged against the channel it joins (.github#51).
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 collect=$here/.github/actions/promote-staged/collect.py
@@ -115,6 +116,9 @@ for j, pub in (("rpm", "publish-rpms"), ("deb", "publish-debs")):
     assert c["commit"] == "${{ needs.find.outputs.short }}", f"job {j} does not promote the commit the find job checked"
     w = uses(j, pub)[0]["with"]
     assert w["staging"] is False, f"job {j} publishes to staging"
+    # the channel-installability gate of the publish action runs when installability is not 'false' and staging is not
+    # 'true': a promotion is judged against the channel it joins, before anything is assembled (.github#51)
+    assert str(w.get("installability", "true")) != "false", f"job {j} promotes without the channel-installability gate"
     assert w["sign"] == "true" and jobs[j]["if"] == "${{ " + TAG[1:-1] + " }}", f"job {j}: not sign true under the tag condition alone"
     assert w[f"{j}-dir"] == c["out"], f"job {j} publishes another directory than the collected one"
     assert jobs[j]["concurrency"] == {"group": "publish-${{ inputs.target-repo }}-live",
@@ -148,7 +152,7 @@ find = text("find")
 assert "merge-base --is-ancestor" in find and "secrets." not in find, "the find job does not check the commit, or reads a secret"
 PY
 python3 -I "$t/wf.py" "$wf" || fail "the workflow is not the promotion its header describes"
-ok "workflow: nothing builds or signs a package; a run that is not a tag push pushes and releases nothing and no job creates the tag; the release waits for the served bytes and the install checks"
+ok "workflow: nothing builds or signs a package; a run that is not a tag push pushes and releases nothing and no job creates the tag; the release waits for the served bytes and the install checks; the publish keeps the channel-installability gate on"
 # ---- the dry-run path: the `ver` step reads the INPUTS (a step cannot read its own outputs), and the three cases run
 cat > "$t/ver.py" <<'PY'
 import os, subprocess, sys, yaml
@@ -183,6 +187,7 @@ sab() { # <what> <sed expression>
 sab "a release job that runs on a dispatch" '/^  release-go:/,/^  release:/ s/ \&\& (github.event_name == .push. \&\& startsWith(github.ref, .refs\/tags\/.))//'
 sab "a release job whose condition is not the tag alone" '/^  release:/,$ s/^    if: .*/    if: ${{ always() }}/'
 sab "a dispatch-triggered promote (a publish that signs on any event)" 's/sign: .true./sign: ${{ inputs.rpm }}/'
+sab "a promotion that skips the channel-installability gate" "s/^          matrix-set: full$/          matrix-set: full\n          installability: 'false'/"
 sab "a publish to staging" 's/staging: false/staging: true/'
 sab "a tag that does not wait for the install checks" 's/needs: \[find, served, verify-rpm, verify-deb\]/needs: [find, served]/'
 sab "a publish without the signature check" "s/^          out: promote\/rpm$/&\n          vouch: 'false'/"
