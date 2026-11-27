@@ -173,7 +173,10 @@ Each tree carries its own signed metadata and its own `cells.tsv`.
 
 **Publishing into a wave.** `build-rpm.yml` and `build-deb.yml` take `channel-level` (empty or `staging`: the staging
 channel, today's behaviour; `devel/<wave>`: that wave's channel). A merge to devel with no input reads the calling
-repository's variable `OMX_DEVEL_CHANNEL`, which the coordinator's wave tool sets for a wave's line. The preflight's
+repository's variable `OMX_DEVEL_CHANNEL`, which the coordinator's wave tool sets for a wave's line; so does a pull
+request into devel, which builds against the wave's tree as its merge will (a pull request into main never reads it,
+.github#329). `add-openmixer` reads no repository variable (as `check-matrix`): a repository's own `ci.yml` passes it to
+`add-openmixer` `devel-channel` itself on a pull request into devel. The preflight's
 level step validates it (never on a tag or a release) and hands `devel-channel` to every job: the staged publish passes
 `channel-level: devel/<wave>` to `publish-rpms` / `publish-debs`, which write `devel/<wave>/<kind>` alone (their
 `push-devel` step, gated by exactly `inputs.sign == 'true' && inputs.channel-level != ''`, commits that one path; the
