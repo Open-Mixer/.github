@@ -68,7 +68,8 @@ jobs:
       image: fedora:45
       options: --dns 10.43.0.10 --dns-search llm-router.svc.cluster.local --dns-search svc.cluster.local --dns-search cluster.local
     steps:
-      - run: dnf install -y --setopt=install_weak_deps=False git python3 nodejs gnupg2 ${{ inputs.packages }}
+      # the caller's packages (omx-contract-devel, ...) are OpenMixer's: they install once its channel is added, below
+      - run: dnf install -y --setopt=install_weak_deps=False git python3 nodejs gnupg2
       - name: The dispatched branch is the head of one open same-repository pull request
         id: pr
         if: github.event_name == 'workflow_dispatch'
@@ -111,8 +112,10 @@ jobs:
         uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
           staging: 'true'
+          # a wave's branch reads that wave's devel channel above staging (.github#329)
+          devel-channel: ${{ (github.event_name == 'workflow_dispatch' || github.base_ref == 'devel') && vars.OMX_DEVEL_CHANNEL || '' }}
       - if: steps.pr.outputs.kept != 'true'
-        run: dnf install -y --setopt=install_weak_deps=False omx-contract omx-contract-data
+        run: dnf install -y --setopt=install_weak_deps=False omx-contract omx-contract-data ${{ inputs.packages }}
       - if: steps.pr.outputs.kept != 'true'
         uses: Open-Mixer/.github/.github/actions/langpacks@openmixer-v1
         with:
