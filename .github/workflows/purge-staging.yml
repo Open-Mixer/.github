@@ -15,6 +15,15 @@ name: Purge the staging channel
 #     with: { reason: wave-2026-11 }
 #     secrets: inherit
 #
+# drop (name@version[,name@version...]: the package name a file carries and its upstream version) takes only those files
+# out of staging/rpm (every fedora/<release>/<arch>, noarch and SRPMS directory) and staging/deb (every suite and
+# architecture) and keeps everything else: the metadata of the directories and Debian releases they left is made again
+# and signed with the release key, the rest keeps its bytes, and cells.tsv is written again. The rpm job, the first,
+# refuses an entry that matches no file of either staging tree, by name, before anything is written; each removed path
+# is printed. e.g. a wrong staged version:
+#
+#   gh workflow run purge-staging.yml -R Open-Mixer/.github -f reason=drop-foo-2 -f drop=foo@2,libfoo@2
+#
 # Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY, and
 # RPM_GPG_KEY with RPM_GPG_PASSPHRASE are no longer read (declared optional so a caller that still passes them does not fail); the index carries one signature.
 
@@ -41,6 +50,10 @@ on:
         type: boolean
         default: false
         description: 'Purge a pulled copy and push nothing'
+      drop:
+        type: string
+        default: ''
+        description: 'name@version,... : remove only the files that are those package versions (upstream version) from staging/rpm and staging/deb; empty purges everything'
   workflow_call:
     inputs:
       target-repo:
@@ -63,6 +76,10 @@ on:
         type: boolean
         default: false
         description: 'Purge a pulled copy and push nothing'
+      drop:
+        type: string
+        default: ''
+        description: 'name@version,... : remove only the files that are those package versions (upstream version) from staging/rpm and staging/deb; empty purges everything'
     secrets:
       OPENMIXER_PACKAGES_SIGNING_KEY:
         required: false
@@ -104,6 +121,9 @@ jobs:
           channel: ${{ inputs.target-repo }}
           releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
           reason: ${{ inputs.reason }}
+          drop: ${{ inputs.drop }}
+          # the first job checks the whole drop list against both staging trees, before either is written
+          drop-check: 'true'
 
   deb:
     name: Purge staging/deb
@@ -126,3 +146,6 @@ jobs:
           channel: ${{ inputs.target-repo }}
           releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
           reason: ${{ inputs.reason }}
+          drop: ${{ inputs.drop }}
+          # checked by the rpm job, which this one needs: staging/rpm may already have lost its entries
+          drop-check: 'false'
