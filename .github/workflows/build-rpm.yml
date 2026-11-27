@@ -288,9 +288,12 @@ jobs:
       - name: The channel level of a staged run
         id: level
         env:
-          LEVEL: ${{ inputs.channel-level || ((github.event_name == 'push' && github.ref == 'refs/heads/devel') && vars.OMX_DEVEL_CHANNEL || '') }}
+          # a pull request into devel reads the wave's channel exactly as the merge's push does (.github#329): the
+          # repository's OMX_DEVEL_CHANNEL is set by devel-chain.sh before the line's merge; a pull request into main never
+          LEVEL: ${{ inputs.channel-level || ((github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')) && vars.OMX_DEVEL_CHANNEL || '' }}
           STAGED: ${{ (inputs.staged || (github.event_name == 'push' && github.ref == 'refs/heads/devel')) }}
           STAGING: ${{ inputs.staging }}
+          DEVEL_PR: ${{ startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' }}
         run: |
           no() { echo "::error::$*"; exit 1; }
           case $LEVEL in
@@ -298,7 +301,7 @@ jobs:
             devel/*) [[ ${LEVEL#devel/} =~ ^[a-z0-9-]+$ ]] || no "channel-level '$LEVEL' is not devel/<wave> with <wave> of [a-z0-9-]+" ;;
             *) no "channel-level is staging or devel/<wave>, not '$LEVEL'" ;;
           esac
-          [ "$STAGED" = true ] || [ "$STAGING" = true ] || no "channel-level $LEVEL is for a staged run or a staging dry run: a release and a plain dry run read the real channel alone"
+          [ "$STAGED" = true ] || [ "$STAGING" = true ] || [ "$DEVEL_PR" = true ] || no "channel-level $LEVEL is for a staged run, a staging dry run or a pull request into devel: a release and a plain dry run read the real channel alone"
           echo "devel=$LEVEL" >> "$GITHUB_OUTPUT"
           echo "::notice::this run reads the devel channel $LEVEL above staging, and a staged run publishes there alone"
 

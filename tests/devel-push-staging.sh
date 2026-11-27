@@ -21,7 +21,7 @@
 set -euo pipefail
 root=$(readlink -f "${1:-$(dirname "$(readlink -f "$0")")/..}")
 python3 -I - "$root/.github/workflows/build-rpm.yml" "$root/.github/workflows/build-deb.yml" <<'PY'
-import re, sys, yaml
+import re, subprocess, sys, tempfile, yaml
 
 def ev(expr, ctx):
     """The GitHub expression subset these conditions use: names, 'strings', true/false, ==, !=, !, &&, ||, (), and
@@ -162,10 +162,33 @@ for wf in sys.argv[1:]:
                          ("the install check runs", jobs["verify"]["if"])):
                 if not truthy(ev(e, c)):
                     fails.append(f"{wf}: a push to devel with OMX_DEVEL_MATRIX=rpm-x86_64: {n} is off")
+    # the wave's devel channel (.github#329): with the repository's OMX_DEVEL_CHANNEL set (devel-chain.sh sets it before
+    # the line's green-merge), a pull request into devel builds against devel/<wave> exactly as the merge's push does;
+    # a pull request into main, a push to main and a tag never read it. The level step's script runs as written.
+    level = step("preflight", lambda s: s.get("id") == "level")
+    if level is not None:
+        lruns = dict(RUNS, **{"a pull request into main": ("pull_request", "refs/pull/2/merge", "main", False, False),
+                              "a pull_request_target into devel": ("pull_request_target", "refs/heads/devel", "devel", False, False)})
+        wants = {"a push to devel": "devel/wave-a", "a pull request into devel": "devel/wave-a",
+                 "a pull_request_target into devel": "devel/wave-a"}
+        for run, (event, ref, base, staged, publish) in lruns.items():
+            c = dict(ctx("a push to main"), **{"github.event_name": event, "github.ref": ref, "github.base_ref": base,
+                                               "inputs.staged": staged, "inputs.publish": publish,
+                                               "inputs.channel-level": "", "vars.OMX_DEVEL_CHANNEL": "devel/wave-a"})
+            env = {k: str(ev(v, c)).lower() if isinstance(ev(v, c), bool) else str(ev(v, c)) for k, v in level["env"].items()}
+            with tempfile.NamedTemporaryFile("r") as out:
+                p = subprocess.run(["bash", "-c", level["run"]], env=dict(env, GITHUB_OUTPUT=out.name, PATH="/usr/bin:/bin"),
+                                   capture_output=True, text=True)
+                got = re.findall(r"^devel=(.*)$", open(out.name).read(), re.M)
+            want = wants.get(run, "")
+            if p.returncode != 0 or got != [want]:
+                fails.append(f"{wf}: {run} with OMX_DEVEL_CHANNEL=devel/wave-a: the level step exit {p.returncode}, devel={got}, "
+                             f"want exit 0 devel={want!r} ({p.stdout.strip()} {p.stderr.strip()})")
 if fails:
     print("\n".join(f"FAIL: {f}" for f in fails), file=sys.stderr); sys.exit(1)
 print("a push to devel publishes the real build to staging; a pull request publishes nothing; tags unchanged: ok")
 print("OMX_DEVEL_MATRIX=rpm-x86_64: a push to devel stages and install-checks the quick rpm, runs no deb job; other runs unchanged: ok")
+print("OMX_DEVEL_CHANNEL: a push to devel and a pull request into devel read the wave's channel; a pull request into main, main and a tag never: ok")
 PY
 
 t=$(mktemp -d "${TMPDIR:-/tmp}/devel-push-staging.XXXXXX"); trap 'rm -rf -- "$t"' EXIT
@@ -665,7 +688,7 @@ echo "bump-exempt is refused, by glob and packaged file, over packaging/, debian
 #      workflow_call outputs skipped and devel-version, mapped from the preflight job's own outputs, so a caller's post-build
 #      job can read needs.<call>.outputs.skipped.
 python3 -I - "$root" <<'PY2' || fail "a reusable workflow does not hand the preflight's skip and devel-version to its caller"
-import re, sys, yaml
+import re, subprocess, sys, tempfile, yaml
 for kind in ("rpm", "deb"):
     d = yaml.safe_load(open(f"{sys.argv[1]}/.github/workflows/build-{kind}.yml"))
     outs = ((d.get("on") or d[True])["workflow_call"].get("outputs") or {})
