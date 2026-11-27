@@ -49,7 +49,7 @@ inputs:
     description: architectures, space separated; empty is the channel's (deb) or x86_64 aarch64 (rpm)
     default: ''
   same-pass:
-    description: packages other repositories release in the same pass, space separated, binary or SOURCE names (a source covers every binary the channel's metadata says it builds); a breakage they cause or suffer, or that reaches a package only through one of them, is reported, not red
+    description: packages other repositories release in the same pass, space separated, binary or SOURCE names (a source covers every binary the channel's metadata says it builds); a breakage they cause or suffer, or that reaches a package only through one of them, is reported, not red; an entry the channel does not serve yet is reported when the staging channel beside it (<root>/staging/<kind>) names it, and red when no channel does (a misspelling)
     default: ''
   dry-run:
     description: "true for a release dry run (nothing is published): only the architectures the pass built are judged; a real publish judges every architecture the channel serves"

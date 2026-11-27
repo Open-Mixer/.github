@@ -32,10 +32,14 @@ architecture) does the same, on an architecture the release brings no binary pac
 built on another: the release builds them there at the new version. Every architecture is still checked.
 A same-pass name may be a SOURCE package: it covers every binary the channel's own metadata says it builds (rpm SOURCERPM,
 deb Source field, the Package name when absent). A same-pass name that is neither a source nor a binary of the channel's
-metadata is RED by name (it covers nothing: a repository name, say). A package that installs alone only through a same-pass binary's unmet
-requirement (every unmet requirement on its dependency path is held by binaries of the pass) is reported like the pass's own;
-any breakage through a package outside the pass stays RED. "before" is the published channel without the exact versions
-this release brings, so a gate re-run after a partial publish judges the release, not the channel it already changed.
+metadata is RED by name (it covers nothing: a repository name, say), unless the staging channel beside the judged
+one (--names-channel; by default <root>/staging/<kind> beside a channel at <root>/<kind>) names it: a package the
+channel does not serve yet (its first population, released later in the same pass) has nothing in the channel to
+break, so it is reported. The staging channel is read for its names alone, never as a provider.
+A package that installs alone only through a same-pass binary's unmet requirement (every unmet requirement on its
+dependency path is held by binaries of the pass) is reported like the pass's own; any breakage through a package
+outside the pass stays RED. "before" is the published channel without the exact versions this release brings, so a
+gate re-run after a partial publish judges the release, not the channel it already changed.
 
 Exit status: 0 green, 1 red, 2 the check could not be made (an index that does not download, a tool that is missing):
 2 is never a pass.
@@ -445,16 +449,65 @@ def expand_same_pass(same_pass, pkgs):
     return list(same_pass) + covered
 
 
-def unknown_same_pass_reds(same_pass, pkgs):
-    """A same-pass entry that matches NEITHER a source NOR a binary name in the channel's metadata (rpm SOURCERPM and
-    name, deb Source and Package) is refused by name: it covers nothing, and the breakage it was meant to excuse stays
-    red with no hint why (a repository name, omx-clap-core, whose source is omx-clap-host). pkgs is the metadata the gate
-    read for the pass, the packages this pass builds included: a brand-new source built in this run matches here. A
-    brand-new source that this run does not build is not in the metadata and is refused too."""
+def same_pass_name_check(same_pass, pkgs, names=None, names_from=None):
+    """(reds, warns). A same-pass entry that matches NEITHER a source NOR a binary name in the channel's metadata (rpm
+    SOURCERPM and name, deb Source and Package) is refused by name: it covers nothing, and the breakage it was meant to
+    excuse stays red with no hint why (a repository name, omx-clap-core, whose source is omx-clap-host). pkgs is the
+    metadata the gate read for the pass, the packages this pass builds included: a brand-new source built in this run
+    matches here.
+    names, when given, is called only if an entry is unknown, and returns the metadata of the staging channel
+    (names_from): an entry it names is a real package the channel does not serve yet, released later in this pass or
+    never (plugin-hostd-protocol v0.21.3, the first population of the 0.M.m line, run 45978541763). The channel serves
+    nothing of that name for the release to break, so it is reported; an entry in neither is a misspelling, red."""
     known = {p.name for p in pkgs} | {p.source for p in pkgs}
-    return [f"same-pass entry {n} is neither a source nor a binary package in the channel (a repository name? its source "
-            f"may be named differently; a package new to the channel and not built in this run is refused as well)"
-            for n in dict.fromkeys(same_pass) if n not in known]
+    unknown = [n for n in dict.fromkeys(same_pass) if n not in known]
+    staged = set()
+    if unknown and names:
+        elsewhere = names()
+        staged = {p.name for p in elsewhere} | {p.source for p in elsewhere}
+    reds = [f"same-pass entry {n} is neither a source nor a binary package in the channel"
+            + (f" nor in {names_from}" if names else "")
+            + " (a repository name? its source may be named differently; a package new to the channel and not built in "
+              "this run is refused as well" + (", unless the staging channel names it)" if names else ")")
+            for n in unknown if n not in staged]
+    warns = [f"same-pass entry {n} is not in the channel yet, though {names_from} serves it: released later in this "
+             f"pass or never (the channel serves nothing of that name for this release to break)"
+             for n in unknown if n in staged]
+    return reds, warns
+
+
+def names_channel(a, kind):
+    """The staging channel whose names a same-pass entry is checked against: --names-channel, empty for none, or by
+    default <root>/staging/<kind> beside a channel at <root>/<kind> (the pulled tree build/channel/rpm, the served
+    https://www.openmixer.org/deb). None for any other channel, and for the staging channel itself."""
+    if a.names_channel is not None:
+        return a.names_channel or None
+    ch = a.channel.rstrip("/")
+    if not ch.endswith(f"/{kind}"):
+        return None
+    root = ch[:-len(kind) - 1]
+    return None if root.endswith("/staging") else f"{root}/staging/{kind}"
+
+
+def deb_names(channel, suites, work):
+    """The packages the staging channel serves in these Debian releases (a release it does not serve: none)."""
+    pkgs = []
+    for suite in suites:
+        src = join(channel, "debian", suite, "Packages")
+        if exists(src):
+            pkgs += deb_pkgs(parse_stanzas(open(fetch(src, os.path.join(work, f"names-{suite}"))).read()))
+    return pkgs
+
+
+def rpm_names(channel, cells, reposdir):
+    """The packages the staging channel serves in these Fedora cells (a tree it does not serve: none)."""
+    pkgs = []
+    for rel, arch in dict.fromkeys(cells):
+        repos = [(f"omx-names-{x}", channel_path(channel, rel, x)) for x in (arch, "noarch")]
+        repos = [(i, p) for i, p in repos if exists(join(p, "repodata", "repomd.xml"))]
+        if repos:
+            pkgs += repoquery(dnf_base(rel, arch, reposdir), repos, [i for i, _ in repos])
+    return pkgs
 
 
 def held_by_pass(kind, pkgs, req, dep, same_pass):
@@ -837,7 +890,11 @@ def deb_arm(a):
             warns += [f"debian/{suite}: {x}" for x in w]
             notes += [f"debian/{suite}: {x}" for x in n]
         if read_pkgs:
-            reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+            names = names_channel(a, "deb")
+            r, w = same_pass_name_check(a.same_pass, read_pkgs,
+                                        names and (lambda: deb_names(names, suites, work)), names)
+            reds += r
+            warns += w
         else:  # no metadata read (the cells left no suite): nothing to match the names against, so none is judged
             say("same-pass names not checked: no suite judged")
     finally:
@@ -924,6 +981,7 @@ def rpm_arm(a):
             raise Cannot(f"no Fedora release served under {a.channel}/fedora and none given")
         arches = a.arch or ["x86_64", "aarch64"]
         read_pkgs = []  # the channel's metadata the gate read, every cell: a same-pass name is checked against it
+        judged = []  # the cells read, where the staging channel's names are looked up
         for rel in versions:
             for arch in arches:
                 where = f"fedora/{rel} {arch}"
@@ -952,6 +1010,7 @@ def rpm_arm(a):
                 published = repoquery(base, pub, ids, excl)
                 same_pass = expand_same_pass(unbuilt, published + new_pkgs)
                 read_pkgs += published + new_pkgs
+                judged.append((rel, arch))
                 excl_opts = [f"--setopt={rid}.excludepkgs={','.join(excl)}" for rid in ids] if excl else []
                 before = run_repoclosure(base + excl_opts, pub, ids, arch)
                 # repoclosure --newest takes the newest of each repository, so the published versions of what the
@@ -985,7 +1044,11 @@ def rpm_arm(a):
                 notes += [f"{where}: {x}" for x in n]
         # the entries are the pass's own names, not the unbuilt ones the cells derive from their metadata
         if read_pkgs:
-            reds += unknown_same_pass_reds(a.same_pass, read_pkgs)
+            names = names_channel(a, "rpm")
+            r, w = same_pass_name_check(a.same_pass, read_pkgs,
+                                        names and (lambda: rpm_names(names, judged, a.reposdir)), names)
+            reds += r
+            warns += w
         else:  # no metadata read (the cells left no suite): nothing to match the names against, so none is judged
             say("same-pass names not checked: no cell judged")
     finally:
@@ -1069,7 +1132,8 @@ def ceiling_cmd(a):
         pub = parse_rpm_query(open(a.published).read())
         new = sum((parse_rpm_query(open(f).read()) for f in a.new), [])
     r, w, n = ceiling_check(a.kind, pub, new, expand_same_pass(a.same_pass, pub + new))
-    return report("ceiling", unknown_same_pass_reds(a.same_pass, pub + new) + r, w, n)
+    r0, w0 = same_pass_name_check(a.same_pass, pub + new)
+    return report("ceiling", r0 + r, w0 + w, n)
 
 
 def main(argv=None):
@@ -1082,6 +1146,10 @@ def main(argv=None):
         p.add_argument("--arch", action="append")
         p.add_argument("--new-dir")
         p.add_argument("--same-pass", type=words, default=[])
+        p.add_argument("--names-channel",
+                       help="the staging channel, read for its package NAMES alone (never as a provider): a "
+                            "same-pass entry the channel does not serve yet but this one does is reported, not "
+                            "refused; empty for none. Default: <root>/staging/<kind> beside a channel at <root>/<kind>")
         p.add_argument("--drop", action="append", help="leave this NAME or NAME=VERSION (rpm: a NEVRA glob) out of "
                                                        "the published channel")
         p.add_argument("--keep", action="store_true", help="keep the work directory")
