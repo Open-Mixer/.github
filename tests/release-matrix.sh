@@ -141,7 +141,7 @@ def run(kind, inputs, event, ref_type, var, branch="main", dvar=None):
     # the devel step reads a merge to devel's version and the preflight says whether it is published (skip, .github#289);
     # none of these runs is one
     # and the level step names no wave's devel channel (tests/devel-channel-publish.sh renders one)
-    steps = O(matrix=O(outputs=out), devel=O(outputs=O(version="")), preflight=O(outputs=O(skip="")), level=O(outputs=O(devel="")))
+    steps = O(matrix=O(outputs=out), devel=O(outputs=O(version="")), preflight=O(outputs=O(skip="")), level=O(outputs=O(devel="", base="")))
     pre = d["jobs"]["preflight"]
     needs = O(preflight=O(outputs=O({k: ev(v, full, event, ref_type, var, steps=steps, branch=branch, dvar=dvar) for k, v in pre["outputs"].items()})))
     names = {}

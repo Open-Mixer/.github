@@ -34,7 +34,15 @@
 # Pin-Priority 650 for the index labelled OpenMixer-Devel. The files are packaging/devel, the wave written in. A wave's
 # tree that was never published (index and key both 404) is skipped with a notice whatever STAGING_BOOTSTRAP says: the
 # first line of a wave builds before anything was published to it, and every later line reads what the earlier ones
-# published. A tree that is published without this machine's index still fails. Only one wave is ever added.
+# published. A tree that is published without this machine's index still fails. Only one wave is ever added as the
+# wave's own.
+#
+# BASE=true with LEVEL=devel/<wave> adds that wave as a BASE of the wave being built (a wave one step behind another,
+# devel-chain.sh DC_BASE_CHANNEL, the repository's OMX_DEVEL_BASE): below the wave's own tree and above staging, the
+# same rules otherwise (never published, or no index for this machine: skipped with a notice). dnf:
+# /etc/yum.repos.d/openmixer-base-<wave>.repo, ids openmixer-base-<wave> and openmixer-base-<wave>-noarch, priority=7.
+# apt: /etc/apt/sources.list.d/openmixer-base-<wave>.sources under the devel pin (its index is labelled OpenMixer-Devel
+# too, pin 650): apt orders the two by version, and a wave's line raises its version above its base's.
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 level=${LEVEL:-staging}
@@ -46,6 +54,7 @@ if [ "$level" = staging ]; then
 else
     wave=$("$here/../publish-rpms/channel-level.sh" wave "$level") || exit 1
     src=$here/../../../packaging/devel path=devel/$wave name=openmixer-devel what="the devel channel of $wave"
+    [ "${BASE:-false}" != true ] || name=openmixer-base-$wave what="the base wave $wave"
     # a wave's first line builds before its tree exists: an absent tree is skipped, never a fallback once it exists
     STAGING_BOOTSTRAP=true STAGING_FOR_DEVEL=false
 fi
@@ -100,7 +109,10 @@ if command -v dnf >/dev/null; then
         "$base/$path/rpm/fedora/$releasever/$(uname -m)/repodata/repomd.xml" "$base/$path/rpm/fedora/$releasever/noarch/repodata/repomd.xml"
     [ -f /etc/yum.repos.d/openmixer.repo ] || die "the real channel is not added (/etc/yum.repos.d/openmixer.repo): $what goes beside it, never alone"
     repo=$("$here/../publish-rpms/channel-level.sh" repo-file "$level" "$(mktemp -d)")
-    sed "s|https://www.openmixer.org/|$base/|" "$repo" > "/etc/yum.repos.d/$name.repo"
+    # a base wave: the devel tree's file under its own ids, below the wave's own (5) and above staging (10)
+    rename=()
+    [ "$name" != "openmixer-base-${wave:-}" ] || rename=(-e "s|^\[openmixer-devel|[$name|" -e 's|^priority=5$|priority=7|' -e "s|^name=OpenMixer devel|name=OpenMixer base|")
+    sed "${rename[@]}" -e "s|https://www.openmixer.org/|$base/|" "$repo" > "/etc/yum.repos.d/$name.repo"
     chmod 644 "/etc/yum.repos.d/$name.repo"
     echo "added $base/$path/rpm ($name, $name-noarch, priority $(sed -n 's/^priority=//p' "/etc/yum.repos.d/$name.repo" | head -1))"
 else
@@ -110,9 +122,10 @@ else
     [ -n "$suite" ] || die "no Debian release named, and /etc/os-release has no VERSION_CODENAME"
     skip_if_never_published "$base/$path/deb" openmixer.asc "$base/$path/deb/debian/$suite/InRelease"
     [ -f /etc/apt/sources.list.d/openmixer.sources ] || die "the real channel is not added (/etc/apt/sources.list.d/openmixer.sources): $what goes beside it, never alone"
-    sed -e "s|@SUITE@|$suite|" -e "s|@WAVE@|${wave:-}|" -e "s|https://www.openmixer.org/|$base/|" "$src/$name.sources.in" \
+    file=${name/#openmixer-base-*/openmixer-devel}
+    sed -e "s|@SUITE@|$suite|" -e "s|@WAVE@|${wave:-}|" -e "s|https://www.openmixer.org/|$base/|" "$src/$file.sources.in" \
         > "/etc/apt/sources.list.d/$name.sources"
-    install -D -m 644 "$src/$name.pref" "/etc/apt/preferences.d/$name.pref"
+    install -D -m 644 "$src/$file.pref" "/etc/apt/preferences.d/$file.pref"
     chmod 644 "/etc/apt/sources.list.d/$name.sources"
-    echo "added $base/$path/deb/debian/$suite (pinned $(sed -n 's/^Pin-Priority: //p' "$src/$name.pref"))"
+    echo "added $base/$path/deb/debian/$suite (pinned $(sed -n 's/^Pin-Priority: //p' "$src/$file.pref"))"
 fi

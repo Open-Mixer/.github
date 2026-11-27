@@ -189,6 +189,16 @@ staging with it (`add-staging.sh` `LEVEL=devel/<wave>`). A wave's tree never pub
 with a notice; a published tree without this machine's index fails. A development picks its base level by what it adds:
 the real channel alone, staging, or a wave.
 
+**A wave one step behind another.** A wave that builds on a wave not yet promoted reads that wave's tree as its BASE:
+`add-openmixer` `devel-base: <wave> ...` (needs `devel-channel`) adds each base wave below the wave's own tree and above
+staging (`add-staging.sh` `BASE=true`: dnf ids `openmixer-base-<wave>[-noarch]`, priority 7, between the wave's 5 and
+staging's 10; apt a sources file of its own under the devel pin, 650, where the higher version wins, and a wave's line
+raises its version above its base's). The build workflows read the repository's `OMX_DEVEL_BASE` (space-separated
+`devel/<wave>`) only where they read `OMX_DEVEL_CHANNEL`, and the level step refuses a base that is not
+`devel/[a-z0-9-]+` or names the wave itself; `devel-chain.sh` `DC_BASE_CHANNEL` sets and clears it beside
+`OMX_DEVEL_CHANNEL`. Nothing is ever published to a base. Once the base wave is promoted and its tree removed, a base that
+serves nothing is skipped with a notice, and the wave reads staging, where the promoted bytes now are.
+
 **Promoting a wave.** `promote-wave.yml` (dispatch, `wave: <wave>`) runs `actions/promote-wave` per kind: the wave's
 packages and `built/` records are copied to the same paths under `staging/<kind>`, staging's `cells.tsv` takes the
 wave's rows (with their set), and staging's metadata is regenerated and signed by the tree scripts. Before anything is
