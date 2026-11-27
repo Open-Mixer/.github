@@ -90,6 +90,23 @@ arm_ceiling() {
   expect 0 - 'ceiling: floor and ceiling, a shlibs floor on libcore1 and a Debian package pass' -- \
     ceiling --kind deb --published "$d/published" --new "$d/tool-ok"
 
+  # a published consumer that was already uninstallable: the line its range names was pruned under it (omx-panel 0.13.6
+  # asks omx-contract-data >= 3.16.0 on a channel that serves none, omx-contract v0.23.4 run 45978366900). The release
+  # breaks nothing it did not find broken: reported, not red; a consumer the channel did satisfy stays red beside it
+  { stanza libproto0 0.4.3 amd64
+    stanza hostd 0.19.1 amd64 'libproto0 (>= 3.16.0), libproto0 (<< 4~)'
+  } > "$d/pub-orphan"
+  cat "$d/pub-orphan" > "$d/pub-orphan-and-live"
+  stanza clap-host 0.30.6 amd64 'libproto0 (>= 0.4.0~), libproto0 (<< 0.5~)' >> "$d/pub-orphan-and-live"
+  expect 0 'which nothing the channel served met before this release: already uninstallable' \
+    'ceiling: a published consumer whose range nothing served met before is reported, not red' -- \
+    ceiling --kind deb --published "$d/pub-orphan" --new "$d/lib-alone"
+  expect 1 'published clap-host 0.30.6 declares (libproto0 (<< 0.5~)): release it in the same pass' \
+    'ceiling: ... while a consumer the channel did satisfy is still red' -- \
+    ceiling --kind deb --published "$d/pub-orphan-and-live" --new "$d/lib-alone"
+  grep -qF 'published hostd 0.19.1 declares (libproto0 (>= 3.16.0))' "$t/out" && ! grep -q 'RED.*published hostd' "$t/out" \
+    && ok 'ceiling: ... and the orphan beside it is reported, not red' || bad 'ceiling: the orphan beside a live consumer is not reported apart'
+
   # a published consumer whose upper bound is AT the version (<= 0.32.5): a new snapshot of 0.32.5 is that release, whether
   # built ~git (below) or +git (above, a staged run, a dry run); judged raw, the +git one fell outside the range
   { stanza libproto0 0.32.4 amd64; stanza hostd 0.19.1 amd64 'libproto0 (>= 0.32.0), libproto0 (<= 0.32.5)'; } > "$d/pub-le"
@@ -127,8 +144,10 @@ arm_ceiling() {
   ! grep -q 'same-pass entry' "$t/out" && ok 'ceiling: ... and no same-pass line is refused' || bad 'ceiling: newsrc refused'
 
   # a pull request's snapshot (<v>~git<time>.<sha>, sorting below <v>) is judged at the <v> it would release (#93): a
-  # published consumer's (>= <v>) floor does not refuse it; a snapshot of an older version still is
+  # published consumer's (>= <v>) floor does not refuse it; a snapshot of an older version still is. The channel serves
+  # a libx7 the consumer installs with (1.11.1): a consumer nothing served met is reported, not red (pub-orphan above)
   { stanza libx7 1.10.4 amd64
+    stanza libx7 1.11.1 amd64
     stanza consumer 1.0.43 amd64 'libx7 (>= 1.11.0)'
   } > "$d/snap-published"
   stanza libx7 1.11.0~git1794785975.a48ccb1 amd64 > "$d/snap-at-floor"

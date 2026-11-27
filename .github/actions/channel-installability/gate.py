@@ -23,7 +23,8 @@ packages" on a clean bookworm and trixie). Three arms:
            hand-kept floors; a breaking release declares generated Breaks/Conflicts); where a ceiling IS declared it
            must not be crossed:
            a new version outside the range a published consumer declares is RED unless that consumer's new release is
-           in the same pass.
+           in the same pass, or nothing the channel served met that range before the release (the consumer was
+           already uninstallable: reported, like a breakage the other arms find before the release).
 
 A package named in --same-pass (released by another repository in the same pass) excuses a breakage of its own or one
 it causes: its own release is checked when it publishes. --unbuilt-arch-pass (a dry run, whose matrix builds one
@@ -382,6 +383,16 @@ def ceiling_check(kind, published, new, same_pass=()):
                 by.setdefault(name, []).append((op, ver))
         return by
 
+    before = [p for p in published if (p.name, p.version, p.arch) not in new_keys]
+
+    def met_before(cons_pkg, lib_name):
+        """True when a version of lib_name the channel served before this release meets every range cons_pkg declares
+        on it: the consumer installed before, so a new version outside its range is a breakage the release brings."""
+        want = ranges(cons_pkg).get(lib_name, [])
+        return any(all(not op or satisfies(kind, release_version(q.version), op, release_version(ver)) for op, ver in want)
+                   for q in before if q.name == lib_name
+                   and (q.arch == cons_pkg.arch or {q.arch, cons_pkg.arch} & {"all", "noarch"}))
+
     # a new version outside the range a consumer declares
     said = set()
     for lib in new:
@@ -408,6 +419,12 @@ def ceiling_check(kind, published, new, same_pass=()):
                 elif cons_pkg.name in same_pass:
                     notes.append(f"{cons_pkg.name} {cons_pkg.version} requires {req}, outside {lib.name} "
                                  f"{lib.version}: its new release is in the same pass")
+                elif not met_before(cons_pkg, lib.name):
+                    # nothing the channel served met the range before (a line pruned under it): the consumer was
+                    # already uninstallable, so the release breaks nothing (the judge and newest arms' "before" rule)
+                    warns.append(f"published {cons_pkg.name} {cons_pkg.version} declares ({req}), which nothing the "
+                                 f"channel served met before this release: already uninstallable, not held against "
+                                 f"{lib.name} {lib.version}")
                 else:
                     reds.append(f"{lib.name} {lib.version} falls outside the range published "
                                 f"{cons_pkg.name} {cons_pkg.version} declares ({req}): release it in the same pass")
