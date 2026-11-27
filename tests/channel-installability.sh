@@ -24,6 +24,8 @@
 #   source   (same-pass) a name in the same-pass list is a SOURCE: it covers every binary the channel's own metadata says it
 #            builds (rpm SOURCERPM, deb Source: field, the Package name when absent), and a package whose only unmet
 #            requirement on its path is held by such a binary is reported, not red; any other breakage stays red.
+#            A same-pass name the channel does not serve yet but the staging channel beside it does (read for its names
+#            alone) is reported; a name in neither is red (a misspelling).
 # Usage: tests/channel-installability.sh [ceiling|deb_cells|deb|deb_source|deb_release_package|deb_unbuilt|deb_dryrun_version|rpm|rpm_source|rpm_quick|one_channel_deb|one_channel_rpm]...   (no argument: ceiling, then each arm whose tools exist)
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -313,6 +315,26 @@ arm_deb_source() {
     'deb source: (d) a same-pass repository name is refused by name' -- deb --channel "$d/a" "${args[@]}" --same-pass 'clap-core nosuch-repo'
   [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
     && ok 'deb source: (d) ... and the source is still covered' || bad 'deb source: (d) the refusal or the covering changed'
+  # (e) the first population of a channel (plugin-hostd-protocol v0.21.3, run 45978541763): a same-pass entry the channel
+  # does not serve yet, but the staging channel beside it (<root>/staging/deb, read for its NAMES alone) does, is
+  # reported, not refused: the channel serves nothing of that name for the release to break. A misspelt name is in
+  # neither and stays red.
+  mkdir -p "$d/tree/deb/debian/bookworm" "$d/tree/staging/deb/debian/bookworm"
+  cp "$d/a/debian/bookworm/Packages" "$d/tree/deb/debian/bookworm/"
+  printf 'Package: newbin\nSource: newsrc (1.0-1)\nVersion: 1.0\nArchitecture: amd64\n\n' > "$d/tree/staging/deb/debian/bookworm/Packages"
+  expect 0 'same-pass entry newsrc is not in the channel yet' \
+    'deb source: (e) a same-pass source only the staging channel serves is reported, not refused' -- \
+    deb --channel "$d/tree/deb" "${args[@]}" --same-pass 'clap-core newsrc newbin'
+  grep -qF 'same-pass entry newbin is not in the channel yet' "$t/out" && ! grep -qE '^(ERROR: |::error::)' "$t/out" \
+    && ok 'deb source: (e) ... a binary of it too, and no line is an error' || bad 'deb source: (e) newbin is not reported or a line is an error'
+  expect 1 'same-pass entry nosuch-repo is neither a source nor a binary package in the channel' \
+    'deb source: (e) a misspelt entry, in neither channel, stays red' -- \
+    deb --channel "$d/tree/deb" "${args[@]}" --same-pass 'clap-core newsrc nosuch-repo'
+  [ "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -c 'same-pass entry')" = 1 ] \
+    && ok 'deb source: (e) ... and it alone is red' || bad 'deb source: (e) the red is not the misspelt entry alone'
+  expect 1 'same-pass entry newsrc is neither a source nor a binary package in the channel' \
+    'deb source: (e) --names-channel "" reads no staging channel: the entry is refused as before' -- \
+    deb --channel "$d/tree/deb" "${args[@]}" --same-pass 'clap-core newsrc' --names-channel ''
 }
 
 arm_deb_dryrun_version() {
@@ -467,6 +489,27 @@ arm_rpm_source() {
     'rpm source: (d) a same-pass repository name is refused by name' -- "${args[@]}" --channel "$d/a" --same-pass 'clap-core nosuch-repo'
   [ "$(grep -c 'same-pass entry' "$t/out")" = 1 ] && grep -qF 'uninstallable until the rest of the pass (clap-host)' "$t/out" \
     && ok 'rpm source: (d) ... and the source is still covered' || bad 'rpm source: (d) the refusal or the covering changed'
+  # (e) the first population of a channel (plugin-hostd-protocol v0.21.3, run 45978541763): a same-pass entry the channel
+  # does not serve yet, but the staging channel beside it (<root>/staging/rpm, read for its NAMES alone) does, is
+  # reported, not refused: the channel serves nothing of that name for the release to break. A misspelt name is in
+  # neither and stays red.
+  mkdir -p "$d/tree/rpm/fedora/44" "$d/tree/staging/rpm/fedora/44/noarch" "$d/tree/staging/rpm/fedora/44/x86_64"
+  cp -r "$d/a/fedora/44/noarch" "$d/a/fedora/44/x86_64" "$d/tree/rpm/fedora/44/"
+  cp "$(mks newsrc newbin 1.0)" "$d/tree/staging/rpm/fedora/44/noarch/"
+  createrepo_c -q "$d/tree/staging/rpm/fedora/44/noarch"; createrepo_c -q "$d/tree/staging/rpm/fedora/44/x86_64"
+  expect 0 'same-pass entry newsrc is not in the channel yet' \
+    'rpm source: (e) a same-pass source only the staging channel serves is reported, not refused' -- \
+    "${args[@]}" --channel "$d/tree/rpm" --same-pass 'clap-core newsrc newbin'
+  grep -qF 'same-pass entry newbin is not in the channel yet' "$t/out" && ! grep -qE '^(ERROR: |::error::)' "$t/out" \
+    && ok 'rpm source: (e) ... a binary of it too, and no line is an error' || bad 'rpm source: (e) newbin is not reported or a line is an error'
+  expect 1 'same-pass entry nosuch-repo is neither a source nor a binary package in the channel' \
+    'rpm source: (e) a misspelt entry, in neither channel, stays red' -- \
+    "${args[@]}" --channel "$d/tree/rpm" --same-pass 'clap-core newsrc nosuch-repo'
+  [ "$(grep -E '^(ERROR: |::error::)' "$t/out" | grep -c 'same-pass entry')" = 1 ] \
+    && ok 'rpm source: (e) ... and it alone is red' || bad 'rpm source: (e) the red is not the misspelt entry alone'
+  expect 1 'same-pass entry newsrc is neither a source nor a binary package in the channel' \
+    'rpm source: (e) --names-channel "" reads no staging channel: the entry is refused as before' -- \
+    "${args[@]}" --channel "$d/tree/rpm" --same-pass 'clap-core newsrc' --names-channel ''
 }
 
 # A QUICK RELEASE NEVER REACHES A TREE OUTSIDE THE QUICK SET (omx-dsp 0.32.1, 2026-11-14). The quick set builds fc44 and
