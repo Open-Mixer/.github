@@ -7,6 +7,12 @@ description: Empty the staging channel of a release wave (staging/rpm or staging
 # metadata is regenerated and signed by the tree scripts of a publish (purge-staging.sh), and the change is pushed by
 # channel-push like a publish. Only staging/<kind> is committed; rpm/ and deb/ are never read for writing. Runs in a
 # Fedora container for rpm and a Debian one for deb, as the publish actions do.
+#
+# With drop (name@version[,name@version...]) it empties nothing: only the files that are exactly those package versions
+# leave staging/<kind>, and only the metadata of the directories (rpm) or Debian releases (deb) they left is made again
+# and signed (drop-staging.sh); the tree is pulled with its metadata so every other directory keeps its bytes. With
+# drop-check, an entry that matches no file of staging/rpm or staging/deb refuses the run, named, before anything is
+# written: the workflow checks in its rpm job, the first, while both staging trees still hold everything.
 
 inputs:
   kind:
@@ -31,6 +37,12 @@ inputs:
   reason:
     description: for the commit message (the wave, or the tag of the pass)
     default: purge
+  drop:
+    description: name@version[,name@version...] to take out of staging/<kind> alone, every other package kept; empty purges the whole tree
+    default: ''
+  drop-check:
+    description: "'true' refuses, by name and before anything is written, an entry of drop that matches no file of staging/rpm or staging/deb"
+    default: 'true'
 
 outputs:
   commit:
@@ -63,7 +75,8 @@ runs:
         publish-token: ${{ inputs.publish-token || github.token }}
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
-        strip: ${{ inputs.kind == 'rpm' && 'staging/rpm' || 'none' }}
+        # a drop keeps the metadata of every directory it does not touch
+        strip: ${{ (inputs.drop == '' && inputs.kind == 'rpm') && 'staging/rpm' || 'none' }}
 
     - name: Check the signing key is one the channel serves
       if: inputs.sign == 'true'
@@ -76,6 +89,7 @@ runs:
         "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID"
 
     - name: Purge the staging tree
+      if: inputs.drop == ''
       shell: bash
       env:
         KIND: ${{ inputs.kind }}
@@ -94,6 +108,24 @@ runs:
         outside=$(git -C build/channel status --porcelain --untracked-files=all -- . ":(exclude)staging/$KIND")
         [ -z "$outside" ] || { echo "::error::the purge changed paths outside staging/$KIND:"; echo "$outside"; exit 1; }
 
+    - name: Drop the named package versions from the staging tree
+      if: inputs.drop != ''
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        DROP: ${{ inputs.drop }}
+        DROP_CHECK: ${{ inputs.drop-check }}
+      run: |
+        set -o pipefail
+        echo "PURGE_STAGING_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
+        echo "STAGING_DROP=$DROP" >> "$GITHUB_ENV"
+        if [ "$DROP_CHECK" = true ]; then "$GITHUB_ACTION_PATH/drop-staging.sh" check build/channel "$DROP"; fi
+        "$GITHUB_ACTION_PATH/drop-staging.sh" "$KIND" build/channel "$DROP" ${OPENMIXER_GPG_KEY_ID:+"$OPENMIXER_GPG_KEY_ID"}
+        git -C build/channel status --short -- "staging/$KIND" | tail -60
+        # nothing outside staging/<kind> changed in the checkout: the real channel is untouched
+        outside=$(git -C build/channel status --porcelain --untracked-files=all -- . ":(exclude)staging/$KIND")
+        [ -z "$outside" ] || { echo "::error::the drop changed paths outside staging/$KIND:"; echo "$outside"; exit 1; }
+
     - id: push-rpm
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
       if: inputs.sign == 'true' && inputs.kind == 'rpm'
@@ -104,7 +136,8 @@ runs:
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.reason }}
         what: staging/rpm
-        rebuild: '"$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
+        # a lost race repeats the drop (no check: the other kind's job may have pushed) or the purge on the new tip
+        rebuild: 'if [ -n "$STAGING_DROP" ]; then "$PURGE_STAGING_ACTION/drop-staging.sh" "${{ inputs.kind }}" build/channel "$STAGING_DROP" "$OPENMIXER_GPG_KEY_ID"; else "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"; fi'
 
     - id: push-deb
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
@@ -116,4 +149,5 @@ runs:
         branch: ${{ inputs.branch }}
         tag: ${{ inputs.reason }}
         what: staging/deb
-        rebuild: '"$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"'
+        # a lost race repeats the drop (no check: the other kind's job may have pushed) or the purge on the new tip
+        rebuild: 'if [ -n "$STAGING_DROP" ]; then "$PURGE_STAGING_ACTION/drop-staging.sh" "${{ inputs.kind }}" build/channel "$STAGING_DROP" "$OPENMIXER_GPG_KEY_ID"; else "$PURGE_STAGING_ACTION/purge-staging.sh" "${{ inputs.kind }}" build/channel "$OPENMIXER_GPG_KEY_ID"; fi'

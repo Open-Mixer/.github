@@ -37,6 +37,10 @@
 #               directories that received a package get their metadata made again, from the packages they hold; every
 #               other directory keeps its metadata and its signature byte for byte, and the repository file is not
 #               rewritten.
+#   REINDEX     the directories a drop (purge-staging drop-staging.sh) removed packages from, fedora/<release>/<arch> relative
+#               to the tree, space separated, with an empty <rpm dir> and EMPTY_OK: as with a catch-up, only those get their
+#               metadata made again, from the packages they still hold; every other directory keeps its metadata and its
+#               signature byte for byte, and the repository file is not rewritten. Pull the tree with strip: none.
 #   KEY_FILE    the name of the public key file the tree serves; default RPM-GPG-KEY-openmixer. A channel of another
 #               project names its own (RPM-GPG-KEY-freereac); SERVED_KEYS_DIR=none (channel-keys.sh) keeps OpenMixer's
 #               committed keys out of it, and REPO_FILE is that channel's repository file.
@@ -57,6 +61,15 @@
 set -euo pipefail
 
 tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <rpm dir> [<gpg key id>]}")
+# a catch-up and a drop make again only the metadata of what they changed; every other directory keeps its bytes
+only_touched=${CATCH_UP:-}
+reindex=()
+for d in ${REINDEX:-}; do
+    [[ $d =~ ^fedora/[0-9]+/[A-Za-z0-9_]+$ ]] && [ -d "$tree/$d" ] ||
+        { echo "REINDEX names '$d', not a fedora/<release>/<arch> directory of the tree" >&2; exit 1; }
+    reindex+=("$tree/$d")
+    only_touched=true
+done
 src=${2:?usage: publish-tree.sh <tree> <rpm dir> [<gpg key id>]}
 key=${3:-}
 # the channel's public key file: OpenMixer's by default, another channel's by KEY_FILE (a file name, no directory)
@@ -388,16 +401,16 @@ for rel in "$tree"/fedora/*/; do
     [ -d "$rel" ] || continue
     for arch in noarch $repo_arches SRPMS; do
         # a catch-up keeps a directory that exists, with its metadata; one the release lacks is made, with metadata
-        [ "${CATCH_UP:-}" = true ] && [ -d "$rel$arch" ] && continue
+        [ "$only_touched" = true ] && [ -d "$rel$arch" ] && continue
         mkdir -p "$rel$arch"
         dirs[${rel}$arch]=1
     done
 done
-if [ "${CATCH_UP:-}" = true ]; then # only what received a package
-    # the directories this run placed into, their metadata made again from the packages they hold (never updated from
-    # the pulled metadata, which this run did not write); every other directory keeps its metadata and signature
-    for f in "${placed[@]}"; do
-        d=$(dirname "$f")
+if [ "$only_touched" = true ]; then # only what received a package
+    # the directories this run placed into or a drop removed from, their metadata made again from the packages they hold
+    # (never updated from the pulled metadata, which this run did not write); every other directory keeps its metadata
+    # and signature
+    for d in ${placed[@]+"${placed[@]%/*}"} ${reindex[@]+"${reindex[@]}"}; do
         dirs[$d]=1
         rm -rf "$d/repodata"
     done
@@ -432,8 +445,8 @@ done
 # openmixer.repo is the file openmixer-release installs, the same bytes (REPO_FILE: openmixer-staging.repo for staging)
 if [ -n "$key" ]; then
     keyfile="$tree/$key_name"
-    # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
-    [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
+    # a catch-up or a drop keeps the key file's bytes when it already serves the same keys: only a new key changes it
+    [ "$only_touched" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
     "$here/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"
     if [ -f "$keyfile.keep" ]; then
         if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
@@ -443,8 +456,8 @@ if [ -n "$key" ]; then
             rm -f "$keyfile.keep"
         fi
     fi
-    # a catch-up does not rewrite the repository file the channel serves
-    [ "${CATCH_UP:-}" = true ] && [ -e "$tree/$(basename "$repo_file")" ] || install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
+    # a catch-up or a drop does not rewrite the repository file the channel serves
+    [ "$only_touched" = true ] && [ -e "$tree/$(basename "$repo_file")" ] || install -m 0644 "$repo_file" "$tree/$(basename "$repo_file")"
 fi
 
 # which cells every package and version of the tree has, and the set (quick or full) this run published: the channel

@@ -293,6 +293,10 @@ jobs:
         shell: bash
         run: tests/promote-wave.sh ${{ matrix.kind }}
 
+      - name: A drop takes only the named versions out of staging and makes only their metadata again, signed
+        shell: bash
+        run: tests/staging-drop.sh ${{ matrix.kind }}
+
   staging-bootstrap:
     name: First staged run into a channel with no staging path (${{ matrix.kind }})
     runs-on: ubuntu-latest

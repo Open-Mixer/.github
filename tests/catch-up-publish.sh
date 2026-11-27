@@ -176,10 +176,10 @@ if [ -z "${CATCH_UP_ACTIONS:-}" ]; then
         refusal) sed -i 's/^            clash=1$/            :/' "$script"; want='FAIL: (a catch-up wrote over|the refusal of)' ;;
         index)
             if [ "$kind" = deb ]; then
-                sed -i 's/^    if \[ "\${CATCH_UP:-}" = true \] && \[ -z "\${touched\[\$suite\]:-}" \]; then$/    if false; then/' "$script"
+                sed -i 's/^    if \[ "\$only_touched" = true \] && \[ -z "\${touched\[\$suite\]:-}" \]; then$/    if false; then/' "$script"
             else
-                sed -i 's/^        \[ "\${CATCH_UP:-}" = true \] && \[ -d "\$rel\$arch" \] && continue$/        :/' "$script"
-                sed -i 's/^if \[ "\${CATCH_UP:-}" = true \]; then # only what received a package$/if false; then/' "$script"
+                sed -i 's/^        \[ "\$only_touched" = true \] && \[ -d "\$rel\$arch" \] && continue$/        :/' "$script"
+                sed -i 's/^if \[ "\$only_touched" = true \]; then # only what received a package$/if false; then/' "$script"
             fi
             want='FAIL: the catch-up changed served files' ;;
         esac

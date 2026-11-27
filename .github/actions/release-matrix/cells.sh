@@ -30,22 +30,11 @@ case $set in quick | full | '') ;; *) echo "cells.sh: MATRIX_SET is '$set', not 
 [ -d "$tree" ] || { echo "cells.sh: no tree at $tree" >&2; exit 1; }
 out=$tree/cells.tsv
 
+# shellcheck source=SCRIPTDIR/name-version.sh
+. "$(dirname "$(readlink -f "$0")")/name-version.sh"
 name_version() { # <file>: prints "<package> <upstream version>", or nothing for a source package or a foreign name
-    local b n v
-    b=$(basename "$1" ".$ext")
-    if [ "$kind" = rpm ]; then
-        case $b in *.src) return 0 ;; esac
-        b=${b%.*}                       # the architecture
-        [[ $b == *-*-* ]] || return 0
-        b=${b%-*}                       # the Release
-        n=${b%-*} v=${b##*-}
-    else
-        [[ $b == *_*_* ]] || return 0
-        n=${b%%_*} v=${b#*_}
-        v=${v%_*}                       # the architecture
-        v=${v#*%3a} v=${v%%[+~]git*} v=${v%-*}
-    fi
-    printf '%s %s\n' "$n" "$v"
+    case $1 in *.src.rpm) return 0 ;; esac
+    file_name_version "$ext" "$1"
 }
 
 declare -A was=() now=() cells=()

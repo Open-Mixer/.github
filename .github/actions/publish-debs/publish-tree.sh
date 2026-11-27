@@ -45,6 +45,10 @@
 #                   and the channel serves it already); any other is refused, naming the file, and nothing is placed or
 #                   signed, byte-identical or not. Only the indexes of the Debian releases that received a package are
 #                   regenerated and signed again; the others keep their bytes.
+#   REINDEX         the Debian releases a drop (purge-staging drop-staging.sh) removed packages from, debian/<suite>
+#                   relative to the tree, space separated, with an empty <deb dir> and EMPTY_OK: as with a catch-up, only
+#                   their indexes are made again and signed; the others keep their bytes, and so does the key file when it
+#                   serves the same keys
 #   REFUSE_SERVED   'true' (a merge to devel, publish-debs refuse-served): every package of <deb dir> whose file name the
 #                   tree holds already in its suite is refused, each one named, before anything is placed or signed. A
 #                   merge to devel builds its version once; a file the channel holds is never kept in place of the new
@@ -60,6 +64,14 @@ tree=$(readlink -m "${1:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}
 src=${2:?usage: publish-tree.sh <tree> <deb dir> [<gpg key id>]}
 key=${3:-}
 requires=${REQUIRES:-}
+# a catch-up and a drop make again only the indexes of the releases they changed; every other keeps its bytes
+only_touched=${CATCH_UP:-}
+declare -A touched=()
+for d in ${REINDEX:-}; do
+    [[ $d =~ ^debian/[a-z]+$ ]] && [ -d "$tree/$d" ] || { echo "REINDEX names '$d', not a debian/<suite> directory of the tree" >&2; exit 1; }
+    touched[${d#debian/}]=1
+    only_touched=true
+done
 # the channel's public key file: OpenMixer's by default, another channel's by KEY_FILE (a file name, no directory)
 key_name=${KEY_FILE:-openmixer.asc}
 case $key_name in */* | '' | . | ..) echo "KEY_FILE must be a file name, not '$key_name'" >&2; exit 1 ;; esac
@@ -127,7 +139,6 @@ done
 declare -A cells=()
 declare -A mine=()
 declare -A dropped=()
-declare -A touched=()
 for f in ${found[@]+"${found[@]}"}; do
     [ "$(dirname "$(dirname "$f")")" = "${src%/}" ] || { echo "$f is not laid out <suite>/<package>.deb under $src" >&2; exit 1; }
 done
@@ -350,8 +361,8 @@ done
 
 for suitedir in "$tree"/debian/*/; do
     suite=$(basename "$suitedir")
-    if [ "${CATCH_UP:-}" = true ] && [ -z "${touched[$suite]:-}" ]; then
-        echo "kept index debian/$suite (catch-up: nothing placed there)"
+    if [ "$only_touched" = true ] && [ -z "${touched[$suite]:-}" ]; then
+        echo "kept index debian/$suite (nothing placed or dropped there)"
         continue
     fi
     (
@@ -383,8 +394,8 @@ done
 # the key file is what the channel served plus every key that signed the index (channel-keys.sh)
 if [ -n "$key" ]; then
     keyfile="$tree/$key_name"
-    # a catch-up keeps the key file's bytes when it already serves the same keys: only a new key changes it
-    [ "${CATCH_UP:-}" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
+    # a catch-up or a drop keeps the key file's bytes when it already serves the same keys: only a new key changes it
+    [ "$only_touched" = true ] && [ -s "$keyfile" ] && cp "$keyfile" "$keyfile.keep"
     "$(dirname "$(readlink -f "$0")")/../import-gpg-key/channel-keys.sh" serve "$keyfile" "$key"
     if [ -f "$keyfile.keep" ]; then
         if [ "$(gpg --batch --with-colons --import-options show-only --import < "$keyfile.keep" 2>/dev/null | awk -F: '/^fpr:/ {print $10}' | sort)" = \
