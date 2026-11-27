@@ -83,6 +83,13 @@ skip_if_never_published() {
         echo "add-staging: $what ($tree) has not been published yet (${absent[*]} and $tree/$key answered 404): nothing added, as staging-bootstrap asks; the first staged publish creates it"
         exit 0
     fi
+    # a wave publishes the cells of its own matrix (OMX_DEVEL_MATRIX, a quick devel matrix): a machine whose cell the wave
+    # never built finds no index of it at all, and reads staging, which the caller adds beside it (.github#331). An index
+    # served for only part of this machine (its arch but not noarch) is still refused below.
+    if [ "$level" != staging ] && [ "${#absent[@]}" -eq "$#" ]; then
+        echo "add-staging: $what ($tree) is published but serves no index for this machine (${absent[*]} answered 404): the wave built no package for this cell, nothing added; this job reads staging and the real channel"
+        exit 0
+    fi
     die "${absent[*]} answered 404, but $what ($tree) is published: it is not added half-way, staging-bootstrap or not"
 }
 if command -v dnf >/dev/null; then

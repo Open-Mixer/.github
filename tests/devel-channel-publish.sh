@@ -14,6 +14,8 @@
 #   - a client with the real channel, staging and wave-a's devel channel takes wave-a's build over staging's (priority 5
 #     over 10, pin 650 over 600) and never wave-b's higher one; without the devel channel it takes staging's again;
 #   - add-staging.sh with a wave never published adds nothing and says so (a wave's first line).
+#   - add-staging.sh with a wave published, but for no index of this machine (forky, outside the wave's skeleton), adds
+#     nothing and says so: the job reads staging (.github#331).
 # Sabotage: channel-level.sh joining the devel tree without its devel/<wave>/ prefix makes the first arm red.
 # Runs as root in a throwaway Fedora (rpm) or Debian (deb) container: the client arm writes /etc.
 #
@@ -222,5 +224,15 @@ out=$(BASE_URL=$base SUITE=trixie LEVEL=devel/wave-c "$actions/add-openmixer/add
 grep -q 'has not been published yet' <<< "$out" || fail "add-staging.sh does not say the wave was never published: $out"
 [ ! -e /etc/yum.repos.d/openmixer-devel.repo ] && [ ! -e /etc/apt/sources.list.d/openmixer-devel.sources ] || fail "a wave never published was added"
 ok "$kind: a wave never published is skipped with a notice, nothing added"
+
+# ---- a wave published, but not for this machine's cell (its devel matrix left it out, .github#331): nothing added, said
+# so; the job reads staging. The skeleton is bookworm and trixie, so the cell is forky (the rpm arm's release is
+# /etc/os-release's, not an input).
+if [ "$kind" = deb ]; then
+    out=$(BASE_URL=$base SUITE=forky LEVEL=devel/wave-a "$actions/add-openmixer/add-staging.sh" 2>&1) || fail "a wave published for bookworm and trixie failed add-staging.sh on forky: $out"
+    grep -q 'serves no index for this machine' <<< "$out" || fail "add-staging.sh does not say the wave built nothing for forky: $out"
+    [ ! -e /etc/apt/sources.list.d/openmixer-devel.sources ] || fail "a wave with no forky index was added on forky"
+    ok "$kind: a wave that built no package for this machine's cell is skipped with a notice, nothing added"
+fi
 rm -rf "$work"
 echo "devel-channel-publish $kind: all passed"
