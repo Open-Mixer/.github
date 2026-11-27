@@ -130,12 +130,19 @@ ok "$kind: wave-a's packages and build record are in staging at the same paths, 
 # a client of staging installs the promoted build
 base=file://$ch
 if [ "$kind" = rpm ]; then
+    # a container an earlier test of the job used: what it installed or added is gone first
+    for p in omx-lib omx-app omx-new; do rpm -e --nodeps "$p" >/dev/null 2>&1 || true; done
+    rm -f /etc/yum.repos.d/openmixer-staging.repo /etc/yum.repos.d/openmixer-devel.repo
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
     BASE_URL=$base "$actions/add-openmixer/add-staging.sh" >/dev/null
     dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' install omx-lib omx-new >/dev/null
     [ "$(rpm -q --qf '%{VERSION}' omx-lib)" = 3.15.0 ] || fail "a client of staging took omx-lib $(rpm -q --qf '%{VERSION}' omx-lib), not the promoted 3.15.0"
 else
+    # a container an earlier test of the job used: what it installed or added is gone first
+    for p in omx-lib omx-new; do dpkg -P "$p" >/dev/null 2>&1 || true; done
+    rm -f /etc/apt/sources.list.d/openmixer-staging.sources /etc/apt/preferences.d/openmixer-staging.pref \
+        /etc/apt/sources.list.d/openmixer-devel.sources /etc/apt/preferences.d/openmixer-devel.pref
     install -D -m 644 "$ch/deb/openmixer.asc" /usr/share/keyrings/openmixer-archive-keyring.asc
     sed -e 's|@SUITE@|trixie|' -e "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/debian/openmixer.sources.in" > /etc/apt/sources.list.d/openmixer.sources
     BASE_URL=$base SUITE=trixie "$actions/add-openmixer/add-staging.sh" >/dev/null

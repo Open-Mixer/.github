@@ -175,6 +175,9 @@ ok "$kind: the lost-race rebuild assembles $want_tree again and nothing else"
 # ---- a client: the real channel, staging, and wave-a's devel channel above both
 base=file://$ch
 if [ "$kind" = rpm ]; then
+    # a container an earlier test of the job used: what it installed or added is gone first
+    for p in omx-lib omx-app omx-new; do rpm -e --nodeps "$p" >/dev/null 2>&1 || true; done
+    rm -f /etc/yum.repos.d/openmixer-staging.repo /etc/yum.repos.d/openmixer-devel.repo
     install -D -m 644 "$ch/rpm/RPM-GPG-KEY-openmixer" /etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
     sed "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/openmixer.repo" > /etc/yum.repos.d/openmixer.repo
     q() { dnf -q -y --disablerepo='*' --enablerepo='openmixer*' --disablerepo='openmixer-testing*' "$@"; }
@@ -192,6 +195,10 @@ if [ "$kind" = rpm ]; then
     [ "$(rpm -q --qf '%{VERSION}' omx-lib)" = 3.14.0 ] || fail "without the devel channel the client took omx-lib $(rpm -q --qf '%{VERSION}' omx-lib), not staging's 3.14.0"
     q remove omx-lib >/dev/null
 else
+    # a container an earlier test of the job used: what it installed or added is gone first
+    for p in omx-lib omx-new; do dpkg -P "$p" >/dev/null 2>&1 || true; done
+    rm -f /etc/apt/sources.list.d/openmixer-staging.sources /etc/apt/preferences.d/openmixer-staging.pref \
+        /etc/apt/sources.list.d/openmixer-devel.sources /etc/apt/preferences.d/openmixer-devel.pref
     install -D -m 644 "$ch/deb/openmixer.asc" /usr/share/keyrings/openmixer-archive-keyring.asc
     sed -e 's|@SUITE@|trixie|' -e "s|https://www.openmixer.org/|$base/|" "$root/packaging/openmixer-release/debian/openmixer.sources.in" \
         > /etc/apt/sources.list.d/openmixer.sources
