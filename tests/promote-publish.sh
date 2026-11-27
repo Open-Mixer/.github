@@ -7,6 +7,9 @@
 #   - the channel root holds, for every release, the very bytes staging held (the staged checksums verify there), with
 #     signed metadata, and the staging tree is byte-identical before and after;
 #   - a client with the real channel alone installs the promoted version, and it is the staged build of the commit;
+#   - the promotion runs the publish's channel-installability gate step as written (.github#51): a served consumer whose
+#     ceiling excludes the promoted version refuses it by name and the channel root is as it was; without that consumer
+#     the same promotion carries the gate's GREEN;
 #   - vouch.sh refuses, naming the file: an RPM with no signature, an RPM signed by a key the channel does not serve,
 #     a DEB whose bytes are not those of the signed staging index, any DEB once the staging index is altered, and
 #     everything when the key file the channel serves is not one this repository pins.
@@ -55,23 +58,36 @@ PY
 envfile() { [ -f "$1" ] || return 0; while IFS= read -r l; do export "${l?}"; done < "$1"; }
 act=$actions/publish-${kind}s/action.yml
 step "$act" '^Prove the packages are there' "$work/first.sh"
+step "$act" '^Check no package of the channel becomes uninstallable' "$work/gate.sh"
 step "$act" '^Assemble the tree' "$work/assemble.sh"
-# the two steps of a publish: <staging true|false> <package dir> <log>
+# the system repositories the rpm gate reads: none (offline, the stub packages need nothing of the distribution)
+mkdir -p "$work/no-repos"
+# the steps of a publish, as the action orders them: <staging true|false> <package dir> <log> [workspace]. The gate step
+# runs under its own condition (installability not 'false', staging not 'true'): for the promotion, never for a staged
+# publish, and it judges the pulled tree with the new packages laid in, before anything is assembled.
 publish() {
-    local staging=$1 dir=$2 log=$3
-    unset RPM_TREE REPO_FILE SKELETON DEB_TREE LABEL REQUIRES_TREE
+    local staging=$1 dir=$2 log=$3 w=${4:-$ws} up
+    unset RPM_TREE REPO_FILE SKELETON DEB_TREE LABEL REQUIRES_TREE MATRIX_SET
     : > "$work/env"
     if [ "$kind" = rpm ]; then
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms GITHUB_ENV=$work/env RPM_DIR=$dir STAGING=$staging RELEASES="44 45" \
+        up=rpms
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-rpms GITHUB_ENV=$work/env RPM_DIR=$dir STAGING=$staging RELEASES="44 45" \
             bash -e "$work/first.sh" >/dev/null)
-        envfile "$work/env"
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID bash -e "$work/assemble.sh") > "$log" 2>&1
     else
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-debs GITHUB_ENV=$work/env DEB_DIR=$dir STAGING=$staging SUITES="bookworm trixie" \
+        up=debs
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-debs GITHUB_ENV=$work/env DEB_DIR=$dir STAGING=$staging SUITES="bookworm trixie" \
             bash -e "$work/first.sh" >/dev/null)
-        envfile "$work/env"
-        (cd "$ws" && GITHUB_ACTION_PATH=$actions/publish-debs DEB_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID REQUIRES=libmod-host-protocol0 \
-            CHANGELOGS_URL=https://www.openmixer.org/deb/changelogs bash -e "$work/assemble.sh") > "$log" 2>&1
+    fi
+    envfile "$work/env"
+    if [ "$staging" != true ]; then
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-$up PKG_DIR=$dir SIGN=true SAME_PASS= SERVED= REPOSDIR=$work/no-repos \
+            bash -e "$work/gate.sh") > "$log" 2>&1 || return 1
+    fi
+    if [ "$kind" = rpm ]; then
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-rpms RPM_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID bash -e "$work/assemble.sh") >> "$log" 2>&1
+    else
+        (cd "$w" && GITHUB_ACTION_PATH=$actions/publish-debs DEB_DIR=$dir SIGN=true OPENMIXER_GPG_KEY_ID=$NEW_ID REQUIRES=libmod-host-protocol0 \
+            CHANGELOGS_URL=https://www.openmixer.org/deb/changelogs bash -e "$work/assemble.sh") >> "$log" 2>&1
     fi
 }
 # vouch.sh must refuse <dir>, naming <pattern>
@@ -83,10 +99,12 @@ unvouched() { # <what> <pattern> <channel> <dir>
 
 case $kind in
 rpm)
-    mkpkg() { # <name> <version> <release> <out dir>: the noarch package and its source package
+    mkpkg() { # <name> <version> <release> <out dir> [requires]: the noarch package and its source package
         local d=$work/rb-$1-$2-$3
         mkdir -p "$d" "$4"
-        printf '%s\n' "Name: $1" "Version: $2" "Release: $3" 'Summary: t' 'License: MIT' 'BuildArch: noarch' '%description' 't' '%files' > "$d/p.spec"
+        { printf '%s\n' "Name: $1" "Version: $2" "Release: $3" 'Summary: t' 'License: MIT' 'BuildArch: noarch'
+          [ -z "${5:-}" ] || printf 'Requires: %s\n' "$5"
+          printf '%s\n' '%description' 't' '%files'; } > "$d/p.spec"
         rpmbuild -ba --quiet --define "_topdir $d" "$d/p.spec" >/dev/null 2>&1 || fail "rpmbuild $1 $2-$3"
         find "$d/RPMS" "$d/SRPMS" -name '*.rpm' -exec cp {} "$4/" \;
     }
@@ -110,8 +128,14 @@ deb)
     for suite in bookworm trixie; do
         mkdeb libmod-host-protocol0 0.10.11 "$work/real/$suite"
         mkdeb omx-lib 3.13.0 "$work/real/$suite"
-        mkdeb omx-lib 3.14.0+git5f455d3 "$work/staged/$suite" libmod-host-protocol0
+        mkdeb omx-lib 3.14.0+git5f455d3 "$work/staged/$suite" 'libmod-host-protocol0 (>= 0.10)'
     done
+    # the channel's release package at its fixed path: the gate reads the Debian releases the channel serves from the
+    # sources files it installs, as it does on the real channel root
+    rd=$work/db-openmixer-release; mkdir -p "$rd/DEBIAN" "$rd/usr/share/openmixer-release"
+    printf '%s\n' 'Package: openmixer-release' 'Version: 1' 'Architecture: all' 'Maintainer: t <t@example.org>' 'Description: t' > "$rd/DEBIAN/control"
+    for suite in bookworm trixie; do printf 'Types: deb\nURIs: file://%s/deb/debian/%s/\nSuites: ./\n' "$ch" "$suite" > "$rd/usr/share/openmixer-release/openmixer-$suite.sources"; done
+    dpkg-deb --root-owner-group -b "$rd" "$ch/deb/openmixer-release.deb" >/dev/null
     REQUIRES=libmod-host-protocol0 "$actions/publish-debs/publish-tree.sh" "$ch/deb" "$work/real" "$NEW_ID" >/dev/null
     collect_args=(deb --name omx-lib --version 3.14.0 --releases "bookworm trixie" --arches amd64)
     n=2
@@ -137,7 +161,7 @@ if [ "$kind" = rpm ]; then
     for f in "$work/stranger"/*.rpm; do rpmsign --define "_gpg_name $OTHER_ID" --addsign "$f" >/dev/null 2>&1 || fail "rpmsign with the other key"; done
     unvouched "an RPM signed by a key the channel does not serve" 'refused omx-lib-3.14.0-1.git0badc0d.fc45.noarch.rpm: not signed by a key the channel serves' "$ch" "$work/stranger"
 else
-    mkdeb omx-lib 3.14.0+git5f455d3 "$work/planted/trixie" libmod-host-protocol0 planted
+    mkdeb omx-lib 3.14.0+git5f455d3 "$work/planted/trixie" 'libmod-host-protocol0 (>= 0.10)' planted
     unvouched "a DEB whose bytes are not those of the staging index" 'refused trixie/omx-lib_3.14.0\+git5f455d3_amd64.deb: not in the signed staging index of trixie' "$ch" "$work/planted"
     cp -a "$ch" "$work/altered"
     echo >> "$work/altered/staging/deb/debian/trixie/Packages"
@@ -148,8 +172,29 @@ if PINNED_FINGERPRINTS=$work/pinned-other.txt "$vouch" "$ch" "$kind" "$work/prom
 grep -q 'not one this repository pins' "$work/vouch.log" || fail "the unpinned key file is not named: $(cat "$work/vouch.log")"
 ok "$kind: refused: everything, when the channel's key file is not one this repository pins"
 
-# ---- the promotion: the publish with staging off
+# ---- the promotion is gated: the channel as it will be after the move is judged before anything is assembled
+# omx-app 1.0, served by the real channel, needs omx-lib below 3.14: promoting 3.14.0 would leave it uninstallable, so the
+# promotion is refused, naming it, and the channel root is as it was. On a copy of the workspace: the real flow below
+# promotes into the channel without that consumer.
+gated=$work/gated; cp -a "$ws" "$gated"; gch=$gated/build/channel
+if [ "$kind" = rpm ]; then
+    for rel in 44 45; do mkpkg omx-app 1.0 "1.fc$rel" "$work/consumer" '(omx-lib >= 3.13 with omx-lib < 3.14)'; done
+    "$actions/publish-rpms/publish-tree.sh" "$gch/rpm" "$work/consumer" "$NEW_ID" >/dev/null
+else
+    for suite in bookworm trixie; do mkdeb omx-app 1.0 "$work/consumer/$suite" 'omx-lib (>= 3.13), omx-lib (<< 3.14~)'; done
+    REQUIRES=libmod-host-protocol0 "$actions/publish-debs/publish-tree.sh" "$gch/deb" "$work/consumer" "$NEW_ID" >/dev/null
+fi
+root_sum() { (cd "$1" && find "$kind" -type f -print0 | sort -z | xargs -0 sha256sum); }
+root_sum "$gch" > "$work/gated.before"
+if publish false "$work/promo" "$work/gated.log" "$gated"; then cat "$work/gated.log"; fail "a promotion that leaves the served omx-app outside its ceiling went through"; fi
+grep -q "channel-installability $kind: RED" "$work/gated.log" || { cat "$work/gated.log"; fail "the promotion did not fail on the gate's verdict"; }
+grep -q 'omx-app' "$work/gated.log" || { cat "$work/gated.log"; fail "the refusal does not name omx-app"; }
+root_sum "$gch" | cmp -s - "$work/gated.before" || fail "a refused promotion changed the channel root: $(root_sum "$gch" | diff "$work/gated.before" - | head)"
+ok "$kind: refused, naming omx-app: a promotion the served consumer's ceiling excludes; the channel root is as it was"
+
+# ---- the promotion: the publish with staging off, through the same gate, green
 publish false "$work/promo" "$work/promote.log" || { cat "$work/promote.log"; fail "the promotion publish failed"; }
+grep -q "channel-installability $kind: GREEN" "$work/promote.log" || { cat "$work/promote.log"; fail "the promotion did not pass through the gate"; }
 (cd "$ch" && sha256sum -c --quiet "$work/promo.sha256") || fail "the channel root does not hold the bytes staging held"
 staging_sum | cmp -s - "$work/staging.before" || fail "the promotion changed the staging tree: $(staging_sum | diff "$work/staging.before" - | head)"
 if [ "$kind" = rpm ]; then

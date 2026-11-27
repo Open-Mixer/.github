@@ -279,8 +279,11 @@ one the tag is on; a dispatch of the caller is a dry run that takes `version` an
 2. **Check.** Every RPM carries a good signature by a key the channel serves; every DEB is listed with its SHA256 in
    the signed staging index of its suite. Nothing is signed by a promotion.
 3. **Publish.** The files go to `rpm/` and `deb/` through `publish-rpms` and `publish-debs`, in the publish group of
-   the channel; the metadata is regenerated and signed, the packages are placed as they are, and the tree is compared
-   with the staged checksums before the push is trusted.
+   the channel. Before anything is assembled, the channel-installability gate judges the pulled tree with the promoted
+   files laid in (the channel as it will be after the move) and refuses, by name, a package the move would leave
+   uninstallable: a served consumer whose ceiling excludes the promoted version stops the promotion with the channel as
+   it was (a staged publish skips the gate; the promotion never does). Then the metadata is regenerated and signed, the
+   packages are placed as they are, and the tree is compared with the staged checksums before the push is trusted.
 4. **Prove.** Every promoted file is fetched from the served channel and its SHA256 compared with the staged one
    (`same bytes <sha256> <path>` lines in the run log), then the version installs from the channel root alone in a
    clean container of every release and architecture.
