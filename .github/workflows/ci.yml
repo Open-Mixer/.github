@@ -289,6 +289,10 @@ jobs:
         shell: bash
         run: tests/devel-channel-publish.sh ${{ matrix.kind }}
 
+      - name: A done wave is promoted into staging with the same bytes, and other bytes at a staged path are refused
+        shell: bash
+        run: tests/promote-wave.sh ${{ matrix.kind }}
+
   staging-bootstrap:
     name: First staged run into a channel with no staging path (${{ matrix.kind }})
     runs-on: ubuntu-latest

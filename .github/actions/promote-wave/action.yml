@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: promote-wave
+description: Promote a DONE wave's devel channel (devel/<wave>/<kind>) into staging, the same bytes, and leave every other tree untouched
+
+# The step between devel/<wave> and staging of the three channel levels (docs/release-operations.md), run by the
+# promote-wave workflow when a wave is done (the coordinator dispatches it): promote-wave.sh copies
+# the wave's packages and build records to the same paths under staging/<kind>, refuses a path staging holds with other
+# bytes, rewrites staging's cells.tsv and regenerates and signs staging's metadata with the publish's tree scripts. Only
+# staging/<kind> is committed. Runs in a Fedora container for rpm and a Debian one for deb, as the publish actions do.
+
+inputs:
+  kind:
+    description: rpm or deb
+    required: true
+  wave:
+    description: the wave, [a-z0-9-]+ (the wave's name); its tree is devel/<wave>/<kind> of the channel
+    required: true
+  sign:
+    description: "'true' signs and pushes; anything else promotes into a pulled copy and pushes nothing"
+    default: 'false'
+  gpg-key:
+    default: ''
+  publish-token:
+    default: ''
+  site-gpg-key:
+    default: ''
+  channel:
+    default: Open-Mixer/open-mixer.github.io
+  branch:
+    default: main
+  base-url:
+    description: where the channel is served, for staging's deb Changelogs field
+    default: https://www.openmixer.org
+  releases:
+    description: the Fedora releases (rpm) or Debian releases (deb), space separated, whose staging index must exist
+    default: ''
+
+outputs:
+  commit:
+    description: the commit pushed to the channel; empty when nothing was pushed
+    value: ${{ steps.push-rpm.outputs.commit || steps.push-deb.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    # before anything reads it: the wave is joined into channel paths and into the rebuild command below
+    - name: The wave is a wave's name
+      shell: bash
+      env:
+        WAVE: ${{ inputs.wave }}
+      run: |
+        [[ $WAVE =~ ^[a-z0-9-]+$ ]] || { echo "::error::wave is [a-z0-9-]+ (the wave's name), not '$WAVE'"; exit 1; }
+
+    - name: Install the packaging tools
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+      run: |
+        case $KIND in
+          rpm) dnf install -y --setopt=install_weak_deps=False createrepo_c rpm-sign gnupg2 pinentry findutils git curl python3-rpm diffutils ;;
+          deb) apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv git curl ca-certificates findutils dpkg-dev diffutils ;;
+          *) echo "::error::kind is rpm or deb, not '$KIND'"; exit 1 ;;
+        esac
+
+    - uses: Open-Mixer/.github/.github/actions/import-gpg-key@openmixer-v1
+      if: inputs.sign == 'true'
+      with:
+        gpg-key: ${{ inputs.gpg-key }}
+        id-variable: OPENMIXER_GPG_KEY_ID
+
+    # read only: a dry run clones the public channel and pushes nothing
+    - uses: Open-Mixer/.github/.github/actions/channel-pull@openmixer-v1
+      with:
+        publish-token: ${{ inputs.publish-token || github.token }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        strip: none
+
+    - name: Check the signing key is one the channel serves
+      if: inputs.sign == 'true'
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+      run: |
+        set -o pipefail
+        if [ "$KIND" = rpm ]; then keys=build/channel/rpm/RPM-GPG-KEY-openmixer; else keys=build/channel/deb/openmixer.asc; fi
+        "$GITHUB_ACTION_PATH/../import-gpg-key/channel-keys.sh" check "$keys" "$OPENMIXER_GPG_KEY_ID"
+
+    - name: Promote the wave into staging
+      shell: bash
+      env:
+        KIND: ${{ inputs.kind }}
+        WAVE: ${{ inputs.wave }}
+        SKELETON: ${{ inputs.releases }}
+        BASE_URL: ${{ inputs.base-url }}
+      run: |
+        set -o pipefail
+        { echo "PROMOTE_WAVE_ACTION=$GITHUB_ACTION_PATH"; echo "SKELETON=$SKELETON"; } >> "$GITHUB_ENV"
+        if [ "$KIND" = deb ]; then
+          # the deb skeleton is the tested platforms' architectures, as a staged publish makes it; staging's changelogs
+          SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb)
+          CHANGELOGS_URL=${BASE_URL%/}/staging/deb/changelogs
+          export SKELETON_ARCHES CHANGELOGS_URL
+          { echo "SKELETON_ARCHES=$SKELETON_ARCHES"; echo "CHANGELOGS_URL=$CHANGELOGS_URL"; } >> "$GITHUB_ENV"
+        fi
+        "$GITHUB_ACTION_PATH/promote-wave.sh" "$KIND" build/channel "$WAVE" ${OPENMIXER_GPG_KEY_ID:+"$OPENMIXER_GPG_KEY_ID"}
+        git -C build/channel status --short -- "staging/$KIND" | tail -40
+        # nothing outside staging/<kind> changed in the checkout: the wave's tree and the real channel are untouched
+        outside=$(git -C build/channel status --porcelain --untracked-files=all -- . ":(exclude)staging/$KIND")
+        [ -z "$outside" ] || { echo "::error::the promotion changed paths outside staging/$KIND:"; echo "$outside"; exit 1; }
+
+    - id: push-rpm
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.kind == 'rpm'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ format('promote devel/{0}', inputs.wave) }}
+        what: staging/rpm
+        rebuild: '"$PROMOTE_WAVE_ACTION/promote-wave.sh" rpm build/channel "${{ inputs.wave }}" "$OPENMIXER_GPG_KEY_ID"'
+
+    - id: push-deb
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.kind == 'deb'
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ format('promote devel/{0}', inputs.wave) }}
+        what: staging/deb
+        rebuild: '"$PROMOTE_WAVE_ACTION/promote-wave.sh" deb build/channel "${{ inputs.wave }}" "$OPENMIXER_GPG_KEY_ID"'

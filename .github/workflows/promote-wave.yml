@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: Promote a wave into staging
+
+# The three channel levels (docs/release-operations.md): devel/<wave> -> staging -> the channel root, the same bytes
+# promoted up. A wave publishes its lines into devel/<wave>/{rpm,deb} alone; once the wave is DONE this copies
+# that tree's packages and build records into staging/rpm and staging/deb, byte for byte, refuses a path staging holds
+# with other bytes, rewrites staging's cells.tsv and regenerates and signs staging's metadata (actions/promote-wave). The
+# wave's tree, rpm/ and deb/ are never written; each job refuses a checkout changed outside staging/<kind>. Promotion from
+# staging to the channel root stays promote-staged.yml's. The coordinator dispatches it when the wave is done; this file is on the default branch,
+# the only place GitHub dispatches from.
+#
+# Secrets (organisation secrets, as the publish uses them): OPENMIXER_PACKAGES_SIGNING_KEY, PAGES_TOKEN, SITE_GPG_KEY.
+
+on:
+  workflow_dispatch:
+    inputs:
+      wave:
+        type: string
+        required: true
+        description: 'The wave, [a-z0-9-]+: its devel channel devel/<wave> is promoted'
+      target-repo:
+        type: string
+        default: 'Open-Mixer/open-mixer.github.io'
+        description: 'The channel repository'
+      fedora-versions:
+        type: string
+        default: '["45"]'
+        description: 'JSON array of the Fedora releases whose staging index must exist'
+      suite-matrix:
+        type: string
+        default: '["trixie"]'
+        description: 'JSON array of the Debian releases whose staging index must exist'
+      base-url:
+        type: string
+        default: 'https://www.openmixer.org'
+        description: 'Where the channel is served (staging''s deb Changelogs field)'
+      dry-run:
+        type: boolean
+        default: false
+        description: 'Promote into a pulled copy and push nothing'
+  workflow_call:
+    inputs:
+      wave:
+        type: string
+        required: true
+        description: 'The wave, [a-z0-9-]+: its devel channel devel/<wave> is promoted'
+      target-repo:
+        type: string
+        default: 'Open-Mixer/open-mixer.github.io'
+        description: 'The channel repository'
+      fedora-versions:
+        type: string
+        default: '["45"]'
+        description: 'JSON array of the Fedora releases whose staging index must exist'
+      suite-matrix:
+        type: string
+        default: '["trixie"]'
+        description: 'JSON array of the Debian releases whose staging index must exist'
+      base-url:
+        type: string
+        default: 'https://www.openmixer.org'
+        description: 'Where the channel is served (staging''s deb Changelogs field)'
+      dry-run:
+        type: boolean
+        default: false
+        description: 'Promote into a pulled copy and push nothing'
+    secrets:
+      OPENMIXER_PACKAGES_SIGNING_KEY:
+        required: false
+      PAGES_TOKEN:
+        required: false
+      SITE_GPG_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rpm:
+    name: Promote devel/${{ inputs.wave }}/rpm into staging/rpm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: fedora:45
+    # the publishes of this organisation to the channel run in this group; the promotion waits for them
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}
+      cancel-in-progress: false
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/promote-wave@openmixer-v1
+        with:
+          kind: rpm
+          wave: ${{ inputs.wave }}
+          sign: ${{ !inputs.dry-run }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          base-url: ${{ inputs.base-url }}
+          releases: ${{ join(fromJSON(inputs.fedora-versions), ' ') }}
+
+  deb:
+    name: Promote devel/${{ inputs.wave }}/deb into staging/deb
+    needs: rpm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: debian:trixie
+    concurrency:
+      group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}
+      cancel-in-progress: false
+    steps:
+      - uses: Open-Mixer/.github/.github/actions/promote-wave@openmixer-v1
+        with:
+          kind: deb
+          wave: ${{ inputs.wave }}
+          sign: ${{ !inputs.dry-run }}
+          gpg-key: ${{ secrets.OPENMIXER_PACKAGES_SIGNING_KEY }}
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ inputs.target-repo }}
+          base-url: ${{ inputs.base-url }}
+          releases: ${{ join(fromJSON(inputs.suite-matrix), ' ') }}
