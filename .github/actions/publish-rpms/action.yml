@@ -20,6 +20,11 @@ description: Sign RPMs and publish them into the rpm/ tree of an Open-Mixer Page
 # docs/release-operations.md): the same tree script, the same key and its check against the keys the real rpm/ tree
 # serves, the same channel-push. The tree serves openmixer-staging.repo, and every Fedora release of `releases` gets
 # metadata even with nothing staged for it. rpm/ is never written.
+#
+# channel-level: devel/<wave> publishes into devel/<wave>/rpm of the same channel instead, the devel channel of one wave
+# (docs/release-operations.md, "The three channel levels"): staged as staging is (the same checks, key, skeleton and
+# one build of a version), its own cells.tsv and signed metadata, and the tree serves openmixer-devel.repo with the wave
+# written in. Nothing outside devel/<wave>/rpm is written: neither rpm/, nor staging/, nor another wave's tree.
 
 inputs:
   rpm-dir:
@@ -75,6 +80,9 @@ inputs:
   staging:
     description: "'true' publishes into the staging channel, staging/rpm of the channel, and never touches rpm/"
     default: 'false'
+  channel-level:
+    description: "devel/<wave> ([a-z0-9-]+) publishes into devel/<wave>/rpm of the channel, the devel channel of that wave, staged as staging is and never touching rpm/ or staging/; empty (the default) leaves the tree to staging"
+    default: ''
   releases:
     description: with staging, the Fedora releases (space separated) whose staging directories get metadata even when empty
     default: ''
@@ -97,7 +105,7 @@ inputs:
 outputs:
   commit:
     description: the commit pushed to the channel; empty when nothing was pushed (a dry run, or the channel already carried the tree)
-    value: ${{ steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
+    value: ${{ steps.push-devel.outputs.commit || steps.push-staging.outputs.commit || steps.push-real.outputs.commit }}
 
 runs:
   using: composite
@@ -107,10 +115,12 @@ runs:
       run: dnf install -y --setopt=install_weak_deps=False createrepo_c rpm-sign gnupg2 pinentry findutils git curl python3-rpm
 
     - name: Prove the packages are there before anything signs them
+      id: collect
       shell: bash
       env:
         RPM_DIR: ${{ inputs.rpm-dir }}
         STAGING: ${{ inputs.staging }}
+        LEVEL: ${{ inputs.channel-level }}
         MATRIX_SET: ${{ inputs.matrix-set }}
         CATCH_UP: ${{ inputs.catch-up }}
         REFUSE_SERVED_IN: ${{ inputs.refuse-served }}
@@ -143,8 +153,16 @@ runs:
         echo "REFUSE_SERVED=$REFUSE_SERVED_IN" >> "$GITHUB_ENV"
         echo "BUILT_COMMIT=$BUILT_COMMIT_IN" >> "$GITHUB_ENV"
         echo "BUILT_NAME=$BUILT_NAME_IN" >> "$GITHUB_ENV"
-        # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton
-        if [ "$STAGING" = true ]; then
+        # where the packages go in the channel: rpm/, or staging/rpm/ with the staging repository file and skeleton, or a
+        # wave's devel/<wave>/rpm/ with its own repository file, staged the same way (channel-level.sh names the tree)
+        if [ -n "$LEVEL" ]; then
+          case $LEVEL in devel/*) ;; *) echo "::error::channel-level is devel/<wave> or empty, not '$LEVEL' (staging is staging: true)"; exit 1 ;; esac
+          tree=$("$GITHUB_ACTION_PATH/channel-level.sh" tree rpm "$LEVEL") || exit 1
+          repo=$("$GITHUB_ACTION_PATH/channel-level.sh" repo-file "$LEVEL" "${RUNNER_TEMP:-/tmp}/channel-level") || exit 1
+          { echo "RPM_TREE=$tree"; echo "REPO_FILE=$repo"; echo "SKELETON=$RELEASES"; echo "NEWEST_ONLY=true"; } >> "$GITHUB_ENV"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          STAGING=true # staged: the checks of a staged run below
+        elif [ "$STAGING" = true ]; then
           { echo "RPM_TREE=staging/rpm"; echo "REPO_FILE=$GITHUB_ACTION_PATH/../../../packaging/staging/openmixer-staging.repo"
             echo "SKELETON=$RELEASES"; echo "NEWEST_ONLY=true"; } >> "$GITHUB_ENV"
         else
@@ -178,7 +196,7 @@ runs:
         channel: ${{ inputs.channel }}
         branch: ${{ inputs.branch }}
         # a catch-up keeps the served metadata of every directory it places nothing into
-        strip: ${{ inputs.catch-up == 'true' && 'none' || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
+        strip: ${{ inputs.catch-up == 'true' && 'none' || inputs.channel-level != '' && steps.collect.outputs.tree || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}
 
     - name: Check the signing key is one the channel serves
       if: inputs.sign == 'true'
@@ -200,7 +218,7 @@ runs:
     - name: Check no package of the channel becomes uninstallable
       # a staged run publishes to the staging channel, which no client installs from by default: the check judges the
       # channel a release lands in, so it runs for a release and a dry run, not for a staged publish
-      if: inputs.installability != 'false' && inputs.staging != 'true'
+      if: inputs.installability != 'false' && inputs.staging != 'true' && inputs.channel-level == ''
       shell: bash
       env:
         PKG_DIR: ${{ inputs.rpm-dir }}
@@ -250,9 +268,23 @@ runs:
       shell: bash
       run: echo "PUBLISH_RPMS_ACTION=$GITHUB_ACTION_PATH" >> "$GITHUB_ENV"
 
+    # a wave's devel channel: the one tree channel-level.sh named, committed alone (channel-push adds that path only)
+    - id: push-devel
+      uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
+      if: inputs.sign == 'true' && inputs.channel-level != ''
+      with:
+        publish-token: ${{ inputs.publish-token }}
+        site-gpg-key: ${{ inputs.site-gpg-key }}
+        channel: ${{ inputs.channel }}
+        branch: ${{ inputs.branch }}
+        tag: ${{ inputs.tag }}
+        what: ${{ steps.collect.outputs.tree }}
+        # REPO_FILE and SKELETON are in the job's environment (the first step)
+        rebuild: '"$PUBLISH_RPMS_ACTION/publish-tree.sh" "build/channel/$RPM_TREE" "${{ inputs.rpm-dir }}" "$OPENMIXER_GPG_KEY_ID"'
+
     - id: push-staging
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true' && inputs.staging == 'true'
+      if: inputs.sign == 'true' && inputs.staging == 'true' && inputs.channel-level == ''
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}
@@ -265,7 +297,7 @@ runs:
 
     - id: push-real
       uses: Open-Mixer/.github/.github/actions/channel-push@openmixer-v1
-      if: inputs.sign == 'true' && inputs.staging != 'true'
+      if: inputs.sign == 'true' && inputs.staging != 'true' && inputs.channel-level == ''
       with:
         publish-token: ${{ inputs.publish-token }}
         site-gpg-key: ${{ inputs.site-gpg-key }}

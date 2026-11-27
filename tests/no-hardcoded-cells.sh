@@ -51,6 +51,7 @@ ALLOW = [
     ("build-rpm.yml", r"default: '\[\"45\"\]'", "declares the caller's whole Fedora releases, fed to release-matrix"),
     ("promote-staged.yml", r"default: '\[\"(x86_64|trixie|amd64|45)\"", "declares the whole matrix the caller promotes (collect.py refuses a tree lacking a cell)"),
     ("purge-staging.yml", r"default: '\[\"(trixie|45)\"", "the staging indexes that must exist, whole tree, whatever the wave builds"),
+    ("promote-wave.yml", r"default: '\[\"(trixie|45)\"", "the staging indexes that must exist after a promotion, as the purge keeps them"),
     ("release-c-lib.yml", r"arch-matrix: \$\{\{ inputs\.arm", "the caller's whole architectures, passed to build-rpm.yml and build-deb.yml"),
 ]
 # a matrix of toolchain arms, each one image the quick set always builds (rule A holds the image to the set)

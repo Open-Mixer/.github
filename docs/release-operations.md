@@ -154,6 +154,51 @@ order, omx-contract first, since each build takes its BuildRequires from the cha
 release), or by a new version tag. The preflight refuses a version the channel already serves, but only in the
 trees the release publishes into, so a version served for fc44 does not block its first fc45 publish.
 
+## The three channel levels
+
+**RULED (owner, 2026-11-27, .github#319):** three channel levels, `devel/<wave>` -> `staging` -> production (the
+channel root), the same bytes promoted up. One shared staging channel made every wave run serially: a wave's coordinated
+bump reached another wave's CI mid-run, and a wave built for the quick set alone was visible to every host half-built.
+
+| Level | Tree in the channel | dnf (`priority`) | apt (`Pin-Priority`, label) | Filled by |
+| --- | --- | --- | --- | --- |
+| devel/`<wave>` | `devel/<wave>/rpm`, `devel/<wave>/deb` | `openmixer-devel*`, 5 | 650, `OpenMixer-Devel` | the wave's lines (a merge to devel, or a staged run with `channel-level`) |
+| staging | `staging/rpm`, `staging/deb` | `openmixer-staging*`, 10 | 600, `OpenMixer-Staging` | a promotion of a DONE wave (`promote-wave.yml`); until callers move, a merge to devel as before |
+| production | `rpm/`, `deb/` | `openmixer*`, dnf's default 99 | 500, `OpenMixer` | release tags and `promote-staged.yml` (consumer evidence) |
+
+`<wave>` is `[a-z0-9-]+`, the wave's name. `.github/actions/publish-rpms/channel-level.sh` is the one place
+that names a level's tree (`tree <kind> <level>`), its wave (`wave <level>`) and its dnf repository file (`repo-file`,
+`packaging/devel/openmixer-devel.repo.in` with the wave written in); it refuses any other level before a path is joined.
+Each tree carries its own signed metadata and its own `cells.tsv`.
+
+**Publishing into a wave.** `build-rpm.yml` and `build-deb.yml` take `channel-level` (empty or `staging`: the staging
+channel, today's behaviour; `devel/<wave>`: that wave's channel). A merge to devel with no input reads the calling
+repository's variable `OMX_DEVEL_CHANNEL`, which the coordinator's wave tool sets for a wave's line. The preflight's
+level step validates it (never on a tag or a release) and hands `devel-channel` to every job: the staged publish passes
+`channel-level: devel/<wave>` to `publish-rpms` / `publish-debs`, which write `devel/<wave>/<kind>` alone (their
+`push-devel` step, gated by exactly `inputs.sign == 'true' && inputs.channel-level != ''`, commits that one path; the
+staging and real pushes do not run with a level set); the build, the install check and the version checks
+(`release-preflight` `channel-level`, `already-served.sh` `DEVEL_TREE`) read the wave's tree beside staging, and never
+another wave's. A staged install check of a wave insists the package came from `openmixer-devel*`.
+
+**Reading a wave.** `add-openmixer` `devel-channel: <wave>` (or `devel/<wave>`) adds the wave's tree above staging, and
+staging with it (`add-staging.sh` `LEVEL=devel/<wave>`). A wave's tree never published yet (its first line) is skipped
+with a notice; a published tree without this machine's index fails. A development picks its base level by what it adds:
+the real channel alone, staging, or a wave.
+
+**Promoting a wave.** `promote-wave.yml` (dispatch, `wave: <wave>`) runs `actions/promote-wave` per kind: the wave's
+packages and `built/` records are copied to the same paths under `staging/<kind>`, staging's `cells.tsv` takes the
+wave's rows (with their set), and staging's metadata is regenerated and signed by the tree scripts. Before anything is
+copied, a path staging already holds with other bytes is refused, naming it, and the wave's tree is vouched for on a
+scratch copy (an rpm by its signature, a deb by the wave's signed index). The same bytes at the same path are kept, so a
+promotion runs again safely; afterwards every promoted file is compared with its source. Nothing outside `staging/<kind>`
+is written. The coordinator dispatches it once a wave is DONE.
+
+**Gates.** `tests/devel-channel-publish.sh` (a wave's publish writes nothing outside `devel/<wave>`, its own
+`cells.tsv`, the client priorities, the refused levels), `tests/promote-wave.sh` (same bytes, refusals, idempotence),
+`tests/devel-push-staging.sh` (a wave's version check), `tests/staging-channel.sh` (the three pushes, by exact match)
+and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release).
+
 ## The staging channel of a release wave
 
 A release wave publishes inner layers before the outer ones build on them. Inside the wave, a layer does not wait

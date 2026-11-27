@@ -77,6 +77,8 @@ def ev(expr, inputs, needs=None, matrix=None, ref_type="branch"):
         e = e[3:-2].strip()
     e = re.sub(r"\binputs\.([a-z0-9-]+)", lambda m: f'inputs["{m.group(1)}"]', e)
     e = e.replace("needs.publish-release", "needs.publish_release")
+    # an output of a job this render does not give reads empty, as GitHub reads it (needs.preflight.outputs.devel-channel)
+    e = re.sub(r"\bneeds\.([a-z_]+)\.outputs\.([a-z0-9-]+)", lambda m: f'_out(needs, "{m.group(1)}", "{m.group(2)}")', e)
     e = e.replace("&&", " and ").replace("||", " or ")
     e = re.sub(r"!(?!=)", " not ", e)
     env = {"inputs": inputs, "fromJSON": json.loads, "cancelled": lambda: False, "always": lambda: True,
@@ -87,7 +89,8 @@ def ev(expr, inputs, needs=None, matrix=None, ref_type="branch"):
                        event_name="push" if ref_type == "tag" else "workflow_dispatch", ref="refs/tags/v1.2.0" if ref_type == "tag" else "refs/heads/x", repository="o/r",
                        event=O(pull_request=O(head=O(repo=O(full_name="o/r"))))),
            "needs": needs or O(), "matrix": matrix or O(), "vars": O(), "secrets": O(), "runner": O(temp="/tmp"),
-           "env": O(), "startsWith": lambda a, b: str(a).startswith(b)}
+           "env": O(), "startsWith": lambda a, b: str(a).startswith(b),
+           "_out": lambda n, j, k: (((n or {}).get(j) or {}).get("outputs") or {}).get(k, "")}
     return eval(e, {"__builtins__": {}}, env)
 
 def truthy(v):
@@ -294,17 +297,22 @@ for kind in ("rpm", "deb"):
     # every name of the channel tree goes through the variable: no literal build/channel/<kind> left
     assert not re.search(rf"build/(channel|repo)/{kind}\b(?!/)", text.replace(f"build/channel/{kind}/RPM-GPG-KEY", "").replace(f"build/channel/{kind}/openmixer.asc", "")
                          .replace("REQUIRES_TREE=build/channel/deb", "")), f"{p}: a literal build/channel/{kind} is left"
-    # the push is two steps with literal paths, so the gate can prove by exact match which one writes staging/
+    # the staging and real pushes are two steps with literal paths, so the gate can prove by exact match which one writes
+    # staging/; a wave's devel push is the third, gated by exactly SIGN_DEVEL, its path the one channel-level.sh names
+    # (tests/devel-channel-publish.sh), and a level set stops the other two
     pushes = {x["id"]: x for x in steps if "/actions/channel-push@" in x.get("uses", "")}
-    assert set(pushes) == {"push-staging", "push-real"}, f"{p}: the pushes are {sorted(pushes)}"
-    assert pushes["push-staging"]["with"]["what"] == f"staging/{kind}" and pushes["push-staging"]["if"] == "inputs.sign == 'true' && inputs.staging == 'true'", f"{p}: the staging push"
-    assert pushes["push-real"]["with"]["what"] == kind and pushes["push-real"]["if"] == "inputs.sign == 'true' && inputs.staging != 'true'", f"{p}: the real push"
-    for w in (pushes["push-staging"]["with"], pushes["push-real"]["with"]):
+    assert set(pushes) == {"push-devel", "push-staging", "push-real"}, f"{p}: the pushes are {sorted(pushes)}"
+    assert pushes["push-staging"]["with"]["what"] == f"staging/{kind}" and pushes["push-staging"]["if"] == "inputs.sign == 'true' && inputs.staging == 'true' && inputs.channel-level == ''", f"{p}: the staging push"
+    assert pushes["push-real"]["with"]["what"] == kind and pushes["push-real"]["if"] == "inputs.sign == 'true' && inputs.staging != 'true' && inputs.channel-level == ''", f"{p}: the real push"
+    assert pushes["push-devel"]["with"]["what"] == "${{ steps.collect.outputs.tree }}" and pushes["push-devel"]["if"] == "inputs.sign == 'true' && inputs.channel-level != ''", f"{p}: the devel push"
+    assert first.get("id") == "collect" and "channel-level.sh\" tree " + kind + " \"$LEVEL\"" in first["run"] and 'echo "tree=$tree" >> "$GITHUB_OUTPUT"' in first["run"], \
+        f"{p}: the devel tree is not named by channel-level.sh in the first step"
+    for w in (pushes["push-devel"]["with"], pushes["push-staging"]["with"], pushes["push-real"]["with"]):
         assert f'"build/channel/${var}"' in w["rebuild"], f"{p}: the lost-race rebuild does not assemble the same tree"
     pull = [s for s in steps if "/actions/channel-pull@" in s.get("uses", "")][0]
     if kind == "rpm":
         # a catch-up strips nothing: it keeps the served metadata of the directories it places nothing into (tests/catch-up-publish.sh)
-        assert pull["with"]["strip"] == "${{ inputs.catch-up == 'true' && 'none' || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}", f"{p}: channel-pull strips another tree"
+        assert pull["with"]["strip"] == "${{ inputs.catch-up == 'true' && 'none' || inputs.channel-level != '' && steps.collect.outputs.tree || inputs.staging == 'true' && 'staging/rpm' || 'rpm' }}", f"{p}: channel-pull strips another tree"
     # the key check reads the real channel's served keys whatever the tree: staging is signed with the same key
     chk = [s for s in steps if s.get("name", "").startswith("Check the signing key")][0]
     assert f"build/channel/{kind}/" in chk["run"], f"{p}: the key check does not read the real channel's keys"

@@ -75,6 +75,9 @@ inputs:
       and one is refused by name. A snapshot of a published version is retired: the version is bumped on devel
       (.github#289). Empty for every other run, a merge to devel included.
     default: ''
+  channel-level:
+    description: "devel/<wave> for a run that publishes into a wave's devel channel: its tree counts as staging does for devel-version and staged-version (a version the wave published is published already), and a build record there is read first; another wave's tree never counts. Empty for every other run"
+    default: ''
   gpg-key:
     default: ''
   gpg-passphrase:
@@ -108,12 +111,19 @@ runs:
         CATCH_UP: ${{ inputs.catch-up }}
         DEVEL_VERSION: ${{ inputs.devel-version }}
         STAGED_VERSION: ${{ inputs.staged-version }}
+        LEVEL: ${{ inputs.channel-level }}
         NAME: ${{ inputs.name }}
         EXEMPT: ${{ inputs.exempt }}
         BEFORE: ${{ inputs.before }}
         CALLER: ${{ inputs.caller-workflow }}
       run: |
         set -euo pipefail
+        # a wave's devel tree, read beside staging by the version checks below (already-served.sh DEVEL_TREE)
+        devel_tree=
+        if [ -n "${LEVEL:-}" ]; then
+          devel_tree=devel/$("$GITHUB_ACTION_PATH/../publish-rpms/channel-level.sh" wave "$LEVEL") || exit 1
+        fi
+        export DEVEL_TREE=$devel_tree
         if [ "$PUBLISH" != true ] || { [ "$REQUIRE_TAG" = true ] && [ "$REF_TYPE" != tag ]; }; then
           echo "::notice::dry run ($REF): the packages are built and an unsigned tree is assembled; nothing is signed or published"
           exit 0
@@ -185,6 +195,10 @@ runs:
             # record (a version published before the records), in this push itself (../package-paths/served-change.sh)
             [ -n "$NAME" ] && [ -n "$KIND" ] || { echo "::error::v$DEVEL_VERSION is published, and the preflight names no package-name and kind to read the record of its build by"; exit 1; }
             rec=staging/$KIND/built/$NAME/$DEVEL_VERSION.commit built=''
+            # a wave's own record first: the build its devel channel serves
+            if [ -n "$devel_tree" ] && grep -qxF "$devel_tree/$KIND/built/$NAME/$DEVEL_VERSION.commit" /tmp/tree.paths; then
+              rec=$devel_tree/$KIND/built/$NAME/$DEVEL_VERSION.commit
+            fi
             if grep -qxF "$rec" /tmp/tree.paths; then
               code=$(curl -s --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 -o /tmp/built.commit -w '%{http_code}' \
                 -H "Authorization: Bearer $PAGES_TOKEN" -H "Accept: application/vnd.github.raw" \

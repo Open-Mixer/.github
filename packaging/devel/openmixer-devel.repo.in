@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# The devel channel of one wave, devel/@WAVE@, above staging (docs/release-operations.md, "The three channel levels").
+# Needs openmixer-release installed first: the key is the one it installs. priority=5 is above staging (10) and the real
+# repositories (dnf's default, 99), so a package the wave published is taken from it; what the wave did not publish
+# comes from staging, then the real channel. Another wave's tree is never added beside it.
+[openmixer-devel]
+name=OpenMixer devel (@WAVE@)
+baseurl=https://www.openmixer.org/devel/@WAVE@/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=5
+
+[openmixer-devel-noarch]
+name=OpenMixer devel (@WAVE@, noarch)
+baseurl=https://www.openmixer.org/devel/@WAVE@/rpm/fedora/$releasever/noarch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-openmixer
+priority=5

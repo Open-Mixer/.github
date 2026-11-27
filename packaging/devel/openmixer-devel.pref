@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+# A wave's devel channel's index carries Label: OpenMixer-Devel; 650 is above staging (600) and the real channel (500).
+Package: *
+Pin: release l=OpenMixer-Devel
+Pin-Priority: 650
