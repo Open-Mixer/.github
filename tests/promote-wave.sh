@@ -22,7 +22,10 @@
 #     that source under another binary name (omx-src=1.0 keeps omx-src-tools 1.0); a kind holding no package of the source
 #     (n4's deb tree held no libdiginet at all) is named "no <kind> of <name> in the wave" and promotes the rest, when the
 #     other kind's tree holds the version (its build record, a package file of that name and version, or a deb index's
-#     Source); a token on no kind, or a version the kind does not hold of a source it holds, stays refused.
+#     Source); a token on no kind, or a version the kind does not hold of a source it holds, stays refused;
+#   - a line names the packages of both kinds (run 46179480913, devel-wave-2026-11-27-bc2 line 13 omx-contract: rpm
+#     libomx-domain-devel, deb libomx-domain-dev, libomx-contract-dev deb only): a name only the other kind holds is
+#     named "no <kind> of <name> in the wave" and the line's packages of this kind move; a name on no kind is refused.
 # Sabotage: promote-wave.sh with its other-bytes refusal taken out lets wave-b through, and this test goes red.
 # Runs as root in a throwaway Fedora (rpm) or Debian (deb) container: the client arm writes /etc.
 #
@@ -90,7 +93,7 @@ rpm)
         rpmbuild -bb --quiet --define "_topdir $d" "$d/p.spec" >/dev/null 2>&1 || fail "rpmbuild $1 ($2) $3"
         find "$d/RPMS" -name '*.rpm' -exec cp {} "$4/" \;
     }
-    other=deb
+    other=deb mine=devel theirs=dev
     other_file() { echo "debian/trixie/amd64/$1_$2-1_amd64.deb"; }
     pubw() { local w=$1 d=$2; shift 2; publish "devel/$w/rpm" "$d" "devel/$w" "$@"; }
     at() { echo "fedora/45/noarch/$1-$2-1.fc45.noarch.rpm"; }
@@ -124,7 +127,7 @@ deb)
         printf '%s\n' "Package: $2" "Source: $1" "Version: $3" 'Architecture: all' 'Maintainer: t <t@example.org>' "Description: ${5:-t}" > "$d/DEBIAN/control"
         dpkg-deb --root-owner-group -b "$d" "$4/trixie/$2_$3_all.deb" >/dev/null
     }
-    other=rpm
+    other=rpm mine=dev theirs=devel
     other_file() { echo "fedora/45/SRPMS/$1-$2-1.fc45.src.rpm"; }
     pubw() { local w=$1 d=$2; shift 2; publish "devel/$w/deb" "$d" LABEL=OpenMixer-Devel "$@"; }
     at() { echo "debian/trixie/all/$1_$2_all.deb"; }
@@ -230,7 +233,7 @@ grep -q ": 1 file(s) copied, 2 already there" "$work/d2.log" || fail "the whole 
 (cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-d-promoted)
 sums staging > "$work/staging.before"
 if PROMOTE_PACKAGES=omx-none "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-d "$key" > "$work/none.log" 2>&1; then fail "a line naming no package of the wave was promoted green"; fi
-grep -q "omx-none matches no package of devel/wave-d/$kind: nothing was promoted" "$work/none.log" || fail "the empty selection is not refused by name: $(cat "$work/none.log")"
+grep -q "omx-none matches no package of devel/wave-d/$kind nor of devel/wave-d/$other, on no kind: nothing was promoted" "$work/none.log" || fail "the empty selection is not refused by name: $(cat "$work/none.log")"
 sums staging | cmp -s - "$work/staging.before" || fail "the refused empty selection changed staging"
 ok "$kind: one line of a wave promotes its own packages, record and cells row alone; the whole wave after it keeps them; a selection of nothing is refused"
 
@@ -306,5 +309,32 @@ grep -q "omx-g=9.9: devel/wave-g/$kind holds omx-g, but no package of it at 9.9"
 grep -q "omx-n5=1.0 matches no package of devel/wave-g/$kind nor of devel/wave-g/$other, on no kind" \
     <(PROMOTE_KEEP_STAGING=omx-n5=1.0 "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-g "$key" 2>&1) || fail "a token on no kind is not refused by name"
 ok "$kind: a kind holding no package of a kept source is named and promotes the rest; a token on no kind, or a version of no kind, is refused"
+
+# ---- bc2 line 13's shape: the line names both kinds' packages. This kind built omx-dom-$mine 1.0 (source omx-dom) and
+# omx-con 1.0; the other kind's tree holds omx-dom-$theirs and omx-con-only (a package file of each), omx-rec (its
+# build record) and, for a deb tree, omx-stz-bin (an index stanza alone)
+mksrc omx-dom omx-dom-$mine 1.0 "$work/wave-h"; mk omx-con 1.0 "$work/wave-h"; pubw wave-h "$work/wave-h" MATRIX_SET=full
+o=$ch/devel/wave-h/$other
+for n in omx-dom-$theirs omx-con-only; do mkdir -p "$(dirname "$o/$(other_file "$n" 1.0)")"; : > "$o/$(other_file "$n" 1.0)"; done
+mkdir -p "$o/built/omx-rec" "$o/debian/trixie"; echo "$commit" > "$o/built/omx-rec/1.0.commit"
+line="omx-dom omx-dom-devel omx-dom-dev omx-con omx-con-only omx-rec"
+if [ "$other" = deb ]; then printf '%s\n' 'Package: omx-stz-bin' 'Version: 1.0' 'Architecture: amd64' '' > "$o/debian/trixie/Packages"; line+=" omx-stz-bin"; fi
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-h)
+PROMOTE_PACKAGES=$line "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-h "$key" > "$work/h.log" 2>&1 || { cat "$work/h.log"; fail "wave-h's line, naming both kinds' packages, was refused"; }
+for n in omx-dom-$theirs omx-con-only omx-rec ${line##*omx-rec}; do
+    grep -q "^promote-wave: no $kind of $n in the wave" "$work/h.log" || fail "the name $n only the $other tree holds is not named: $(cat "$work/h.log")"
+done
+for f in "$(at omx-dom-$mine 1.0)" "$(at omx-con 1.0)"; do
+    cmp -s "$ch/staging/$kind/$f" "$ch/devel/wave-h/$kind/$f" || fail "the line's $f did not move"
+done
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-h-promoted)
+sums staging > "$work/staging.before"
+if PROMOTE_PACKAGES="$line omx-zz" "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-h "$key" > "$work/hbad.log" 2>&1; then fail "a line naming omx-zz, on no kind, was taken: $(cat "$work/hbad.log")"; fi
+grep -q "omx-zz matches no package of devel/wave-h/$kind nor of devel/wave-h/$other, on no kind" "$work/hbad.log" || fail "a name on no kind is not refused by name: $(cat "$work/hbad.log")"
+sums staging | cmp -s - "$work/staging.before" || fail "the refused line changed staging"
+# the rpm tree a deb job reads has no index: no Packages file must read as holding nothing, never as holding everything
+if PROMOTE_KEEP_STAGING=omx-zz=1.0 "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-h "$key" > "$work/hbad.log" 2>&1; then fail "keep-staging omx-zz=1.0, on no kind, was taken: $(cat "$work/hbad.log")"; fi
+sums staging | cmp -s - "$work/staging.before" || fail "the refused keep-staging omx-zz=1.0 changed staging"
+ok "$kind: a line naming both kinds' packages moves this kind's and names the other kind's; a name on no kind is refused"
 rm -rf "$work"
 echo "promote-wave $kind: all passed"
