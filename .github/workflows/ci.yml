@@ -45,6 +45,7 @@ jobs:
       - run: tests/fedora-cells.sh
       - run: tests/installed-source.sh
       - run: tests/fedora-workflow-check.sh
+      - run: tests/devel-base-check.sh
       - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
       - run: tests/channel-keep-list.sh
@@ -102,6 +103,8 @@ jobs:
         uses: ./.github/actions/commit-identity-check
       - name: The action reads this repository's own workflows
         uses: ./.github/actions/fedora-workflow-check
+      - name: The devel-base action reads this repository's own workflows and actions
+        uses: ./.github/actions/devel-base-check
 
   # The same-pass action run as a local action: the dispatch list is the input, and with none the file at this commit
   # is read (this repository has none, so the list is empty). Its reader is proven by tests/same-pass.sh.
@@ -476,6 +479,9 @@ jobs:
       - name: omx-contract from the channel or its staging (translate and the language list)
         uses: ./.github/actions/add-openmixer
         with:
+          # a pull request into devel, or a dispatch off main, in a wave reads that wave's devel channel and its base above staging
+          devel-channel: ${{ ((startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && vars.OMX_DEVEL_CHANNEL || '' }}
+          devel-base: ${{ ((startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && vars.OMX_DEVEL_BASE || '' }}
           staging: 'true'
       - run: dnf install -y --setopt=install_weak_deps=False omx-contract
       - run: tests/langpacks-fill.sh

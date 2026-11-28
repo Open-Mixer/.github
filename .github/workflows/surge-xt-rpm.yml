@@ -104,6 +104,10 @@ jobs:
           if rpm -qpl release/*.rpm | grep -q '^/usr/local'; then echo "::error::a package carries /usr/local"; exit 1; fi
 
       - uses: ./.github/actions/add-openmixer
+        with:
+          # a pull request into devel, or a dispatch off main, in a wave reads that wave's devel channel and its base above staging
+          devel-channel: ${{ ((startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && vars.OMX_DEVEL_CHANNEL || '' }}
+          devel-base: ${{ ((startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && vars.OMX_DEVEL_BASE || '' }}
 
       - name: Install from a clean state and load the plugin in the hosts' scanners
         env:
