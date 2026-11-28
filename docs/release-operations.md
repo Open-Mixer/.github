@@ -215,6 +215,19 @@ scratch copy (an rpm by its signature, a deb by the wave's signed index). The sa
 promotion runs again safely; afterwards every promoted file is compared with its source. Nothing outside `staging/<kind>`
 is written. The coordinator dispatches it once a wave is DONE.
 
+**Promoting one proven line.** `packages: <names>` promotes one line of a wave, not the whole wave: only the packages
+whose name or source package's name is listed, their `cells.tsv` rows and the build records `built/<name>/` move, with
+the same refusals and the same byte comparison (`promote-wave.sh` `PROMOTE_PACKAGES`). devel-chain.sh's continuous
+promotion dispatches it for the line it has just moved testing for (openmixer-ops `channel-promote.sh --line`), so
+upper-layer lanes read that layer from staging at once. A selection matching nothing is refused by name. The whole wave
+promoted later keeps those bytes.
+
+**A version built twice (before build once).** Staging's build was published first and a published file is never
+replaced: staging's is kept. `keep-staging: <name>=<version> ...` leaves every file of the wave of that name and
+version, its build record and its `cells.tsv` rows out of the promotion and reports each `superseded`, by path; a kept
+package staging does not hold, or a token matching nothing, is refused. Every other clash still refuses. The wave's copy
+stays in `devel/<wave>` until the wave's tree is removed; consumers of staging get staging's build of the version.
+
 **Gates.** `tests/devel-channel-publish.sh` (a wave's publish writes nothing outside `devel/<wave>`, its own
 `cells.tsv`, the client priorities, the refused levels), `tests/promote-wave.sh` (same bytes, refusals, idempotence),
 `tests/devel-push-staging.sh` (a wave's version check), `tests/staging-channel.sh` (the three pushes, by exact match)

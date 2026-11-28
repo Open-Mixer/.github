@@ -14,6 +14,10 @@
 #   - a wave holding a path staging holds with other bytes is refused, naming the path, and staging is byte-identical
 #     after; a package planted in a devel tree that its signature (rpm) or signed index (deb) does not vouch for is refused
 #     the same way; a wave name outside [a-z0-9-] is refused before anything is read.
+#   - one line of a wave (PROMOTE_PACKAGES) moves its packages, record and cells row alone, and a later whole-wave
+#     promotion keeps those bytes; a selection of nothing is refused;
+#   - a version built twice (PROMOTE_KEEP_STAGING <name>=<version>) keeps staging's build and reports the wave's copy
+#     superseded; keeping a version staging does not hold, or a token matching nothing, is refused.
 # Sabotage: promote-wave.sh with its other-bytes refusal taken out lets wave-b through, and this test goes red.
 # Runs as root in a throwaway Fedora (rpm) or Debian (deb) container: the client arm writes /etc.
 #
@@ -72,6 +76,9 @@ rpm)
         grep -qF "$1" <<< "$x"
     }
     signed_index() { [ -s "$ch/staging/rpm/fedora/45/noarch/repodata/repomd.xml.asc" ]; }
+    mk() { mkpkg "$@"; }
+    pubw() { local w=$1 d=$2; shift 2; publish "devel/$w/rpm" "$d" "devel/$w" "$@"; }
+    at() { echo "fedora/45/noarch/$1-$2-1.fc45.noarch.rpm"; }
     plant() { # an unsigned package in wave-c's devel tree, beside a signed one
         mkpkg omx-lib 3.17.0 "$work/wave-c"; publish devel/wave-c/rpm "$work/wave-c" devel/wave-c
         mkpkg omx-plant 1.0 "$work/plant"; cp "$work/plant/"*.rpm "$ch/devel/wave-c/rpm/fedora/45/noarch/"
@@ -95,6 +102,9 @@ deb)
     clash=debian/trixie/all/omx-lib_3.14.0_all.deb
     indexed() { grep -qx "Filename: ./all/$1" "$ch/staging/deb/debian/trixie/Packages"; }
     signed_index() { grep -qx 'Label: OpenMixer-Staging' "$ch/staging/deb/debian/trixie/InRelease"; }
+    mk() { mkdeb "$@"; }
+    pubw() { local w=$1 d=$2; shift 2; publish "devel/$w/deb" "$d" LABEL=OpenMixer-Devel "$@"; }
+    at() { echo "debian/trixie/all/$1_$2_all.deb"; }
     plant() { # a deb in wave-c's devel tree that its signed index does not list
         mkdeb omx-lib 3.17.0 "$work/wave-c"; publish devel/wave-c/deb "$work/wave-c" LABEL=OpenMixer-Devel
         mkdeb omx-plant 1.0 "$work/plant"; cp "$work/plant/trixie/"*.deb "$ch/devel/wave-c/deb/debian/trixie/all/"
@@ -174,5 +184,60 @@ for bad in ../rpm 'Wave A' ''; do
 done
 sums staging | cmp -s - "$work/staging.before" || fail "a refused wave name changed staging"
 ok "$kind: other bytes at a path staging holds, a planted package and a name that is no wave's are refused, staging unchanged"
+# ---- ONE LINE of a wave (PROMOTE_PACKAGES, devel-chain.sh's continuous promotion): wave-d holds two lines' packages,
+# omx-two 1.0 and omx-lib 3.16.0; promoting omx-two moves its file, its build record and its cells.tsv row alone, and the
+# whole wave promoted afterwards keeps omx-two's bytes and adds omx-lib's
+mk omx-two 1.0 "$work/wave-d"; pubw wave-d "$work/wave-d" MATRIX_SET=full BUILT_COMMIT=$commit BUILT_NAME=omx-two
+mk omx-lib 3.16.0 "$work/wave-d2"; pubw wave-d "$work/wave-d2" MATRIX_SET=full
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-d)
+two=$(at omx-two 1.0) lib16=$(at omx-lib 3.16.0)
+PROMOTE_PACKAGES=omx-two "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-d "$key" > "$work/d.log" 2>&1 || { cat "$work/d.log"; fail "the promotion of wave-d's omx-two line failed"; }
+cmp -s "$ch/staging/$kind/$two" "$ch/devel/wave-d/$kind/$two" || fail "staging/$kind/$two is not the bytes of the wave's after its line's promotion"
+[ -f "$ch/staging/$kind/built/omx-two/1.0.commit" ] || fail "the line's build record built/omx-two/1.0.commit did not move"
+[ ! -e "$ch/staging/$kind/$lib16" ] || fail "the promotion of the omx-two line moved $lib16, another line's package"
+[ "$(row omx-two 1.0)" = full ] || fail "staging's cells.tsv lacks the line's row: $(cat "$ch/staging/$kind/cells.tsv")"
+[ -z "$(row omx-lib 3.16.0)" ] || fail "staging's cells.tsv took another line's row: $(cat "$ch/staging/$kind/cells.tsv")"
+indexed "$(basename "$two")" || fail "staging's index does not list the line's $(basename "$two")"
+grep -q "^promoted devel/wave-d/$kind (omx-two) -> staging/$kind: 2 file(s) copied" "$work/d.log" || fail "the line's promotion does not say what it copied: $(cat "$work/d.log")"
+sums "staging/$kind/$two" > "$work/two.sum"
+"$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-d "$key" > "$work/d2.log" 2>&1 || { cat "$work/d2.log"; fail "the whole of wave-d after its line failed"; }
+cmp -s "$ch/staging/$kind/$lib16" "$ch/devel/wave-d/$kind/$lib16" || fail "the whole wave did not bring $lib16"
+sums "staging/$kind/$two" | cmp -s - "$work/two.sum" || fail "the whole wave changed the line's promoted $two"
+grep -q ": 1 file(s) copied, 2 already there" "$work/d2.log" || fail "the whole wave after its line does not keep the line's files: $(cat "$work/d2.log")"
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-d-promoted)
+sums staging > "$work/staging.before"
+if PROMOTE_PACKAGES=omx-none "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-d "$key" > "$work/none.log" 2>&1; then fail "a line naming no package of the wave was promoted green"; fi
+grep -q "omx-none matches no package of devel/wave-d/$kind: nothing was promoted" "$work/none.log" || fail "the empty selection is not refused by name: $(cat "$work/none.log")"
+sums staging | cmp -s - "$work/staging.before" || fail "the refused empty selection changed staging"
+ok "$kind: one line of a wave promotes its own packages, record and cells row alone; the whole wave after it keeps them; a selection of nothing is refused"
+
+# ---- the reconciliation of a version built twice (PROMOTE_KEEP_STAGING): wave-e holds a rebuilt omx-lib 3.14.0 (other
+# bytes than staging's, with a build record) and omx-e 1.0. Refused as before without the list; with omx-lib=3.14.0
+# kept, omx-e is promoted, staging's 3.14.0 keeps every byte and its row, the wave's copy and record are reported
+# superseded and never copied; a kept version staging does not hold, and a token matching nothing, are refused
+sleep 1
+mk omx-lib 3.14.0 "$work/wave-e" again; pubw wave-e "$work/wave-e" MATRIX_SET=full BUILT_COMMIT=$commit BUILT_NAME=omx-lib
+mk omx-e 1.0 "$work/wave-e2"; pubw wave-e "$work/wave-e2" MATRIX_SET=full
+cmp -s "$ch/staging/$kind/$clash" "$ch/devel/wave-e/$kind/$clash" && fail "the fixture's wave-e 3.14.0 has staging's bytes"
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-e)
+sums staging > "$work/staging.before"
+if "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-e "$key" > "$work/e0.log" 2>&1; then fail "wave-e, holding $clash with other bytes, was promoted with nothing kept"; fi
+sums staging | cmp -s - "$work/staging.before" || fail "the refused promotion of wave-e changed staging"
+for bad in omx-e=1.0 omx-zz=9.9; do
+    if PROMOTE_KEEP_STAGING=$bad "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-e "$key" > "$work/ebad.log" 2>&1; then fail "keep-staging $bad was taken"; fi
+    sums staging | cmp -s - "$work/staging.before" || fail "the refused keep-staging $bad changed staging"
+done
+grep -q "keep-staging omx-e=1.0: staging/$kind/$(at omx-e 1.0) is not there" <(PROMOTE_KEEP_STAGING=omx-e=1.0 "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-e "$key" 2>&1) || fail "keeping a version staging does not hold is not refused by name"
+sha_before=$(sha256sum < "$ch/staging/$kind/$clash")
+PROMOTE_KEEP_STAGING=omx-lib=3.14.0 "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-e "$key" > "$work/e.log" 2>&1 || { cat "$work/e.log"; fail "wave-e with omx-lib=3.14.0 kept failed"; }
+[ "$(sha256sum < "$ch/staging/$kind/$clash")" = "$sha_before" ] || fail "staging's own $clash changed: a published file was replaced"
+cmp -s "$ch/staging/$kind/$(at omx-e 1.0)" "$ch/devel/wave-e/$kind/$(at omx-e 1.0)" || fail "wave-e's omx-e 1.0 did not move"
+[ ! -e "$ch/staging/$kind/built/omx-lib/3.14.0.commit" ] || fail "the superseded build record built/omx-lib/3.14.0.commit was copied"
+[ "$(row omx-lib 3.14.0)" = quick ] || fail "staging's row of its own omx-lib 3.14.0 was replaced by the wave's: $(cat "$ch/staging/$kind/cells.tsv")"
+indexed "$(basename "$clash")" || fail "staging's index lost its own $(basename "$clash")"
+grep -q "^superseded devel/wave-e/$kind/$clash (omx-lib=3.14.0): staging keeps its own build" "$work/e.log" || fail "the superseded copy is not reported by path: $(cat "$work/e.log")"
+grep -q "^superseded devel/wave-e/$kind/built/omx-lib/3.14.0.commit (omx-lib=3.14.0)" "$work/e.log" || fail "the superseded record is not reported: $(cat "$work/e.log")"
+grep -q ", 2 superseded by staging's own build$" "$work/e.log" || fail "the summary does not count the superseded files: $(cat "$work/e.log")"
+ok "$kind: a version built twice keeps staging's build (bytes, row, no record copied), the wave's copy reported superseded; the rest promotes; bad keeps refused"
 rm -rf "$work"
 echo "promote-wave $kind: all passed"
