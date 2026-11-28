@@ -61,7 +61,10 @@ jobs:
     name: language packs fill
     if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork || github.event_name == 'workflow_dispatch'
     runs-on: arc-freemixer
-    timeout-minutes: 30
+    # a language is pushed as soon as it is whole, so a cancel loses only the one in progress; a whole new catalog of
+    # ~1000 keys is about an hour a language through the router (omx-plugins#124), so the job is given six languages'
+    # time and a re-dispatch makes only what is left (tests/langpacks-fill-runner.sh holds it at four hours or more)
+    timeout-minutes: 360
     permissions:
       contents: write
     container:
