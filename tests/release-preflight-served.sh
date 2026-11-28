@@ -99,8 +99,10 @@ gitr() { git -C "$repo" -c user.name=t -c user.email=t@example.org -c commit.gpg
 gitr init -q; gitr add -A; gitr commit -q -m built; A=$(gitr rev-parse HEAD); echo "$A" > "$tmp/record"
 mkdir -p "$repo/.github"; echo w > "$repo/.github/ci.yml"; gitr add -A; gitr commit -q -m workflow; B=$(gitr rev-parse HEAD)
 echo c > "$repo/src/a.c"; gitr commit -q -am code; C=$(gitr rev-parse HEAD); gitr checkout -q "$B"
+# every merge to devel below is a wave's line (LEVEL devel/wave-x), the one kind of merge to devel that publishes; LEVEL_IN=''
+# is a merge outside a wave
 rundevel() { # rundevel <devel version> [catch-up] [releases]
-  cd "$repo" && PATH=$tmp/bin:$PATH NAME=foo EXEMPT=${EXEMPT_IN:-} CALLER=${CALLER_IN:-} BEFORE=${BEFORE:-} PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
+  cd "$repo" && PATH=$tmp/bin:$PATH LEVEL=${LEVEL_IN-devel/wave-x} NAME=foo EXEMPT=${EXEMPT_IN:-} CALLER=${CALLER_IN:-} BEFORE=${BEFORE:-} PUBLISH=true TARGET=Open-Mixer/open-mixer.github.io GPG_KEY=k PAGES_TOKEN=t REF=refs/heads/devel \
     REF_TYPE=branch REQUIRE_TAG=false TAG=devel PACKAGES=foo REPUBLISH=false KIND=rpm RELEASES=${3-44} CATCH_UP=${2:-false} \
     DEVEL_VERSION=$1 GITHUB_OUTPUT=$tmp/gh-out GITHUB_ACTION_PATH=${ACT_PATH:-$act} bash "$tmp/step.sh" > "$tmp/out" 2>&1; local rc=$?; cd "$here"; return $rc
 }
@@ -160,6 +162,27 @@ grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "the first push of 
 : > "$tmp/gh-out"; rundevel 1.2.9 || { cat "$tmp/out"; fail "a merge to devel of a new version was refused"; }
 grep -qx 'skip=false' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "a merge to devel of a new version does not output skip=false"; }
 echo "ok   a merge to devel of a published version is green, publishes nothing, and names what is served"
+# BUILD ONCE (owner 2026-11-24/27): a merge to devel outside a wave (OMX_DEVEL_CHANNEL unset, so the level is empty)
+# builds and publishes nothing, green: staging receives a wave's bytes by its promotion alone. Before this, a new version
+# there gave skip=false and the build published it into staging, a second build of what a wave held (libdiginet 0.1.11,
+# libdiginet run 46159610686; .github promote-wave run 46165668682 refused it). The tree is not even read.
+: > "$tmp/gh-out"; : > "$tmp/asked"; LEVEL_IN='' rundevel 1.2.9 || { cat "$tmp/out"; fail "a merge to devel outside a wave was red"; }
+grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "a merge to devel outside a wave does not output skip=true: it would build v1.2.9 into staging"; }
+grep -q '::notice::a merge to devel outside a wave (OMX_DEVEL_CHANNEL unset) builds and publishes nothing' "$tmp/out" || { cat "$tmp/out"; fail "the skip outside a wave does not say why"; }
+! grep -q git/trees "$tmp/asked" || fail "a merge to devel outside a wave read the channel tree"
+: > "$tmp/gh-out"; LEVEL_IN='' rundevel 1.5.0 false 45 || { cat "$tmp/out"; fail "a merge to devel outside a wave of a served version was red"; }
+grep -qx 'skip=true' "$tmp/gh-out" || { cat "$tmp/out"; fail "a merge to devel outside a wave of a served version does not skip"; }
+# the same new version inside a wave still builds (skip=false)
+: > "$tmp/gh-out"; rundevel 1.2.9 || { cat "$tmp/out"; fail "a wave's merge to devel of a new version was refused"; }
+grep -qx 'skip=false' "$tmp/gh-out" || { cat "$tmp/out"; fail "a wave's merge to devel of a new version does not build"; }
+# sabotage: the outside-a-wave guard taken out of the step, a new version outside a wave builds again (skip=false)
+sed '/^# BUILD ONCE (owner 2026-11-24\/27)/,/^fi$/d' "$tmp/step.sh" > "$tmp/step-sab.sh"
+! cmp -s "$tmp/step.sh" "$tmp/step-sab.sh" || fail "sabotage: the outside-a-wave guard was not found in the step"
+cp "$tmp/step.sh" "$tmp/step-real.sh"; cp "$tmp/step-sab.sh" "$tmp/step.sh"
+: > "$tmp/gh-out"; LEVEL_IN='' rundevel 1.2.9 || true
+grep -qx 'skip=false' "$tmp/gh-out" || { cat "$tmp/out" "$tmp/gh-out"; fail "sabotage: without the guard a merge outside a wave still skipped"; }
+cp "$tmp/step-real.sh" "$tmp/step.sh"
+echo "ok   a merge to devel outside a wave builds and publishes nothing (build once); sabotage: without the guard it builds"
 # a dispatched staged run (staged-version, not a merge to devel): a snapshot of a version the channel root or staging
 # holds as a REAL build is refused, naming the file; one whose only builds are snapshots, or that nothing holds, passes (F3)
 runstaged() { # runstaged <version> [kind] [releases]
@@ -187,4 +210,4 @@ chmod +x "$tmp/sab/already-served.sh"
 ACT_PATH=$tmp/sab run true tag v1.2.3 foo false rpm 45 && fail "sabotage: without the per-release filter the fc45 release still passed"
 grep -q 'foo-1.2.3-1.fc44.x86_64.rpm' "$tmp/out" || { cat "$tmp/out"; fail "sabotage: the red does not name the fc44 rpm"; }
 echo "ok   sabotage: without the per-release filter the fc45 release is red"
-echo "ok   release-preflight-served: 47 arms"
+echo "ok   release-preflight-served: 52 arms"
