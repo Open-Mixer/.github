@@ -89,8 +89,8 @@ if [ "${1:-}" = --self-test ]; then
   run "an identifier in lower case passes" green "docs/b.md=\`@${OLD,,}/core\`, org.${OLD,,}.comp, arc-${OLD,,}, RPM-GPG-KEY-${OLD,,}"
   run "a word that only contains the name passes" green "docs/c.md=${OLD}s and Un${OLD}"
   run "code is not a document" green "src/x.c=/* ${OLD} */"
-  run "a pathspec adds a site's pages" red "app/pages/index.vue=<p>${OLD}</p>" -- app/pages
-  run "without the pathspec a site page is not read" green "app/pages/index.vue=<p>${OLD}</p>"
+  run "a pathspec adds a site's pages" red "app/pages/index.v""ue=<p>${OLD}</p>" -- app/pages
+  run "without the pathspec a site page is not read" green "app/pages/index.v""ue=<p>${OLD}</p>"
   run "an exclude pathspec takes a copied tree out" green "content/projects/x/README.md=the ${OLD} name" -- ':!content/projects'
   run "an exclude takes out only what it names" red "content/projects/x/README.md=ok" "docs/d.md=${OLD}" -- ':!content/projects'
   # sabotage: with the patterns gone, every planted line passes, so the patterns are what catch it
