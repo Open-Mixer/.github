@@ -17,7 +17,12 @@
 #   - one line of a wave (PROMOTE_PACKAGES) moves its packages, record and cells row alone, and a later whole-wave
 #     promotion keeps those bytes; a selection of nothing is refused;
 #   - a version built twice (PROMOTE_KEEP_STAGING <name>=<version>) keeps staging's build and reports the wave's copy
-#     superseded; keeping a version staging does not hold, or a token matching nothing, is refused.
+#     superseded; keeping a version staging does not hold, or a token matching nothing, is refused;
+#   - a keep token names a SOURCE and version (run 46176982537, devel-wave-2026-11-28-n4): it keeps the files built from
+#     that source under another binary name (omx-src=1.0 keeps omx-src-tools 1.0); a kind holding no package of the source
+#     (n4's deb tree held no libdiginet at all) is named "no <kind> of <name> in the wave" and promotes the rest, when the
+#     other kind's tree holds the version (its build record, a package file of that name and version, or a deb index's
+#     Source); a token on no kind, or a version the kind does not hold of a source it holds, stays refused.
 # Sabotage: promote-wave.sh with its other-bytes refusal taken out lets wave-b through, and this test goes red.
 # Runs as root in a throwaway Fedora (rpm) or Debian (deb) container: the client arm writes /etc.
 #
@@ -77,6 +82,16 @@ rpm)
     }
     signed_index() { [ -s "$ch/staging/rpm/fedora/45/noarch/repodata/repomd.xml.asc" ]; }
     mk() { mkpkg "$@"; }
+    mksrc() { # <source> <binary> <version> <out dir> [description]: a binary package of another name than its source
+        local d=$work/rs-$1-$3-${5:-t}
+        mkdir -p "$d" "$4"
+        printf '%s\n' "Name: $1" "Version: $3" 'Release: 1.fc45' 'Summary: t' 'License: MIT' 'BuildArch: noarch' '%description' t \
+            "%package -n $2" 'Summary: t' "%description -n $2" "${5:-t}" "%files -n $2" > "$d/p.spec"
+        rpmbuild -bb --quiet --define "_topdir $d" "$d/p.spec" >/dev/null 2>&1 || fail "rpmbuild $1 ($2) $3"
+        find "$d/RPMS" -name '*.rpm' -exec cp {} "$4/" \;
+    }
+    other=deb
+    other_file() { echo "debian/trixie/amd64/$1_$2-1_amd64.deb"; }
     pubw() { local w=$1 d=$2; shift 2; publish "devel/$w/rpm" "$d" "devel/$w" "$@"; }
     at() { echo "fedora/45/noarch/$1-$2-1.fc45.noarch.rpm"; }
     plant() { # an unsigned package in wave-c's devel tree, beside a signed one
@@ -103,6 +118,14 @@ deb)
     indexed() { grep -qx "Filename: ./all/$1" "$ch/staging/deb/debian/trixie/Packages"; }
     signed_index() { grep -qx 'Label: OpenMixer-Staging' "$ch/staging/deb/debian/trixie/InRelease"; }
     mk() { mkdeb "$@"; }
+    mksrc() { # <source> <binary> <version> <out dir> [description]: a binary package of another name than its source
+        local d=$work/ds-$2-$3-${5:-t}
+        mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$2" "$4/trixie"
+        printf '%s\n' "Package: $2" "Source: $1" "Version: $3" 'Architecture: all' 'Maintainer: t <t@example.org>' "Description: ${5:-t}" > "$d/DEBIAN/control"
+        dpkg-deb --root-owner-group -b "$d" "$4/trixie/$2_$3_all.deb" >/dev/null
+    }
+    other=rpm
+    other_file() { echo "fedora/45/SRPMS/$1-$2-1.fc45.src.rpm"; }
     pubw() { local w=$1 d=$2; shift 2; publish "devel/$w/deb" "$d" LABEL=OpenMixer-Devel "$@"; }
     at() { echo "debian/trixie/all/$1_$2_all.deb"; }
     plant() { # a deb in wave-c's devel tree that its signed index does not list
@@ -239,5 +262,49 @@ grep -q "^superseded devel/wave-e/$kind/$clash (omx-lib=3.14.0): staging keeps i
 grep -q "^superseded devel/wave-e/$kind/built/omx-lib/3.14.0.commit (omx-lib=3.14.0)" "$work/e.log" || fail "the superseded record is not reported: $(cat "$work/e.log")"
 grep -q ", 2 superseded by staging's own build$" "$work/e.log" || fail "the summary does not count the superseded files: $(cat "$work/e.log")"
 ok "$kind: a version built twice keeps staging's build (bytes, row, no record copied), the wave's copy reported superseded; the rest promotes; bad keeps refused"
+
+# ---- a keep token names a SOURCE (n4: libdiginet=0.1.11, whose packages are libdiginet, libdiginet-devel, diginet-tools):
+# staging holds omx-src-tools 1.0 built from source omx-src, wave-f a rebuild of it with other bytes beside omx-f 1.0;
+# omx-src=1.0 keeps staging's, by the source name the kind records, not the binary name
+mksrc omx-src omx-src-tools 1.0 "$work/staged-f"
+if [ "$kind" = rpm ]; then publish staging/rpm "$work/staged-f" staging MATRIX_SET=quick; else publish staging/deb "$work/staged-f" LABEL=OpenMixer-Staging MATRIX_SET=quick; fi
+sleep 1
+mksrc omx-src omx-src-tools 1.0 "$work/wave-f" rebuilt; pubw wave-f "$work/wave-f" MATRIX_SET=full BUILT_COMMIT=$commit BUILT_NAME=omx-src
+mk omx-f 1.0 "$work/wave-f2"; pubw wave-f "$work/wave-f2" MATRIX_SET=full
+tools=$(at omx-src-tools 1.0)
+[ -f "$ch/staging/$kind/$tools" ] && ! cmp -s "$ch/staging/$kind/$tools" "$ch/devel/wave-f/$kind/$tools" || fail "the fixture's wave-f omx-src-tools 1.0 is not a rebuild of staging's"
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-f)
+sha_before=$(sha256sum < "$ch/staging/$kind/$tools")
+PROMOTE_KEEP_STAGING=omx-src=1.0 "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-f "$key" > "$work/f.log" 2>&1 || { cat "$work/f.log"; fail "wave-f with source omx-src=1.0 kept failed"; }
+[ "$(sha256sum < "$ch/staging/$kind/$tools")" = "$sha_before" ] || fail "staging's own $tools changed"
+grep -q "^superseded devel/wave-f/$kind/$tools (omx-src=1.0)" "$work/f.log" || fail "the binary of source omx-src is not superseded by path: $(cat "$work/f.log")"
+cmp -s "$ch/staging/$kind/$(at omx-f 1.0)" "$ch/devel/wave-f/$kind/$(at omx-f 1.0)" || fail "wave-f's omx-f 1.0 did not move"
+ok "$kind: keep-staging omx-src=1.0 keeps staging's omx-src-tools 1.0, built from that source under another binary name"
+
+# ---- n4's shape: wave-g built omx-n4 0.1.11 on the other kind alone (its build record), omx-n4b 2.0 and omx-n4c 3.0
+# there too (a package file; a deb index's Source); this kind holds omx-g 1.0 only
+mk omx-g 1.0 "$work/wave-g"; pubw wave-g "$work/wave-g" MATRIX_SET=full
+o=$ch/devel/wave-g/$other
+mkdir -p "$o/built/omx-n4" "$(dirname "$o/$(other_file omx-n4b 2.0)")" "$o/debian/trixie"
+echo "$commit" > "$o/built/omx-n4/0.1.11.commit"
+: > "$o/$(other_file omx-n4b 2.0)"
+printf '%s\n' 'Package: omx-n4c-bin' 'Source: omx-n4c (3.0-1)' 'Version: 3.0-1' 'Architecture: amd64' '' > "$o/debian/trixie/Packages"
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-g)
+for t in omx-n4=0.1.11 omx-n4b=2.0 omx-n4c=3.0; do
+    rm -f "$ch/staging/$kind/$(at omx-g 1.0)"
+    PROMOTE_KEEP_STAGING=$t "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-g "$key" > "$work/g.log" 2>&1 || { cat "$work/g.log"; fail "wave-g with $t, held by the $other tree alone, was refused"; }
+    grep -q "^promote-wave: no $kind of ${t%%=*} in the wave" "$work/g.log" || fail "the kind holding no ${t%%=*} is not named: $(cat "$work/g.log")"
+    cmp -s "$ch/staging/$kind/$(at omx-g 1.0)" "$ch/devel/wave-g/$kind/$(at omx-g 1.0)" || fail "wave-g's omx-g 1.0 did not move with $t"
+done
+(cd "$ch" && git add -A && git -c user.name=t -c user.email=t@example.org -c commit.gpgsign=false commit -qm wave-g-promoted)
+sums staging > "$work/staging.before"
+for bad in omx-n5=1.0 omx-n4=0.1.12 omx-g=9.9; do
+    if PROMOTE_KEEP_STAGING=$bad "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-g "$key" > "$work/gbad.log" 2>&1; then fail "keep-staging $bad was taken: $(cat "$work/gbad.log")"; fi
+    sums staging | cmp -s - "$work/staging.before" || fail "the refused keep-staging $bad changed staging"
+done
+grep -q "omx-g=9.9: devel/wave-g/$kind holds omx-g, but no package of it at 9.9" "$work/gbad.log" || fail "a version the kind does not hold of a source it holds is not refused by name: $(cat "$work/gbad.log")"
+grep -q "omx-n5=1.0 matches no package of devel/wave-g/$kind nor of devel/wave-g/$other, on no kind" \
+    <(PROMOTE_KEEP_STAGING=omx-n5=1.0 "$actions/promote-wave/promote-wave.sh" "$kind" "$ch" wave-g "$key" 2>&1) || fail "a token on no kind is not refused by name"
+ok "$kind: a kind holding no package of a kept source is named and promotes the rest; a token on no kind, or a version of no kind, is refused"
 rm -rf "$work"
 echo "promote-wave $kind: all passed"
