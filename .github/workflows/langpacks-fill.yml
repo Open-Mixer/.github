@@ -114,6 +114,7 @@ jobs:
           staging: 'true'
           # a wave's branch reads that wave's devel channel above staging (.github#329)
           devel-channel: ${{ (github.event_name == 'workflow_dispatch' || github.base_ref == 'devel') && vars.OMX_DEVEL_CHANNEL || '' }}
+          devel-base: ${{ (github.event_name == 'workflow_dispatch' || github.base_ref == 'devel') && vars.OMX_DEVEL_BASE || '' }}
       - if: steps.pr.outputs.kept != 'true'
         run: dnf install -y --setopt=install_weak_deps=False omx-contract omx-contract-data ${{ inputs.packages }}
       - if: steps.pr.outputs.kept != 'true'
