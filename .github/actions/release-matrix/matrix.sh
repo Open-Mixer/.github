@@ -67,6 +67,10 @@ list() { # <name> <json array of plain strings>: one item per line
 }
 mapfile -t releases < <(list RELEASES "${RELEASES:?RELEASES}")
 mapfile -t arches < <(list ARCHES "${ARCHES:?ARCHES}")
+# A Debian release outside the full matrix is refused by name, never built (debian-releases.sh beside this file, the one
+# refusal): a caller passing a retired release in its suite-matrix or deb-releases is red here, in the first job of
+# build-deb.yml.
+[ "$kind" != deb ] || "$here/debian-releases.sh" "${releases[@]}"
 
 wave=${WAVE:-}
 case $wave in quick | full | '') ;; *) echo "::error::OMX_RELEASE_MATRIX is '$wave', not quick or full" >&2; exit 2 ;; esac

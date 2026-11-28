@@ -8,7 +8,7 @@ and asks the package manager's own solver whether every package that installed b
 newest version of every package and does not go back to an older one, so the check is made on the newest version of
 each package only: a library published alone above its consumers' ceiling leaves the consumers uninstallable on
 Debian although an older library is still in the tree (plugin-hostd-protocol 0.5.0: "held broken
-packages" on a clean bookworm and trixie). Three arms:
+packages" on a clean Debian trixie). Three arms:
 
   deb      dose-debcheck over the channel's Packages of each Debian release and architecture, with the Debian release
            (main, updates, security) as background, before and after: a package installable before and not after is

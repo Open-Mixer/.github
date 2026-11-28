@@ -106,4 +106,4 @@ steps:
 `packaging/openmixer-langpacks/owners.txt` and the listed languages, then builds them. An owner whose pack the channel
 does not serve leaves the meta pack uninstallable, so the channel installability check is red until it ships.
 
-`tests/langpacks.sh rpm|deb` proves all of it on fc44, fc45, bookworm and trixie with an owner fixture.
+`tests/langpacks.sh rpm|deb` proves all of it on Fedora 45 and Debian trixie with an owner fixture.

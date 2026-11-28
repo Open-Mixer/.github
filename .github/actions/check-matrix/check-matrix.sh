@@ -53,7 +53,7 @@ esac
 ask() { # <kind> <releases> <arches> <set>: the key=value lines matrix.sh writes
     : > "$tmp/out"
     KIND=$1 RELEASES=$2 ARCHES=$3 MATRIX=$4 WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT='' REF_TYPE='' \
-        GITHUB_OUTPUT=$tmp/out "$matrix_sh" > /dev/null
+        GITHUB_OUTPUT=$tmp/out "$matrix_sh" > /dev/null || return
     cat "$tmp/out"
 }
 field() { sed -n "s/^$1=//p" <<< "$2"; }
@@ -80,9 +80,9 @@ for kind in rpm deb; do
     json[$kind]='[]' count[$kind]=0
     if [ -z "$rels" ] || [ "$rels" = '[]' ]; then continue; fi
     [ -n "$arches" ] && [ "$arches" != '[]' ] || { echo "::error::$kind releases $rels have no architectures" >&2; exit 2; }
-    whole=$(ask "$kind" "$rels" "$arches" full)
+    whole=$(ask "$kind" "$rels" "$arches" full) || exit  # a refusal of matrix.sh (a retired Debian release) is the check's
     if [ "$set" = quick ]; then
-        got=$(ask "$kind" "$rels" "$arches" quick)
+        got=$(ask "$kind" "$rels" "$arches" quick) || exit
         # the quick set holds none of the caller's cells: matrix.sh fell back to the full matrix, a check runs nothing
         [ "$(field set "$got")" = quick ] || got=$'cells=[]\ncount=0'
     else

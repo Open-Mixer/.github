@@ -4,10 +4,9 @@
 # Check matrices follow the release set (ruling D25, Open-Mixer/.github#59), offline: the check-matrix action, run as
 # its action.yml runs it.
 # Proves:
-#   - with OMX_RELEASE_MATRIX quick, plugin-hostd's full-stack checks (Debian bookworm and trixie on amd64 and arm64,
-#     Fedora 45 on x86_64 and aarch64) render the quick cells alone: trixie arm64, fc45 x86_64; the cells
-#     left out are named in the notice; a CI image list (Fedora 44 and 45, Debian bookworm and trixie) renders
-#     fedora:44, fedora:45 and debian:trixie, bookworm skipped;
+#   - with OMX_RELEASE_MATRIX quick, plugin-hostd's full-stack checks (Debian trixie on amd64 and arm64, Fedora 45 on
+#     x86_64 and aarch64) render the quick cells alone: trixie arm64, fc45 x86_64; the cells left out are named in the
+#     notice; a CI image list (Fedora 44 and 45, Debian trixie) renders fedora:45 and debian:trixie, fc44 skipped;
 #   - with full, or the variable unset, the caller's whole matrix, every cell;
 #   - the matrix input overrides the variable;
 #   - a kind whose matrix holds no quick cell renders no cell while quick (count 0, the job skipped), never the full
@@ -19,7 +18,7 @@
 #     check-matrix.sh that names ubuntu-latest for every cell, goes red here;
 #   - one source: the cells come from release-matrix's quick.txt, through matrix.sh; the action restates no cell, and
 #     a quick.txt changed in a copy changes the rendered matrix (the sabotage: a check-matrix.sh that ignores the set
-#     renders bookworm while quick, and goes red here).
+#     renders the caller's cell instead of quick.txt's while quick, and goes red here).
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 actions=${CHECK_MATRIX_ACTIONS:-$here/.github/actions}
@@ -58,7 +57,7 @@ expect() { # <name> <output> <want>
     if [ "$got" = "$3" ]; then yes "$1: $2"; else no "$1: $2 is '$got', want '$3'"; cat "$t/log"; fi
 }
 
-PHD_RPM='["45"]' PHD_RPMA='["x86_64", "aarch64"]' PHD_DEB='["bookworm", "trixie"]' PHD_DEBA='["amd64", "arm64"]'
+PHD_RPM='["45"]' PHD_RPMA='["x86_64", "aarch64"]' PHD_DEB='["trixie"]' PHD_DEBA='["amd64", "arm64"]'
 
 # ---- plugin-hostd's full-stack checks while the wave is quick
 render quick '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA" || { no "quick render failed"; cat "$t/log"; }
@@ -68,7 +67,7 @@ expect "quick, plugin-hostd" rpm-count 1
 expect "quick, plugin-hostd" deb '[{"suite":"trixie","arch":"arm64","image":"debian:trixie","runner":"ubuntu-24.04-arm"}]'
 expect "quick, plugin-hostd" deb-count 1
 expect "quick, plugin-hostd" images '["fedora:45","debian:trixie"]'
-for c in 'fc45 aarch64' 'bookworm amd64' 'bookworm arm64' 'trixie amd64'; do
+for c in 'fc45 aarch64' 'trixie amd64'; do
     grep -q "skipped while quick:.*$c" "$t/log" && yes "quick: the notice names $c as skipped" || { no "quick: the notice does not name $c as skipped"; cat "$t/log"; }
 done
 
@@ -77,32 +76,37 @@ for w in full ''; do
     render "$w" '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA" || { no "${w:-unset} render failed"; cat "$t/log"; }
     expect "${w:-unset}, plugin-hostd" set full
     expect "${w:-unset}, plugin-hostd" rpm '[{"fedora":"45","arch":"x86_64","image":"fedora:45","runner":"ubuntu-latest"},{"fedora":"45","arch":"aarch64","image":"fedora:45","runner":"ubuntu-24.04-arm"}]'
-    expect "${w:-unset}, plugin-hostd" deb-count 4
-    expect "${w:-unset}, plugin-hostd" images '["fedora:45","debian:bookworm","debian:trixie"]'
+    expect "${w:-unset}, plugin-hostd" deb-count 2
+    expect "${w:-unset}, plugin-hostd" images '["fedora:45","debian:trixie"]'
 done
 
 # ---- the matrix input overrides the variable
 render quick full "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA"
-expect "matrix full over quick" deb-count 4
+expect "matrix full over quick" deb-count 2
 render full quick "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA"
 expect "matrix quick over full" deb-count 1
 
-# ---- an ordinary CI image list (D25): fedora:44, fedora:45, debian:trixie while quick; bookworm returns with full
-render quick '' '["44", "45"]' '["x86_64"]' '["bookworm", "trixie"]' '["arm64"]'
+# ---- an ordinary CI image list (D25): fedora:45, debian:trixie while quick; fedora:44 returns with full
+render quick '' '["44", "45"]' '["x86_64"]' '["trixie"]' '["arm64"]'
 expect "CI images, quick" images '["fedora:45","debian:trixie"]'
-render full '' '["44", "45"]' '["x86_64"]' '["bookworm", "trixie"]' '["arm64"]'
-expect "CI images, full" images '["fedora:44","fedora:45","debian:bookworm","debian:trixie"]'
+render full '' '["44", "45"]' '["x86_64"]' '["trixie"]' '["arm64"]'
+expect "CI images, full" images '["fedora:44","fedora:45","debian:trixie"]'
 
 # ---- a kind with no quick cell renders nothing while quick, never its full matrix; an unused kind renders nothing
-render quick '' '' '' '["bookworm"]' '["amd64", "arm64"]'
-expect "bookworm alone, quick" deb '[]'
-expect "bookworm alone, quick" deb-count 0
-expect "bookworm alone, quick" rpm '[]'
-expect "bookworm alone, quick" rpm-count 0
-expect "bookworm alone, quick" count 0
-expect "bookworm alone, quick" images '[]'
-render full '' '' '' '["bookworm"]' '["amd64", "arm64"]'
-expect "bookworm alone, full" deb-count 2
+render quick '' '["44"]' '["x86_64", "aarch64"]' '' ''
+expect "fc44 alone, quick" rpm '[]'
+expect "fc44 alone, quick" rpm-count 0
+expect "fc44 alone, quick" deb '[]'
+expect "fc44 alone, quick" deb-count 0
+expect "fc44 alone, quick" count 0
+expect "fc44 alone, quick" images '[]'
+render full '' '["44"]' '["x86_64", "aarch64"]' '' ''
+expect "fc44 alone, full" rpm-count 2
+# ---- a Debian release outside the full matrix is refused by name, never rendered (owner ruling 2026-11-28)
+if render full '' '' '' '["bookworm", "trixie"]' '["amd64"]'; then no "a retired Debian release rendered"; else
+    grep -q "::error::Debian release 'bookworm' is not in the full matrix" "$t/log" && yes "a retired Debian release is refused by name" \
+        || { no "a retired Debian release failed for another reason"; cat "$t/log"; }
+fi
 
 # ---- a variable that is neither quick nor full fails
 if render fast '' "$PHD_RPM" "$PHD_RPMA" "$PHD_DEB" "$PHD_DEBA"; then no "OMX_RELEASE_MATRIX=fast passed"; else yes "OMX_RELEASE_MATRIX=fast fails"; fi
@@ -147,12 +151,12 @@ else
     yes "check-matrix restates no cell"
 fi
 cp -a "$actions" "$t/copy"
-printf 'rpm 45 x86_64\ndeb bookworm arm64\n' > "$t/copy/release-matrix/quick.txt"
+printf 'rpm 45 x86_64\ndeb trixie amd64\n' > "$t/copy/release-matrix/quick.txt"
 : > "$t/out"
 GITHUB_OUTPUT=$t/out GITHUB_ACTION_PATH=$t/copy/check-matrix ARM_ARCHES=$ARM_ARCHES_DEFAULT ARM_RUNNER=$ARM_RUNNER_DEFAULT \
     X86_RUNNER=$X86_RUNNER_DEFAULT WAVE=quick MATRIX='' RPM_RELEASES='["44", "45"]' RPM_ARCHES='["x86_64"]' \
     DEB_RELEASES="$PHD_DEB" DEB_ARCHES="$PHD_DEBA" bash "$t/step.sh" > "$t/log" 2>&1
-expect "a changed quick.txt" images '["fedora:45","debian:bookworm"]'
+expect "a changed quick.txt" deb '[{"suite":"trixie","arch":"amd64","image":"debian:trixie","runner":"ubuntu-latest"}]'
 
 # sabotage: an architecture written back into the script's code (no exemption) puts the guard red
 cp "$actions/check-matrix/check-matrix.sh" "$t/lit.sh"

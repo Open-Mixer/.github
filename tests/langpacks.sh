@@ -10,8 +10,8 @@
 # packaging/openmixer-langpacks/build.sh for the fixture owner, installs and pulls the owner's pack. Red arms: a listed
 # language with no catalog, a catalog of an unlisted language, a generated block edited by hand and a spec without
 # its markers are refused by langpacks.py; a meta pack naming an owner whose pack is not there does not install.
-# Run as root in a container: fedora:44 or fedora:45 with rpm-build, dnf and python3; debian:bookworm or
-# debian:trixie with build-essential, dpkg-dev, debhelper, lintian and python3.
+# Run as root in a container: fedora:45 with rpm-build, dnf and python3; debian:trixie with build-essential,
+# dpkg-dev, debhelper, lintian and python3.
 set -uo pipefail
 kind=${1:?usage: tests/langpacks.sh rpm|deb}
 root=$(cd "$(dirname "$0")/.." && pwd)

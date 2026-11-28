@@ -45,6 +45,7 @@ jobs:
       - run: tests/fedora-cells.sh
       - run: tests/installed-source.sh
       - run: tests/fedora-workflow-check.sh
+      - run: tests/retired-debian-check.sh
       - run: tests/devel-base-check.sh
       - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
@@ -74,6 +75,7 @@ jobs:
       - run: tests/build-deb-floors.sh
       - run: tests/publish-served-url.sh
       - run: tests/release-matrix.sh
+      - run: tests/debian-releases.sh
       - run: tests/arch-coverage.sh
       - run: tests/action-metadata-expressions.sh
       - run: tests/staged-cells.sh

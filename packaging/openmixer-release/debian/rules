@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
 
-# One apt source per Debian release the channel serves; postinst links the one of the running system.
-SUITES = bookworm trixie
+# One apt source per Debian release the channel serves, trixie alone (owner ruling 2026-11-28); postinst links the one
+# of the running system.
+SUITES = trixie
 # The testing source (the staging channel, as Fedora's updates-testing): the Debian releases the testing channel
 # serves, trixie alone (owner ruling 2026-11-23: the testing channel carries only the tested platforms). It is the
 # real source with the staging tree for URI and Enabled: no; postinst writes it, keeping a tester's Enabled: yes.
