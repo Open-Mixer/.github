@@ -478,6 +478,9 @@ jobs:
       - name: omx-contract from the channel or its staging (translate and the language list)
         uses: ./.github/actions/add-openmixer
         with:
+          # a pull request into devel, or a dispatch off main, in a wave reads that wave's devel channel and its base above staging
+          devel-channel: ${{ ((startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && vars.OMX_DEVEL_CHANNEL || '' }}
+          devel-base: ${{ ((startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && vars.OMX_DEVEL_BASE || '' }}
           staging: 'true'
       - run: dnf install -y --setopt=install_weak_deps=False omx-contract
       - run: tests/langpacks-fill.sh
