@@ -203,6 +203,28 @@ for wf in sys.argv[1:]:
             if p.returncode != 0 or got != [want]:
                 fails.append(f"{wf}: {run} with OMX_DEVEL_BASE='devel/wave-b devel/wave-c': the level step exit {p.returncode}, "
                              f"base={got}, want exit 0 base={want!r} ({p.stderr.strip()})")
+        # a staging dry run that names the repository's wave (channel-level = OMX_DEVEL_CHANNEL: a wave line's ci.yml
+        # dispatched off main, devel wave 2026-11-27-n3, omx-plugins#124) reads that wave's base waves with it, as the
+        # merge's push will; a channel-level naming another wave reads none
+        def dry(named, devel, base):
+            c = dict(ctx("a push to main"), **{"github.event_name": "workflow_dispatch", "github.ref": "refs/heads/lane/x",
+                                               "github.base_ref": "", "inputs.staged": False, "inputs.publish": False,
+                                               "inputs.staging": True, "inputs.channel-level": named,
+                                               "vars.OMX_DEVEL_CHANNEL": devel, "vars.OMX_DEVEL_BASE": base})
+            env = {k: str(ev(v, c)).lower() if isinstance(ev(v, c), bool) else str(ev(v, c)) for k, v in level_env.items()}
+            with tempfile.NamedTemporaryFile("r") as out:
+                p = subprocess.run(["bash", "-c", level["run"]], env=dict(env, GITHUB_OUTPUT=out.name, PATH="/usr/bin:/bin"),
+                                   capture_output=True, text=True)
+                o = open(out.name).read()
+                return p, re.findall(r"^devel=(.*)$", o, re.M), re.findall(r"^base=(.*)$", o, re.M)
+        level_env = level["env"]
+        p, gd, gb = dry("devel/wave-a", "devel/wave-a", "devel/wave-b")
+        if p.returncode != 0 or gd != ["devel/wave-a"] or gb != ["devel/wave-b"]:
+            fails.append(f"{wf}: a staging dry run with channel-level devel/wave-a, the repository's wave: exit {p.returncode}, "
+                         f"devel={gd} base={gb}, want devel/wave-a with its base devel/wave-b ({p.stderr.strip()})")
+        p, gd, gb = dry("devel/wave-z", "devel/wave-a", "devel/wave-b")
+        if p.returncode != 0 or gb != [""]:
+            fails.append(f"{wf}: a staging dry run naming another wave (devel/wave-z) read the repository's base: base={gb}")
         p, got = render("a push to devel", "", "devel/wave-b")
         if p.returncode != 0 or got != [""]:
             fails.append(f"{wf}: a base with no wave of its own is read: exit {p.returncode} base={got}")
