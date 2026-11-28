@@ -588,19 +588,18 @@ pulled copy and pushes nothing.
 
 A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
 for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
-While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
-set** instead:
+Every run builds the full matrix (`full.txt`) unless it asks for less. A run that needs only enough of a version for
+the next layer to go on can ask for the **quick set** (`matrix: quick`, or `OMX_RELEASE_MATRIX=quick`):
 
 | kind | cells |
 |------|-------|
 | rpm  | fc45 x86_64 |
 | deb  | trixie arm64 |
 
-The quick set is the development set: two cells, fc45 x86_64 and trixie arm64 (Debian packages ship for Zynthian, the Pi, alone). The full set (fc45 x86_64 and aarch64, trixie amd64 and arm64) returns at the end of development: one switch, `OMX_RELEASE_MATRIX=full`, no edit anywhere else; the served amd64 trees stay as they are meanwhile.
-
-trixie amd64 joined the set on 2026-11-13 and left it on 2026-11-19 (Debian packages ship for Zynthian alone): the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages) install
-from the deb channel, and with no quick amd64 cell every one of their runs failed on a version the wave had not
-built there.
+The quick set leaves aarch64 RPMs and amd64 DEBs out, so a consumer on those cells cannot install a version built
+with it: the amd64 CI runners (zynthian-ui, omx-plugins' Debian packages, plugin-hostd's own-host page) install from
+the deb channel, and while the quick set was the default every one of their runs failed on a version the wave had not
+built there. That is why the full matrix is the default (owner ruling 2026-11-26).
 
 The set is written once, in `.github/actions/release-matrix/quick.txt`. `build-rpm.yml` and `build-deb.yml` ask the
 `release-matrix` action in their first job, and the build jobs and the install checks both run for the cells it

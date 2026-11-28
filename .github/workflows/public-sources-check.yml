@@ -16,6 +16,8 @@ name: public-sources-check
 #   - it keeps no copy of these checks and its commit-msg hook is the shared stub (no-local-copies);
 #   - a public repository keeps no dated document, no dated folder and no folder of evidence or notes
 #     (public-layout-check): the record of how work went is kept in the project's records.
+#   - no document names the organisation by its former name or links to the former organisation (old-name-check);
+#     old-name-paths adds a repository's own pages (a site's) to the documents it reads.
 # Each check proves itself on planted inputs before it reads the tree.
 #
 #   jobs:
@@ -52,6 +54,10 @@ on:
         description: the Fedora releases fedora-workflow-check lets a workflow name, space or comma separated; the development matrix is 45 only, the full set returns by widening this list
         type: string
         default: '45'
+      old-name-paths:
+        description: more paths old-name-check reads as documents, space-separated git pathspecs (a site's pages and catalogs); empty reads only the documents every repository has
+        type: string
+        default: ''
       runner:
         description: runner label for every job (a private repository passes its own runners, e.g. arc-freemixer; a pull request from a fork always runs on GitHub-hosted runners)
         type: string
@@ -120,6 +126,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Open-Mixer/.github/.github/actions/public-layout-check@openmixer-v1
+
+  old-name:
+    name: no document names the former organisation
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Open-Mixer/.github/.github/actions/old-name-check@openmixer-v1
+        with:
+          paths: ${{ inputs.old-name-paths }}
 
   no-local-copies:
     name: the shared checks are not copied here

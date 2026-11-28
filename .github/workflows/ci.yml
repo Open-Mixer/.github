@@ -95,6 +95,10 @@ jobs:
         run: |
           .github/actions/public-layout-check/check.sh --self-test
           .github/actions/public-layout-check/check.sh .
+      - name: The old-name check proves itself, then reads this repository
+        run: |
+          .github/actions/old-name-check/check.sh --self-test
+          .github/actions/old-name-check/check.sh .
       - name: The action reads this pull request's own commits
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/commit-message-check
