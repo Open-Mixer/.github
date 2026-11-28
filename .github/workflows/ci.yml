@@ -44,6 +44,7 @@ jobs:
       - run: tests/scan-open-pr-subjects.sh
       - run: tests/fedora-cells.sh
       - run: tests/fedora-workflow-check.sh
+      - run: tests/devel-base-check.sh
       - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
       - run: tests/channel-keep-list.sh
@@ -101,6 +102,8 @@ jobs:
         uses: ./.github/actions/commit-identity-check
       - name: The action reads this repository's own workflows
         uses: ./.github/actions/fedora-workflow-check
+      - name: The devel-base action reads this repository's own workflows and actions
+        uses: ./.github/actions/devel-base-check
 
   # The same-pass action run as a local action: the dispatch list is the input, and with none the file at this commit
   # is read (this repository has none, so the list is empty). Its reader is proven by tests/same-pass.sh.

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: devel-base-check
+description: Fail when a step of the calling repository passes devel-channel to add-openmixer without devel-base
+
+# A wave stacked on a base wave (OMX_DEVEL_BASE beside OMX_DEVEL_CHANNEL) is served only partly by its own tree: a step
+# that reads the wave and not its base fails to install a package whose dependency only the base serves (omx-panel#287,
+# plugin-qualify#207). The checker reads the caller's .github/workflows and .github/actions, refuses each such step by
+# file, job and step name, and where devel-channel reads vars.OMX_DEVEL_CHANNEL holds devel-base to the same expression
+# reading vars.OMX_DEVEL_BASE. It proves itself on planted trees first. The caller has checked the repository out.
+
+runs:
+  using: composite
+  steps:
+    - name: The checker goes red on each planted step without devel-base and green on the paired ones
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/devel-base-check.py" --self-test
+    - name: Read the workflows and actions of the calling repository
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/devel-base-check.py" "$GITHUB_WORKSPACE"
