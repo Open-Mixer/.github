@@ -32,8 +32,15 @@
 # published first and a published file is never replaced, so staging's is kept: every file of the wave of that name
 # (as above) and version, its build record built/<name>/<version>.commit and its cells.tsv rows are left out, and the
 # wave's copy is reported superseded, by path. Each left-out package must be a path staging holds, else it is refused
-# (keeping staging's build of a version staging does not hold would drop the version); a token that matches nothing of
-# the wave is refused too. Every other path staging holds with other bytes still refuses the promotion.
+# (keeping staging's build of a version staging does not hold would drop the version). A token names a SOURCE package
+# (or project) and version, and matches each kind by the source name that kind records (rpm: its SOURCERPM's name and
+# built/<name>/; deb: its Source field, else Package, and built/<name>/), so libdiginet=0.1.11 keeps the deb files built
+# from source libdiginet whatever their binary names. A kind holding the source at no version at all (the wave built
+# no package of it of this kind) is no refusal by itself: it is named "no <kind> of <name> in the wave", and the token
+# must match on the other kind (devel/<wave>/<other kind>: its build record built/<name>/<version>.commit, a package file
+# of that name and version, or a deb index stanza of that Source and version), else it matches on no kind and is
+# refused. A kind holding the source at other versions only refuses the token. Every other path staging holds with
+# other bytes still refuses the promotion.
 set -euo pipefail
 usage='usage: promote-wave.sh rpm|deb <channel> <wave> [<gpg key id>]'
 kind=${1:?$usage}
@@ -47,8 +54,35 @@ case $kind in rpm | deb) ;; *) die "rpm or deb, not '$kind'" ;; esac
 rel=$("$here/../publish-rpms/channel-level.sh" tree "$kind" "devel/$wave") || exit 1
 src=$channel/$rel
 dst=$channel/staging/$kind
+other=rpm; [ "$kind" = deb ] || other=deb
+osrc=$channel/$("$here/../publish-rpms/channel-level.sh" tree "$other" "devel/$wave")
+# other_holds <name> <version>: the wave's tree of the other kind holds the source <name> at <version>, read without that
+# kind's tools (a deb job has no rpm, an rpm job no dpkg): its build record, a package file named by that name and version
+# (rpm <name>-<version>-<release>.<arch>.rpm, a src.rpm naming the source; deb <name>_<version>[-<revision>]_<arch>.deb),
+# or a stanza of a deb index whose Source (else Package) is <name> at <version>
+other_holds() {
+    local n=$1 v=$2
+    [ -d "$osrc" ] || return 1
+    [ ! -f "$osrc/built/$n/$v.commit" ] || return 0
+    [ -z "$(find "$osrc" -type f \( -name "$n-$v-*.rpm" -o -name "${n}_${v}_*.deb" -o -name "${n}_${v}-*_*.deb" \) -print -quit)" ] || return 0
+    find "$osrc" -type f -name Packages -print0 | xargs -0 -r awk -v n="$n" -v v="$v" '
+        function done_() { s = s == "" ? p : s; sub(/ .*/, "", s); sub(/^[0-9]+:/, "", w); sub(/-[^-]*$/, "", w); if (s == n && w == v) f = 1; p = s = w = "" }
+        /^Package: / { p = $2 } /^Source: / { s = $2 } /^Version: / { w = $2 } /^$/ { done_() }
+        END { done_(); exit !f }'
+}
+# unmatched <token> <this kind holds the name>: a keep token no package of this kind matched; named and passed when this
+# kind holds no package of its source and the other kind holds the version, else refused
+unmatched() {
+    local k=$1 n=${1%%=*} v=${1#*=}
+    [ "$2" = 0 ] || die "keep-staging $k: $rel holds $n, but no package of it at $v that this promotion moves: nothing was promoted"
+    other_holds "$n" "$v" || die "$k matches no package of $rel nor of devel/$wave/$other, on no kind: nothing was promoted"
+    echo "promote-wave: no $kind of $n in the wave: keep-staging $k is for devel/$wave/$other, nothing of $rel is left out for it"
+}
 # a wave that published nothing of this kind (a devel matrix of rpm cells alone builds no deb) promotes nothing of it
-[ -d "$src" ] || { echo "promote-wave: the channel has no $rel: the wave published nothing of this kind, nothing to promote"; exit 0; }
+[ -d "$src" ] || {
+    for k in ${PROMOTE_KEEP_STAGING:-}; do unmatched "$k" 0; done
+    echo "promote-wave: the channel has no $rel: the wave published nothing of this kind, nothing to promote"; exit 0
+}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/empty"
@@ -57,7 +91,10 @@ mkdir -p "$work/empty"
 # Release, cells.tsv, the repository and key files, changelogs) is its own and is made again for staging
 mapfile -t pkgs < <(cd "$src" && find . -type f -name "*.$kind" | sed 's|^\./||' | LC_ALL=C sort)
 mapfile -t recs < <(cd "$src" && { [ ! -d built ] || find built -type f; } | LC_ALL=C sort)
-[ "${#pkgs[@]}" -gt 0 ] || { echo "promote-wave: $rel holds no package: nothing to promote"; exit 0; }
+[ "${#pkgs[@]}" -gt 0 ] || {
+    for k in ${PROMOTE_KEEP_STAGING:-}; do unmatched "$k" 0; done
+    echo "promote-wave: $rel holds no package: nothing to promote"; exit 0
+}
 
 # keys <file>: "<name> <version>" of the package and of its source package, one a line (the version without epoch or
 # release/revision, as record-built.sh writes it)
@@ -76,7 +113,7 @@ keys() {
 sel=" ${PROMOTE_PACKAGES:-} " keep=" ${PROMOTE_KEEP_STAGING:-} "
 for k in ${PROMOTE_KEEP_STAGING:-}; do [[ $k =~ ^[A-Za-z0-9.+_-]+=[A-Za-z0-9.+~_-]+$ ]] || die "keep-staging '$k' is not <name>=<version>"; done
 for k in ${PROMOTE_PACKAGES:-}; do [[ $k =~ ^[A-Za-z0-9.+_-]+$ ]] || die "packages '$k' is not a package name"; done
-declare -A rows=() hit=()
+declare -A rows=() hit=() named=()
 superseded=()
 if [ -n "${PROMOTE_PACKAGES:-}${PROMOTE_KEEP_STAGING:-}" ]; then
     picked=()
@@ -86,6 +123,7 @@ if [ -n "${PROMOTE_PACKAGES:-}${PROMOTE_KEEP_STAGING:-}" ]; then
         if [ -n "${PROMOTE_PACKAGES:-}" ]; then
             in=0; for k in "${ks[@]}"; do case $sel in *" ${k% *} "*) in=1; hit[${k% *}]=1 ;; esac; done
         fi
+        for k in "${ks[@]}"; do case $keep in *" ${k% *}="*) named[${k% *}]=1 ;; esac; done
         [ "$in" = 1 ] || continue
         for k in "${ks[@]}"; do case $keep in *" ${k% *}=${k#* } "*) kept=${k% *}=${k#* } ;; esac; done
         if [ -n "$kept" ]; then
@@ -96,8 +134,11 @@ if [ -n "${PROMOTE_PACKAGES:-}${PROMOTE_KEEP_STAGING:-}" ]; then
         fi
         picked+=("$f"); rows["${ks[0]% *}"$'\t'"${ks[0]#* }"]=1
     done
-    for k in ${PROMOTE_PACKAGES:-} ${PROMOTE_KEEP_STAGING:-}; do
+    for k in ${PROMOTE_PACKAGES:-}; do
         [ -n "${hit[$k]:-}" ] || die "$k matches no package of $rel: nothing was promoted"
+    done
+    for k in ${PROMOTE_KEEP_STAGING:-}; do
+        [ -n "${hit[$k]:-}" ] || unmatched "$k" "${named[${k%%=*}]:-0}"
     done
     pkgs=(${picked[@]+"${picked[@]}"})
     left=()

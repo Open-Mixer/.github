@@ -225,7 +225,12 @@ promoted later keeps those bytes.
 **A version built twice (before build once).** Staging's build was published first and a published file is never
 replaced: staging's is kept. `keep-staging: <name>=<version> ...` leaves every file of the wave of that name and
 version, its build record and its `cells.tsv` rows out of the promotion and reports each `superseded`, by path; a kept
-package staging does not hold, or a token matching nothing, is refused. Every other clash still refuses. The wave's copy
+package staging does not hold is refused. A token names a source package and version, and each kind matches it by the
+source name it records (rpm: the source rpm, `built/<name>/`; deb: the `Source` field, `built/<name>/`), so
+`libdiginet=0.1.11` keeps the deb files built from source libdiginet whatever their binary names. A kind holding no
+package of that source (a wave that built no deb of it) is named `no <kind> of <name> in the wave` and promotes the
+rest, as long as the other kind's tree holds that version; a token that matches on no kind, or a version a kind does
+not hold of a source it holds, is refused. Every other clash still refuses. The wave's copy
 stays in `devel/<wave>` until the wave's tree is removed; consumers of staging get staging's build of the version.
 
 **Gates.** `tests/devel-channel-publish.sh` (a wave's publish writes nothing outside `devel/<wave>`, its own
