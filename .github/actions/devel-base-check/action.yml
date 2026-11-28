@@ -7,7 +7,10 @@ description: Fail when a step of the calling repository passes devel-channel to 
 # that reads the wave and not its base fails to install a package whose dependency only the base serves (omx-panel#287,
 # plugin-qualify#207). The checker reads the caller's .github/workflows and .github/actions, refuses each such step by
 # file, job and step name, and where devel-channel reads vars.OMX_DEVEL_CHANNEL holds devel-base to the same expression
-# reading vars.OMX_DEVEL_BASE. It proves itself on planted trees first. The caller has checked the repository out.
+# reading vars.OMX_DEVEL_BASE. In a repository with a devel branch (the checker asks the checkout's origin, git ls-remote;
+# an origin it cannot read is red) every add-openmixer step passes both: a bare call reads production only on a pull
+# request into devel (plugin-db#104) and is refused by name too. It proves itself on planted trees first. The caller has
+# checked the repository out (actions/checkout keeps the credentials the lookup reads with).
 
 runs:
   using: composite

@@ -211,8 +211,8 @@ is written. The coordinator dispatches it once a wave is DONE.
 `cells.tsv`, the client priorities, the refused levels), `tests/promote-wave.sh` (same bytes, refusals, idempotence),
 `tests/devel-push-staging.sh` (a wave's version check), `tests/staging-channel.sh` (the three pushes, by exact match)
 and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release). Every caller's `public-sources-check.yml` runs `devel-base-check`: a step passing
-`devel-channel` to `add-openmixer` without `devel-base` (the same expression with `vars.OMX_DEVEL_BASE`) is refused by name
-(`tests/devel-base-check.sh`).
+`devel-channel` to `add-openmixer` without `devel-base` (the same expression with `vars.OMX_DEVEL_BASE`) is refused by name,
+and in a repository with a devel branch so is a step passing neither (`tests/devel-base-check.sh`).
 
 ## The staging channel of a release wave
 
