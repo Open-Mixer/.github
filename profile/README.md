@@ -61,7 +61,7 @@ Installing `openmixer-release` adds the repository and its key; `dnf update` and
 
 Fedora: `sudo dnf install https://www.openmixer.org/rpm/openmixer-release.noarch.rpm`
 
-Debian and Raspberry Pi OS (bookworm, trixie): `curl -fsSLO https://www.openmixer.org/deb/openmixer-release.deb && sudo apt install ./openmixer-release.deb && sudo apt update`
+Debian trixie and Raspberry Pi OS: `curl -fsSLO https://www.openmixer.org/deb/openmixer-release.deb && sudo apt install ./openmixer-release.deb && sudo apt update`
 
 ## Checked
 

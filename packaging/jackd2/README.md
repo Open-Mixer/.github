@@ -22,9 +22,7 @@ The fix is three jack2 commits, offered upstream. Here they are one quilt patch,
 ## What is built
 
 The source is Debian's packaging repository, untouched, at the commit of the `jackd2-trixie` line of
-`.github/pins.txt`. No bookworm package is built, by the owner ruling of 2026-11-16 that no release is built for
-bookworm; the patch applies to bookworm's 1.9.21 as well, and a `jackd2-bookworm` pin is all a bookworm build would
-need. `make-source.sh` lays it out, appends the patch to `debian/patches/series` and adds a
+`.github/pins.txt`: Debian is trixie only (owner ruling 2026-11-28). `make-source.sh` lays it out, appends the patch to `debian/patches/series` and adds a
 `<Debian version>+omx1` changelog entry. That version sorts above the Debian build it replaces, and also
 above a trixie stable update of the same upload (`+deb13u1` sorts below `+omx1`). A stable update of
 jackd2 therefore moves the pin here, or this build would hide it. The deb-deps action builds it with Debian's own `debian/`. Lintian fails on an error
