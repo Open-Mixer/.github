@@ -687,6 +687,9 @@ jobs:
     steps:
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
+          # the promoted version is verified from production: only a pull request into devel (never a promotion) reads a wave and its base
+          devel-channel: ${{ (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') && vars.OMX_DEVEL_CHANNEL || '' }}
+          devel-base: ${{ (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') && vars.OMX_DEVEL_BASE || '' }}
           base-url: ${{ inputs.base-url }}
 
       - name: Install the promoted version from the channel
@@ -738,6 +741,9 @@ jobs:
     steps:
       - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1
         with:
+          # the promoted version is verified from production: only a pull request into devel (never a promotion) reads a wave and its base
+          devel-channel: ${{ (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') && vars.OMX_DEVEL_CHANNEL || '' }}
+          devel-base: ${{ (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') && vars.OMX_DEVEL_BASE || '' }}
           base-url: ${{ inputs.base-url }}
 
       - name: Install the promoted version from the channel

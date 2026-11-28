@@ -35,6 +35,12 @@ inputs:
   releases:
     description: the Fedora releases (rpm) or Debian releases (deb), space separated, whose staging index must exist
     default: ''
+  packages:
+    description: "one proven line of the wave, not the whole wave: the package names (or source package names), space separated, whose files, cells.tsv rows and build records move (promote-wave.sh PROMOTE_PACKAGES); empty promotes the whole wave"
+    default: ''
+  keep-staging:
+    description: "<name>=<version>, space separated: a version built twice before the build-once fix, staging's build kept and the wave's copy reported superseded, never promoted (promote-wave.sh PROMOTE_KEEP_STAGING); every other clash still refuses"
+    default: ''
 
 outputs:
   commit:
@@ -94,9 +100,13 @@ runs:
         WAVE: ${{ inputs.wave }}
         SKELETON: ${{ inputs.releases }}
         BASE_URL: ${{ inputs.base-url }}
+        PROMOTE_PACKAGES: ${{ inputs.packages }}
+        PROMOTE_KEEP_STAGING: ${{ inputs.keep-staging }}
       run: |
         set -o pipefail
-        { echo "PROMOTE_WAVE_ACTION=$GITHUB_ACTION_PATH"; echo "SKELETON=$SKELETON"; } >> "$GITHUB_ENV"
+        # the push's rebuild after a lost race promotes the same selection: the variables go to the later steps too
+        { echo "PROMOTE_WAVE_ACTION=$GITHUB_ACTION_PATH"; echo "SKELETON=$SKELETON"; echo "PROMOTE_PACKAGES=$PROMOTE_PACKAGES"
+          echo "PROMOTE_KEEP_STAGING=$PROMOTE_KEEP_STAGING"; } >> "$GITHUB_ENV"
         if [ "$KIND" = deb ]; then
           # the deb skeleton is the tested platforms' architectures, as a staged publish makes it; staging's changelogs
           SKELETON_ARCHES=$("$GITHUB_ACTION_PATH/../release-matrix/staged-cells.sh" arches deb)
