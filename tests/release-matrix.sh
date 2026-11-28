@@ -490,9 +490,8 @@ done
 cp -r "$act" "$t/rm-sab"; printf 'deb bookworm amd64\n' >> "$t/rm-sab/full.txt"
 KIND=deb RELEASES='["bookworm"]' ARCHES='["amd64"]' MATRIX=full WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=push REF_TYPE='' \
   GITHUB_OUTPUT=$t/bw.out "$t/rm-sab/matrix.sh" >/dev/null 2>&1 || fail "the refusal does not read full.txt: a full.txt listing bookworm still refuses it"
-sed '/^if \[ "$kind" = deb \]; then$/,/^fi$/d' "$act/matrix.sh" > "$t/rm-sab/matrix.sh"
-cmp -s "$act/matrix.sh" "$t/rm-sab/matrix.sh" && fail "sabotage: the refusal block was not found"
-cp "$act/full.txt" "$t/rm-sab/full.txt"
+# sabotage: the one refusal (debian-releases.sh) passing everything
+cp "$act/full.txt" "$t/rm-sab/full.txt"; printf '#!/bin/bash\nexit 0\n' > "$t/rm-sab/debian-releases.sh"
 KIND=deb RELEASES='["bookworm"]' ARCHES='["amd64"]' MATRIX=full WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=push REF_TYPE='' \
   GITHUB_OUTPUT=$t/bw.out "$t/rm-sab/matrix.sh" >/dev/null 2>&1 || fail "sabotage: without the refusal a bookworm matrix still fails (the check proves nothing)"
 ok "matrix.sh: a bookworm Debian release is refused by name in every set, read from full.txt; without the refusal it builds (sabotage)"

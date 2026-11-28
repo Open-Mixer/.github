@@ -73,6 +73,7 @@ jobs:
       - run: tests/build-deb-floors.sh
       - run: tests/publish-served-url.sh
       - run: tests/release-matrix.sh
+      - run: tests/debian-releases.sh
       - run: tests/arch-coverage.sh
       - run: tests/action-metadata-expressions.sh
       - run: tests/staged-cells.sh

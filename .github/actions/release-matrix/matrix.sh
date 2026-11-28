@@ -67,17 +67,10 @@ list() { # <name> <json array of plain strings>: one item per line
 }
 mapfile -t releases < <(list RELEASES "${RELEASES:?RELEASES}")
 mapfile -t arches < <(list ARCHES "${ARCHES:?ARCHES}")
-# A Debian release outside the full matrix is refused by name, never built: Debian is trixie only (owner ruling
-# 2026-11-28), and full.txt is the one place the Debian releases are written. A caller passing a retired release in
-# its suite-matrix or deb-releases is red here, in the first job of build-deb.yml.
-if [ "$kind" = deb ]; then
-    for rel in "${releases[@]}"; do
-        awk -v r="$rel" '$1 == "deb" && $2 == r { f = 1 } END { exit !f }' "$here/full.txt" || {
-            echo "::error::Debian release '$rel' is not in the full matrix (release-matrix/full.txt: $(awk '$1 == "deb" { print $2 }' "$here/full.txt" | sort -u | xargs), the only Debian releases built: owner ruling 2026-11-28)" >&2
-            exit 2
-        }
-    done
-fi
+# A Debian release outside the full matrix is refused by name, never built (debian-releases.sh beside this file, the one
+# refusal): a caller passing a retired release in its suite-matrix or deb-releases is red here, in the first job of
+# build-deb.yml.
+[ "$kind" != deb ] || "$here/debian-releases.sh" "${releases[@]}"
 
 wave=${WAVE:-}
 case $wave in quick | full | '') ;; *) echo "::error::OMX_RELEASE_MATRIX is '$wave', not quick or full" >&2; exit 2 ;; esac

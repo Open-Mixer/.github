@@ -552,7 +552,8 @@ pulled copy and pushes nothing.
 
 A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. Debian is trixie only
 (owner ruling 2026-11-28): no workflow, action or packaging line names another Debian release (public-sources-check's
-retired-debian job, in every caller), and release-matrix refuses a Debian release outside full.txt by name; what was
+retired-debian job, in every caller), and release-matrix/debian-releases.sh refuses a Debian release outside full.txt by name, for build-deb.yml and
+check-matrix through matrix.sh and for promote-staged, purge-staging and promote-wave as their first step; what was
 published for bookworm before stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:

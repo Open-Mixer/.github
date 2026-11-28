@@ -163,7 +163,7 @@ PY
 
 # ---- sabotage: the subtraction taken out of matrix.sh
 if [ -z "${MATRIX_SH:-}" ]; then
-    cp "$(dirname "$matrix")/quick.txt" "$(dirname "$matrix")/full.txt" "$t/"
+    cp "$(dirname "$matrix")/quick.txt" "$(dirname "$matrix")/full.txt" "$(dirname "$matrix")/debian-releases.sh" "$t/"
     sed '/^    cells=(\${keep\[@\]+"\${keep\[@\]}"})$/d' "$matrix" > "$t/matrix-sab.sh"
     ! cmp -s "$matrix" "$t/matrix-sab.sh" || fail "the sabotage did not change matrix.sh"
     if MATRIX_SH=$t/matrix-sab.sh bash "$0" > "$t/sab.log" 2>&1; then cat "$t/sab.log"; fail "with the subtraction taken out, a served cell was planned and this test stayed green"; fi

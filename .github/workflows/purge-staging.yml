@@ -111,6 +111,11 @@ jobs:
       group: publish-${{ inputs.target-repo }}-${{ inputs.dry-run && github.run_id || 'live' }}
       cancel-in-progress: false
     steps:
+      # Debian is trixie only (owner ruling 2026-11-28): a retired release in suite-matrix is refused by name here,
+      # before anything is read or written (release-matrix/debian-releases.sh, the refusal build-deb.yml applies too)
+      - uses: Open-Mixer/.github/.github/actions/debian-releases@openmixer-v1
+        with:
+          releases: ${{ inputs.suite-matrix }}
       - uses: Open-Mixer/.github/.github/actions/purge-staging@openmixer-v1
         with:
           kind: rpm

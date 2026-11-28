@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: debian-releases
+description: Refuse, by name, a Debian release outside the full matrix (Debian is trixie only)
+
+# The first step of every workflow that takes a list of Debian releases and does not build through release-matrix:
+# promote-staged (find), purge-staging (rpm) and promote-wave (rpm), so a refusal comes before anything is read,
+# promoted or purged. It runs release-matrix/debian-releases.sh, the same refusal matrix.sh applies to build-deb.yml's
+# suite-matrix and check-matrix's deb-releases: full.txt is the one list (owner ruling 2026-11-28). The value reaches
+# the script through the environment, never spliced into a run line.
+
+inputs:
+  releases:
+    description: the caller's Debian releases, a JSON array of names (a workflow's suite-matrix input)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Every Debian release is in the full matrix
+      shell: bash
+      env:
+        RELEASES: ${{ inputs.releases }}
+      run: |
+        set -euo pipefail
+        re='^\[[[:space:]]*("[A-Za-z0-9_.-]+"([[:space:]]*,[[:space:]]*"[A-Za-z0-9_.-]+")*)?[[:space:]]*\]$'
+        [[ $RELEASES =~ $re ]] || { echo "::error::releases is not a JSON array of names: $RELEASES" >&2; exit 2; }
+        mapfile -t rels < <(printf '%s\n' "$RELEASES" | tr -d '[]" \t' | tr ',' '\n' | sed '/^$/d')
+        "$GITHUB_ACTION_PATH/../release-matrix/debian-releases.sh" "${rels[@]}"
+        echo "Debian releases: ${rels[*]:-none}, every one in the full matrix"

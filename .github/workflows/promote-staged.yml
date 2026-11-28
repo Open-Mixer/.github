@@ -151,6 +151,11 @@ jobs:
       # install checks take <version>-<release> with no .git and the deb <version> with no +git (.github#289)
       real: ${{ steps.commit.outputs.real }}
     steps:
+      # Debian is trixie only (owner ruling 2026-11-28): a retired release in suite-matrix is refused by name here,
+      # before anything is read or written (release-matrix/debian-releases.sh, the refusal build-deb.yml applies too)
+      - uses: Open-Mixer/.github/.github/actions/debian-releases@openmixer-v1
+        with:
+          releases: ${{ inputs.suite-matrix }}
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
