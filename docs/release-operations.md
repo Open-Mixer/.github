@@ -582,10 +582,28 @@ After a purge the empty index is served, so the channel is added and loaded as u
 and the site are never committed (`tests/staging-publish.sh` checks them byte for byte). `dry-run: true` purges a
 pulled copy and pushes nothing.
 
+## Retiring a Debian release
+
+A Debian release that is in neither `release-matrix/full.txt` (built) nor `release-matrix/frozen.txt` (served, never
+built) is retired, and the retire-debian-suites workflow takes it out of every apt tree of the channel: `deb/`,
+`staging/deb` and each `devel/<wave>/deb`. `tools/retire-debian-suites.sh` removes the release's whole suite directory
+(its packages, `Packages`, `Release`, `InRelease`, `Release.gpg`) and the changelogs only it served, writes `cells.tsv`
+again, and leaves every other release's index and signature byte for byte (a flat repository per release: no other
+index names a path in it), after checking each of those `InRelease` files verifies against the tree's `openmixer.asc`.
+The checkout is audited so nothing else changed, and the push is channel-push's, one signed commit per tree. A
+`workflow_dispatch` is the dry run: it lists every path it would remove, per tree, and pushes nothing; a tag
+`retire-debian-suites-<n>` on this repository is the removal (`tests/retire-debian-suites.sh` proves the script on a
+stub channel). A promotion refuses a channel that still serves a
+retired release (promote-staged/collect.py), so run the retirement right after a release leaves the matrix.
+
+    gh workflow run retire-debian-suites.yml -R Open-Mixer/.github                 # dry run: the plan
+    git tag -s retire-debian-suites-1 origin/main && git push origin retire-debian-suites-1
+
 ## The quick set and the full matrix
 
-A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
-for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
+A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. Debian is trixie
+only (owner ruling 2026-11-28): no release is built for bookworm, and what was published for it is removed from every
+channel, the real one, staging and each devel/<wave> tree, by the retire-debian-suites workflow (below). Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
