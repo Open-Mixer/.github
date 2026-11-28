@@ -217,9 +217,9 @@ is written. The coordinator dispatches it once a wave is DONE.
 
 **Promoting one proven line.** `packages: <names>` promotes one line of a wave, not the whole wave: only the packages
 whose name or source package's name is listed, their `cells.tsv` rows and the build records `built/<name>/` move, with
-the same refusals and the same byte comparison (`promote-wave.sh` `PROMOTE_PACKAGES`). devel-chain.sh's continuous
-promotion dispatches it for the line it has just moved testing for (openmixer-ops `channel-promote.sh --line`), so
-upper-layer lanes read that layer from staging at once. A selection matching nothing is refused by name. The whole wave
+the same refusals and the same byte comparison (`promote-wave.sh` `PROMOTE_PACKAGES`). A wave's continuous
+promotion dispatches it for each line once that line is proven, so upper-layer lanes read that layer from staging
+at once. A selection matching nothing is refused by name. The whole wave
 promoted later keeps those bytes.
 
 **A version built twice (before build once).** Staging's build was published first and a published file is never
