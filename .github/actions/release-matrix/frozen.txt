@@ -4,5 +4,6 @@
 # This list is the only place it is written.
 # fc44: owner ruling 2026-11-19, every machine is on Fedora 45 (docs/release-operations.md).
 rpm 44
-# bookworm: owner ruling 2026-11-16, no release is built for Debian bookworm; what is published stays served.
-deb bookworm
+# No Debian release is frozen: Debian is trixie only and a release in neither full.txt nor this list is retired, its
+# published packages removed from every channel by tools/retire-debian-suites.sh (owner ruling 2026-11-28, which
+# supersedes the 2026-11-16 "what is published stays served" for bookworm).
