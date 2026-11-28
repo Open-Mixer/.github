@@ -94,7 +94,7 @@ on:
       channel-level:
         type: string
         default: ''
-        description: 'The channel level a staged run publishes to and builds against (docs/release-operations.md, "The three channel levels"): empty or staging is the staging channel, as before; devel/<wave> ([a-z0-9-]+) the devel channel of that wave, above staging, and only it is written. A merge to devel with none takes the calling repository''s variable OMX_DEVEL_CHANNEL (the coordinator''s wave tool sets it for a wave''s line). With staging alone, a dry run, the build reads that wave''s channel too and publishes nothing. Never on a tag or a release.'
+        description: 'The channel level a staged run publishes to and builds against (docs/release-operations.md, "The three channel levels"): empty or staging is the staging channel, as before; devel/<wave> ([a-z0-9-]+) the devel channel of that wave, above staging, and only it is written. A merge to devel with none takes the calling repository''s variable OMX_DEVEL_CHANNEL (the coordinator''s wave tool sets it for a wave''s line); with that unset it builds and publishes nothing (build once: staging is filled by promote-wave alone). With staging alone, a dry run, the build reads that wave''s channel too and publishes nothing. Never on a tag or a release.'
       matrix:
         type: string
         default: ''
