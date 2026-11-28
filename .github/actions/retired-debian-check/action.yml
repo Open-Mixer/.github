@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: retired-debian-check
+description: Fail when a workflow, an action or the packaging of the calling repository names Debian bookworm
+
+# Debian is trixie only (owner ruling 2026-11-28, "we don't do bookworm"). It reads the CALLING repository's
+# .github/workflows, .github/actions, debian/ directories, *.spec files and packaging/, outside comments, and refuses
+# every line naming bookworm; debian/changelog and a spec's %changelog are history and are not read
+# (retired-debian-check.sh says exactly what is read). It has no input: there is no bookworm to allow. The caller checks out
+# first.
+
+runs:
+  using: composite
+  steps:
+    - name: The checker goes red on each planted bookworm and green on comments and history
+      shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/retired-debian-check.sh" --self-test
+    - name: Read the workflows, actions and packaging of the calling repository
+      shell: bash
+      run: |
+        "$GITHUB_ACTION_PATH/retired-debian-check.sh" "$GITHUB_WORKSPACE"

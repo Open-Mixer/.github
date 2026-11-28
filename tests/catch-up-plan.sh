@@ -46,7 +46,7 @@ printf '%s\t%s\t%s\t%s\n' \
 # plan <kind> <tag> <names> [matrix] [releases] [arches]: runs matrix.sh as a catch-up, its outputs in $t/out
 plan() {
     local kind=$1 rel arch
-    if [ "$kind" = rpm ]; then rel='["44", "45"]' arch='["x86_64", "aarch64"]'; else rel='["bookworm", "trixie"]' arch='["amd64", "arm64"]'; fi
+    if [ "$kind" = rpm ]; then rel='["44", "45"]' arch='["x86_64", "aarch64"]'; else rel='["trixie"]' arch='["amd64", "arm64"]'; fi
     env -i PATH=/usr/bin:/bin KIND="$kind" MATRIX="${4:-quick}" RELEASES="${5:-$rel}" ARCHES="${6:-$arch}" EVENT=workflow_dispatch \
         REF_TYPE=branch SOURCE_REF="$2" CATCH_UP=true CELLS_TSV="${TSV:-$t/$kind.tsv}" NAMES="$3" GITHUB_OUTPUT="$t/out" \
         bash "$matrix" > "$t/log" 2>&1
@@ -90,7 +90,8 @@ ok "deb: a version served in every quick cell plans nothing"
 ok "arch-independent packages (all, noarch) serve their whole release and are never judged against the arch ones"
 
 : > "$t/out"; plan deb v0.20.4 plugin-qualify full || { cat "$t/log"; fail "the full-matrix catch-up failed"; }
-[ "$(out cells)" = '[{"suite":"bookworm","arch":"amd64"},{"suite":"bookworm","arch":"arm64"},{"suite":"trixie","arch":"arm64"}]' ] ||
+# the served bookworm cells of the record (a frozen release, served and never built) are outside the set: never planned
+[ "$(out cells)" = '[{"suite":"trixie","arch":"arm64"}]' ] ||
     fail "the full-matrix catch-up planned $(out cells)"
 : > "$t/out"; plan rpm v0.3.0 omx-thing full || { cat "$t/log"; fail "the full rpm catch-up failed"; }
 [ "$(out cells)" = '[{"fedora":"44","arch":"x86_64"}]' ] && [ "$(out first-arch)" = x86_64 ] ||
@@ -110,7 +111,7 @@ refused "a run with no tag" 'needs the tag' deb '' plugin-qualify
 ok "refused by name: an unserved version, a missing package, a half-served cell, a tag with no version, no cells.tsv"
 
 # without CATCH_UP nothing changes: the same deb run builds both quick cells
-env -i PATH=/usr/bin:/bin KIND=deb MATRIX=quick RELEASES='["bookworm", "trixie"]' ARCHES='["amd64", "arm64"]' EVENT=workflow_dispatch \
+env -i PATH=/usr/bin:/bin KIND=deb MATRIX=quick RELEASES='["trixie"]' ARCHES='["amd64", "arm64"]' EVENT=workflow_dispatch \
     SOURCE_REF=v0.20.4 CELLS_TSV="$t/deb.tsv" NAMES=plugin-qualify GITHUB_OUTPUT="$t/plain" bash "$matrix" > /dev/null
 grep -qx 'cells=\[{"suite":"trixie","arch":"arm64"}\]' "$t/plain" || fail "a run that is not a catch-up planned $(cat "$t/plain")"
 ok "a run that is not a catch-up builds the set as before"
@@ -162,7 +163,7 @@ PY
 
 # ---- sabotage: the subtraction taken out of matrix.sh
 if [ -z "${MATRIX_SH:-}" ]; then
-    cp "$(dirname "$matrix")/quick.txt" "$t/quick.txt"
+    cp "$(dirname "$matrix")/quick.txt" "$(dirname "$matrix")/full.txt" "$t/"
     sed '/^    cells=(\${keep\[@\]+"\${keep\[@\]}"})$/d' "$matrix" > "$t/matrix-sab.sh"
     ! cmp -s "$matrix" "$t/matrix-sab.sh" || fail "the sabotage did not change matrix.sh"
     if MATRIX_SH=$t/matrix-sab.sh bash "$0" > "$t/sab.log" 2>&1; then cat "$t/sab.log"; fail "with the subtraction taken out, a served cell was planned and this test stayed green"; fi

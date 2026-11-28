@@ -550,8 +550,10 @@ pulled copy and pushes nothing.
 
 ## The quick set and the full matrix
 
-A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. No release is built
-for Debian bookworm (owner ruling 2026-11-16); what is already published for it stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
+A release builds four cells: Fedora 45 on x86_64 and aarch64, Debian trixie on amd64 and arm64. Debian is trixie only
+(owner ruling 2026-11-28): no workflow, action or packaging line names another Debian release (public-sources-check's
+retired-debian job, in every caller), and release-matrix refuses a Debian release outside full.txt by name; what was
+published for bookworm before stays served. Fedora 44 is no longer built, judged or installed in CI (owner ruling 2026-11-19: every machine is on Fedora 45); the fc44 trees stay served as they are, and nothing there is pruned without a separate decision. `.github/actions/release-matrix/frozen.txt` lists each such release (`rpm 44`, `deb bookworm`): a promotion does not hold it against its matrix, so the frozen tree is left as it is and the promotion covers the built releases. The noarch view check of a publish (publish-rpms/noarch-views.py) does not judge a frozen release either: nothing builds there, so no run could mend a difference left in it.
 While a release wave is open the next layer needs only enough of a version to go on, so a run can build the **quick
 set** instead:
 
@@ -839,7 +841,7 @@ publishes it.
 | stable name | `rpm/openmixer-release.noarch.rpm` (the oldest Fedora release's build; noarch installs on every release) | `deb/openmixer-release.deb` |
 | updates from | `fedora/<release>/noarch/` of the tree: one build per Fedora release of the set, since the dist tag `.fcNN` ties a build to its release | `debian/<suite>/all/` of the tree |
 
-The DEB ships one source per Debian release the channel serves (bookworm, trixie) and links the one of the
+The DEB ships one source per Debian release the channel serves (Debian trixie) and links the one of the
 running system at configure time: the stable `.deb` is one file for every release, and the sources stay
 package contents, so an upgrade changes them. A system whose codename the channel does not serve fails the
 install. A system upgraded to another Debian release relinks with `dpkg-reconfigure openmixer-release`.
@@ -854,7 +856,7 @@ not downgrade what is installed).
 | | RPM | DEB |
 | --- | --- | --- |
 | file | `openmixer-testing`, `openmixer-testing-noarch` in `/etc/yum.repos.d/openmixer.repo` (`%config(noreplace)`) | `/etc/apt/sources.list.d/openmixer-testing.sources`, a file postinst writes from `/usr/share/openmixer-release/testing/openmixer-testing-<suite>.sources` |
-| tree | `staging/rpm/fedora/$releasever/`: fc45 x86_64 and noarch, the tested platform | `staging/deb/debian/trixie/`: arm64 and all, the tested platform (Zynthian, the Pi); an amd64 machine finds only the `all` packages there, and bookworm gets no testing source |
+| tree | `staging/rpm/fedora/$releasever/`: fc45 x86_64 and noarch, the tested platform | `staging/deb/debian/trixie/`: arm64 and all, the tested platform (Zynthian, the Pi); an amd64 machine finds only the `all` packages there |
 | on, once | `dnf --enablerepo=openmixer-testing --enablerepo=openmixer-testing-noarch upgrade` | none: apt has no per-command switch |
 | on | `dnf config-manager setopt openmixer-testing.enabled=1 openmixer-testing-noarch.enabled=1` | `sed -i 's/^Enabled: no$/Enabled: yes/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |
 | off | the same with `enabled=0` | `sed -i 's/^Enabled: yes$/Enabled: no/' /etc/apt/sources.list.d/openmixer-testing.sources && apt-get update` |

@@ -44,6 +44,7 @@ jobs:
       - run: tests/scan-open-pr-subjects.sh
       - run: tests/fedora-cells.sh
       - run: tests/fedora-workflow-check.sh
+      - run: tests/retired-debian-check.sh
       - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
       - run: tests/channel-keep-list.sh

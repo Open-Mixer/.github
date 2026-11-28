@@ -470,13 +470,30 @@ ok "quick-deps.sh: a quick-only version is refused by name and cells; full, olde
 # a quick run names the cells it skipped, a full run has none to name (Open-Mixer/.github#59)
 note() { KIND=$1 RELEASES=$2 ARCHES=$3 MATRIX=$4 WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=workflow_dispatch REF_TYPE='' \
     GITHUB_OUTPUT=$t/note.out "$act/matrix.sh" 2>&1 | grep '^::notice::[a-z]* matrix'; }
-out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' quick)
-echo "$out" | grep -q '(skipped while quick: bookworm amd64, bookworm arm64, trixie amd64)$' || fail "a quick deb run does not name what it skipped: $out"
+out=$(note deb '["trixie"]' '["amd64", "arm64"]' quick)
+echo "$out" | grep -q '(skipped while quick: trixie amd64)$' || fail "a quick deb run does not name what it skipped: $out"
 out=$(note rpm '["44", "45"]' '["x86_64", "aarch64"]' quick)
 echo "$out" | grep -q '(skipped while quick: fc44 x86_64, fc44 aarch64, fc45 aarch64)$' || fail "a quick rpm run does not name what it skipped: $out"
-out=$(note deb '["bookworm", "trixie"]' '["amd64", "arm64"]' full)
+out=$(note deb '["trixie"]' '["amd64", "arm64"]' full)
 echo "$out" | grep -q 'skipped' && fail "a full run names a skipped cell: $out"
-out=$(note deb '["bookworm"]' '["amd64"]' quick)
+out=$(note rpm '["44"]' '["x86_64"]' quick)
 echo "$out" | grep -q 'skipped' && fail "a run that fell back to the full matrix names a skipped cell: $out"
 ok "matrix.sh: a quick run names the cells it skipped; full, and the fallback to full, name none"
+# Debian is trixie only (owner ruling 2026-11-28): a Debian release outside full.txt is refused by name, in any set, and
+# the refusal reads full.txt (a full.txt that lists the release lets it through)
+for m in quick full ''; do
+  rc=0; out=$(KIND=deb RELEASES='["bookworm", "trixie"]' ARCHES='["amd64", "arm64"]' MATRIX=$m WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' \
+    EVENT=push REF_TYPE='' GITHUB_OUTPUT=$t/bw.out "$act/matrix.sh" 2>&1) || rc=$?
+  [ "$rc" = 2 ] && echo "$out" | grep -q "::error::Debian release 'bookworm' is not in the full matrix (release-matrix/full.txt: trixie," \
+    || fail "a bookworm suite-matrix (matrix '$m') is not refused by name: rc $rc $out"
+done
+cp -r "$act" "$t/rm-sab"; printf 'deb bookworm amd64\n' >> "$t/rm-sab/full.txt"
+KIND=deb RELEASES='["bookworm"]' ARCHES='["amd64"]' MATRIX=full WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=push REF_TYPE='' \
+  GITHUB_OUTPUT=$t/bw.out "$t/rm-sab/matrix.sh" >/dev/null 2>&1 || fail "the refusal does not read full.txt: a full.txt listing bookworm still refuses it"
+sed '/^if \[ "$kind" = deb \]; then$/,/^fi$/d' "$act/matrix.sh" > "$t/rm-sab/matrix.sh"
+cmp -s "$act/matrix.sh" "$t/rm-sab/matrix.sh" && fail "sabotage: the refusal block was not found"
+cp "$act/full.txt" "$t/rm-sab/full.txt"
+KIND=deb RELEASES='["bookworm"]' ARCHES='["amd64"]' MATRIX=full WAVE='' STAGED='' SOURCE_REF='' CATCH_UP='' EVENT=push REF_TYPE='' \
+  GITHUB_OUTPUT=$t/bw.out "$t/rm-sab/matrix.sh" >/dev/null 2>&1 || fail "sabotage: without the refusal a bookworm matrix still fails (the check proves nothing)"
+ok "matrix.sh: a bookworm Debian release is refused by name in every set, read from full.txt; without the refusal it builds (sabotage)"
 echo "release-matrix: all passed"

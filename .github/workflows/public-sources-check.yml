@@ -6,6 +6,8 @@ name: public-sources-check
 #   - (commit-identity: true) every commit of its pull request is authored by the house author, committed by the signing key's uid and verified
 #     by GitHub (commit-identity-check);
 #   - (fedora-workflows: true) no workflow names a Fedora release outside allowed-fedora (fedora-workflow-check);
+#   - no workflow, action or packaging line names a retired Debian release (retired-debian-check): Debian is trixie
+#     only (owner ruling 2026-11-28); always on, no input switches it off;
 #   - no tracked file points into a private repository (private-refs-check); like the commit message check and the
 #     layout check, it skips only a repository that is private and carries the topic stays-private, read live from
 #     GitHub with the run's token (no input switches it off);
@@ -124,3 +126,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Open-Mixer/.github/.github/actions/no-local-copies@openmixer-v1
+
+  retired-debian:
+    name: no workflow, action or packaging line names a retired Debian release
+    runs-on: ${{ startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Open-Mixer/.github/.github/actions/retired-debian-check@openmixer-v1
