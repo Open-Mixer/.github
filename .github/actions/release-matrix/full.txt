@@ -1,0 +1,10 @@
+# The full matrix: every cell a release builds and the channel serves, every package in every cell (owner ruling
+# 2026-11-26, which supersedes the fc45-x86_64-rpm / trixie-arm64-deb development matrix of 2026-11-19; Debian
+# bookworm dropped 2026-11-27). One cell per line, as quick.txt: the package kind, the Fedora release or Debian
+# release, the architecture as that kind names it. build-rpm.yml and build-deb.yml declare it as their input defaults
+# (fedora-versions, arch-matrix, suite-matrix), and tests/arch-coverage.sh holds those defaults, quick.txt and every
+# caller (tools/arch-coverage.py) to it: a push, a tag or a staged run that covers fewer cells is red by name.
+rpm 45 x86_64
+rpm 45 aarch64
+deb trixie amd64
+deb trixie arm64

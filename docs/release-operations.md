@@ -238,6 +238,15 @@ when it is unset); the quick set only when the variable or an explicit `matrix: 
 staged trixie arm64 and fc45 x86_64 alone, and every amd64 consumer of the next layer failed to install, one layer at a
 time (plugin-hostd#326 fixed one caller; this fixes them all here). `tests/release-matrix.sh` renders it.
 
+**The full matrix is declared once**, in `.github/actions/release-matrix/full.txt` (fc45 x86_64 and aarch64, trixie
+amd64 and arm64). `tests/arch-coverage.sh` holds the shared defaults (`fedora-versions`, `suite-matrix`,
+`arch-matrix` of build-rpm.yml and build-deb.yml, `rpm-arches` and `deb-arches` of check-matrix) and `quick.txt` to it,
+and `tools/arch-coverage.py <repo dir>...` renders every publishing run of a caller (a merge to devel, a tag, a staged
+dispatch at its input defaults) through these workflows and names, ARCH-NARROW, each one that builds fewer cells: an
+`arch-matrix` literal, a `matrix` input defaulting to quick, a job building its own packages for one architecture, a
+`release-matrix.json` or `packaging/release-arches` declaring fewer. Run it over the release set's checkouts before a
+wave: `python3 tools/arch-coverage.py ../omx-dsp ../plugin-hostd ...`.
+
 ### A merge to devel publishes the real package to staging
 
 **RULED (owner, 2026-11-25, .github#289):** development happens in devel. A merge to devel builds the RPMs and DEBs once
