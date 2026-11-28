@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: retire-debian-suites
+
+# Takes every retired Debian release out of every apt tree of the channel: deb/ (the real channel, www.openmixer.org),
+# staging/deb and each devel/<wave>/deb. A release is retired when it is in neither release-matrix/full.txt (built) nor
+# release-matrix/frozen.txt (served, never built); the set is derived from those two lists, never written here. Owner
+# ruling 2026-11-28: Debian is trixie only, and the published bookworm packages are removed from every channel.
+#
+# tools/retire-debian-suites.sh does the work, one tree at a time: the release's whole suite directory goes (packages,
+# Packages, Release, InRelease, Release.gpg) with the changelogs only it served, cells.tsv is written again, and every
+# release that stays keeps its index and its signature byte for byte, after its InRelease is checked to verify against
+# the tree's openmixer.asc. The checkout is audited so nothing else changed. channel-pull and channel-push are the
+# publish's: one signed commit per tree, in the publish concurrency group, and a lost race runs the script again on the
+# new tip.
+#
+# The plan job always runs and pushes nothing: every tree of the pulled channel, each path it would remove, and the
+# trees that hold a retired release. A tag retire-debian-suites-<n> on this repository is the removal (publish only by
+# tagging): one retire job per such tree pushes. A workflow_dispatch is the dry run, the plan alone:
+#
+#   gh workflow run retire-debian-suites.yml -R Open-Mixer/.github      # the plan
+#   git tag -s retire-debian-suites-1 origin/main && git push origin retire-debian-suites-1   # the removal
+#
+# Secrets (organisation secrets, as the publish uses them): PAGES_TOKEN, SITE_GPG_KEY. No package signing key: nothing
+# is signed again.
+
+on:
+  push:
+    tags: ['retire-debian-suites-*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CHANNEL: Open-Mixer/open-mixer.github.io
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: The retired Debian releases of every apt tree (plan, pushes nothing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: debian:trixie
+    outputs:
+      trees: ${{ steps.plan.outputs.trees }}
+    steps:
+      - run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv git curl ca-certificates findutils dpkg-dev jq
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/channel-pull
+        with:
+          # read only: the public channel is cloned with the run's own token, and the plan pushes nothing
+          publish-token: ${{ github.token }}
+          channel: ${{ env.CHANNEL }}
+          strip: none
+      - id: plan
+        name: Retire on the pulled copy, tree by tree, list every path, push nothing
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD/build/channel"
+          trees=()
+          for t in deb staging/deb build/channel/devel/*/deb; do
+            t=${t#build/channel/}
+            [ -d "build/channel/$t" ] || continue
+            echo "::group::$t"
+            tools/retire-debian-suites.sh build/channel "$t" | tee "$RUNNER_TEMP/plan.log"
+            echo "::endgroup::"
+            n=$(grep -c '^removed ' "$RUNNER_TEMP/plan.log" || true)
+            echo "$t: $n path(s) to remove"
+            if grep -q '^retired ' "$RUNNER_TEMP/plan.log"; then trees+=("$t"); fi
+            git -C build/channel reset -q --hard
+          done
+          json=$(printf '%s\n' ${trees[@]+"${trees[@]}"} | jq -R . | jq -cs .)
+          echo "trees holding a retired Debian release: $json"
+          # a matrix needs one entry: with none retired, the real tree, where the script finds nothing and nothing is pushed
+          [ "$json" != '[]' ] || json='["deb"]'
+          echo "trees=$json" >> "$GITHUB_OUTPUT"
+
+  retire:
+    name: Retire from ${{ matrix.tree }}
+    needs: plan
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: debian:trixie
+    concurrency:
+      group: publish-Open-Mixer/open-mixer.github.io-live
+      cancel-in-progress: false
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        tree: ${{ fromJSON(needs.plan.outputs.trees) }}
+    steps:
+      - run: apt-get update -qq && apt-get install -y --no-install-recommends apt-utils gnupg gpgv git curl ca-certificates findutils dpkg-dev jq
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/channel-pull
+        with:
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          channel: ${{ env.CHANNEL }}
+          strip: none
+      - name: Retire the Debian releases of ${{ matrix.tree }}
+        env:
+          TREE: ${{ matrix.tree }}
+        run: |
+          git config --global --add safe.directory "$PWD/build/channel"
+          tools/retire-debian-suites.sh build/channel "$TREE"
+      - uses: ./.github/actions/channel-push
+        with:
+          publish-token: ${{ secrets.PAGES_TOKEN }}
+          site-gpg-key: ${{ secrets.SITE_GPG_KEY }}
+          channel: ${{ env.CHANNEL }}
+          tag: ${{ github.ref_name }}
+          what: ${{ matrix.tree }}
+          rebuild: 'tools/retire-debian-suites.sh build/channel "${{ matrix.tree }}"'

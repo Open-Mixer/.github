@@ -222,6 +222,11 @@ jobs:
         shell: bash
         run: tests/remove-freereac-packages.sh ${{ matrix.kind }}
 
+      - name: A retired Debian release leaves every apt tree whole, and the releases that stay keep their signed index
+        if: matrix.kind == 'deb'
+        shell: bash
+        run: tests/retire-debian-suites.sh
+
       - name: A package of one organisation never goes into the other organisation's channel
         shell: bash
         run: tests/channel-owner.sh ${{ matrix.kind }}
