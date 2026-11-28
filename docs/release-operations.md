@@ -238,7 +238,10 @@ stays in `devel/<wave>` until the wave's tree is removed; consumers of staging g
 **Gates.** `tests/devel-channel-publish.sh` (a wave's publish writes nothing outside `devel/<wave>`, its own
 `cells.tsv`, the client priorities, the refused levels), `tests/promote-wave.sh` (same bytes, refusals, idempotence),
 `tests/devel-push-staging.sh` (a wave's version check), `tests/staging-channel.sh` (the three pushes, by exact match)
-and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release).
+and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release). Every caller's `public-sources-check.yml` runs `devel-base-check`: a step passing
+`devel-channel` to `add-openmixer` without `devel-base` (the same expression with `vars.OMX_DEVEL_BASE`) is refused by name,
+and in a repository with a devel branch so is a step passing neither; it refuses only where the run's target branch is
+devel and reports a notice elsewhere, so a main is never red (`tests/devel-base-check.sh`).
 
 ## The staging channel of a release wave
 
@@ -311,6 +314,11 @@ files. The devel build is the real package at its real version, never a pre-rele
     the version is bumped, and an all-zero or unreachable `before` is red by name. No record is seeded and no bump
     wave is needed. (`package-paths/served-change.sh`, the one judge of the preflight and of `devel-bump-check`.)
   No published version is rebuilt, and no epoch is used.
+- **The source of an installed version is its build record, never a tag.** A devel publish carries no tag (tags exist
+  only on main) and no commit in its name, so a job that reads a sibling's source at the version it installed asks the
+  `installed-source` action: the build record of the tree the package came from (`<tree>/built/<name>/<version>.commit`,
+  dnf's `from_repo`), a snapshot's `.git<time>.<short>`, then the tag `v<version>`; none of the three is red by name
+  (`tests/installed-source.sh`). A `git fetch refs/tags/v<version>` of a devel-wave package dies with exit 128.
 - **The caller is told.** `build-rpm.yml` and `build-deb.yml` declare the `workflow_call` outputs `skipped` (`'true'`
   when the merge built and published nothing) and `devel-version`, from the preflight job. A caller's own job that
   reads the run's artifacts (an install check, a test of the built packages) skips on it:
