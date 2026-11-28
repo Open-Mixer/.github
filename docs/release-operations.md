@@ -163,7 +163,7 @@ bump reached another wave's CI mid-run, and a wave built for the quick set alone
 | Level | Tree in the channel | dnf (`priority`) | apt (`Pin-Priority`, label) | Filled by |
 | --- | --- | --- | --- | --- |
 | devel/`<wave>` | `devel/<wave>/rpm`, `devel/<wave>/deb` | `openmixer-devel*`, 5 | 650, `OpenMixer-Devel` | the wave's lines (a merge to devel, or a staged run with `channel-level`) |
-| staging | `staging/rpm`, `staging/deb` | `openmixer-staging*`, 10 | 600, `OpenMixer-Staging` | a promotion of a DONE wave (`promote-wave.yml`); until callers move, a merge to devel as before |
+| staging | `staging/rpm`, `staging/deb` | `openmixer-staging*`, 10 | 600, `OpenMixer-Staging` | a promotion of a wave's bytes (`promote-wave.yml`: a DONE wave, or one proven line with `packages`), never a build |
 | production | `rpm/`, `deb/` | `openmixer*`, dnf's default 99 | 500, `OpenMixer` | release tags and `promote-staged.yml` (consumer evidence) |
 
 `<wave>` is `[a-z0-9-]+`, the wave's name. `.github/actions/publish-rpms/channel-level.sh` is the one place
@@ -183,6 +183,14 @@ level step validates it (never on a tag or a release) and hands `devel-channel` 
 staging and real pushes do not run with a level set); the build, the install check and the version checks
 (`release-preflight` `channel-level`, `already-served.sh` `DEVEL_TREE`) read the wave's tree beside staging, and never
 another wave's. A staged install check of a wave insists the package came from `openmixer-devel*`.
+
+**Build once (owner 2026-11-24/27).** A version is built once, by its wave's line, into `devel/<wave>`; staging and the
+channel root receive those bytes by copy. A merge to devel outside a wave (the repository's `OMX_DEVEL_CHANNEL` unset:
+no wave holds it, or its line's run has ended) builds and publishes nothing: `release-preflight` answers `skip=true`
+with a notice before it reads the channel. Before this, such a merge built the version again into staging, with other
+bytes than the wave's copy, and the wave's promotion refused every file of it (libdiginet 0.1.11: libdiginet run
+46159610686 built it into staging after line 2 of devel-wave-2026-11-28-n4 had built it into the wave; promote-wave run
+46165668682 refused it). `tests/release-preflight-served.sh` holds the rule, sabotaged.
 
 **Reading a wave.** `add-openmixer` `devel-channel: <wave>` (or `devel/<wave>`) adds the wave's tree above staging, and
 staging with it (`add-staging.sh` `LEVEL=devel/<wave>`). A wave's tree never published yet (its first line) is skipped
@@ -207,10 +215,31 @@ scratch copy (an rpm by its signature, a deb by the wave's signed index). The sa
 promotion runs again safely; afterwards every promoted file is compared with its source. Nothing outside `staging/<kind>`
 is written. The coordinator dispatches it once a wave is DONE.
 
+**Promoting one proven line.** `packages: <names>` promotes one line of a wave, not the whole wave: only the packages
+whose name or source package's name is listed, their `cells.tsv` rows and the build records `built/<name>/` move, with
+the same refusals and the same byte comparison (`promote-wave.sh` `PROMOTE_PACKAGES`). A wave's continuous
+promotion dispatches it for each line once that line is proven, so upper-layer lanes read that layer from staging
+at once. A selection matching nothing is refused by name. The whole wave
+promoted later keeps those bytes.
+
+**A version built twice (before build once).** Staging's build was published first and a published file is never
+replaced: staging's is kept. `keep-staging: <name>=<version> ...` leaves every file of the wave of that name and
+version, its build record and its `cells.tsv` rows out of the promotion and reports each `superseded`, by path; a kept
+package staging does not hold is refused. A token names a source package and version, and each kind matches it by the
+source name it records (rpm: the source rpm, `built/<name>/`; deb: the `Source` field, `built/<name>/`), so
+`libdiginet=0.1.11` keeps the deb files built from source libdiginet whatever their binary names. A kind holding no
+package of that source (a wave that built no deb of it) is named `no <kind> of <name> in the wave` and promotes the
+rest, as long as the other kind's tree holds that version; a token that matches on no kind, or a version a kind does
+not hold of a source it holds, is refused. Every other clash still refuses. The wave's copy
+stays in `devel/<wave>` until the wave's tree is removed; consumers of staging get staging's build of the version.
+
 **Gates.** `tests/devel-channel-publish.sh` (a wave's publish writes nothing outside `devel/<wave>`, its own
 `cells.tsv`, the client priorities, the refused levels), `tests/promote-wave.sh` (same bytes, refusals, idempotence),
 `tests/devel-push-staging.sh` (a wave's version check), `tests/staging-channel.sh` (the three pushes, by exact match)
-and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release).
+and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release). Every caller's `public-sources-check.yml` runs `devel-base-check`: a step passing
+`devel-channel` to `add-openmixer` without `devel-base` (the same expression with `vars.OMX_DEVEL_BASE`) is refused by name,
+and in a repository with a devel branch so is a step passing neither; it refuses only where the run's target branch is
+devel and reports a notice elsewhere, so a main is never red (`tests/devel-base-check.sh`).
 
 ## The staging channel of a release wave
 
@@ -283,6 +312,11 @@ files. The devel build is the real package at its real version, never a pre-rele
     the version is bumped, and an all-zero or unreachable `before` is red by name. No record is seeded and no bump
     wave is needed. (`package-paths/served-change.sh`, the one judge of the preflight and of `devel-bump-check`.)
   No published version is rebuilt, and no epoch is used.
+- **The source of an installed version is its build record, never a tag.** A devel publish carries no tag (tags exist
+  only on main) and no commit in its name, so a job that reads a sibling's source at the version it installed asks the
+  `installed-source` action: the build record of the tree the package came from (`<tree>/built/<name>/<version>.commit`,
+  dnf's `from_repo`), a snapshot's `.git<time>.<short>`, then the tag `v<version>`; none of the three is red by name
+  (`tests/installed-source.sh`). A `git fetch refs/tags/v<version>` of a devel-wave package dies with exit 128.
 - **The caller is told.** `build-rpm.yml` and `build-deb.yml` declare the `workflow_call` outputs `skipped` (`'true'`
   when the merge built and published nothing) and `devel-version`, from the preflight job. A caller's own job that
   reads the run's artifacts (an install check, a test of the built packages) skips on it:

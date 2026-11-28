@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: devel-base-check
+description: Fail when a step of the calling repository passes devel-channel to add-openmixer without devel-base
+
+# A wave stacked on a base wave (OMX_DEVEL_BASE beside OMX_DEVEL_CHANNEL) is served only partly by its own tree: a step
+# that reads the wave and not its base fails to install a package whose dependency only the base serves (omx-panel#287,
+# plugin-qualify#207). The checker reads the caller's .github/workflows and .github/actions, refuses each such step by
+# file, job and step name, and where devel-channel reads vars.OMX_DEVEL_CHANNEL holds devel-base to the same expression
+# reading vars.OMX_DEVEL_BASE. In a repository with a devel branch (the checker asks the checkout's origin, git ls-remote;
+# an origin it cannot read is red) every add-openmixer step passes both: a bare call reads production only on a pull
+# request into devel (plugin-db#104) and is refused by name too. It proves itself on planted trees first. The caller has
+# checked the repository out (actions/checkout keeps the credentials the lookup reads with). It never turns a main red:
+# it refuses only where the run's target branch is devel (a pull request's base, else the pushed or dispatched ref);
+# on main, testing or a tag each finding is a notice and the step passes.
+
+runs:
+  using: composite
+  steps:
+    - name: The checker goes red on each planted step without devel-base and green on the paired ones
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/devel-base-check.py" --self-test
+    - name: Read the workflows and actions of the calling repository
+      shell: bash
+      env:
+        OMX_TARGET_BRANCH: ${{ github.base_ref || github.ref_name }}
+      run: python3 "$GITHUB_ACTION_PATH/devel-base-check.py" "$GITHUB_WORKSPACE"

@@ -47,7 +47,8 @@ inputs:
     default: 'false'
   devel-version:
     description: >-
-      The version a merge to devel publishes to the staging channel (its spec's Version, or its debian/changelog's), with
+      The version a merge to devel publishes into its wave's devel channel (its spec's Version, or its debian/changelog's;
+      with channel-level empty, a merge outside a wave, nothing is built or published: skip is true), with
       require-tag false: the already-served check runs for v<devel-version> over the channel root AND staging, and a
       version either holds publishes nothing, green (the output skip is true, a ::notice:: names the served files), ONLY
       when no path since the commit that built it (staging/<kind>/built/<name>/<version>.commit) changes a package
@@ -124,6 +125,16 @@ runs:
           devel_tree=devel/$("$GITHUB_ACTION_PATH/../publish-rpms/channel-level.sh" wave "$LEVEL") || exit 1
         fi
         export DEVEL_TREE=$devel_tree
+        # BUILD ONCE (owner 2026-11-24/27): a merge to devel publishes into a wave's devel channel alone, and staging
+        # receives a wave's bytes by its promotion (promote-wave), never by a build of its own. A merge to devel outside a
+        # wave (the repository's OMX_DEVEL_CHANNEL unset: no wave holds it, or its line's run has ended) builds and
+        # publishes nothing. Built into staging it was a second build of a version a wave holds, with other bytes, and
+        # the wave's promotion refused every file of it (libdiginet 0.1.11: run 46159610686, promote-wave 46165668682)
+        if [ -n "${DEVEL_VERSION:-}" ] && [ -z "$devel_tree" ]; then
+          echo "::notice::a merge to devel outside a wave (OMX_DEVEL_CHANNEL unset) builds and publishes nothing: v$DEVEL_VERSION reaches devel/<wave> by a wave's line, and staging by that wave's promotion, the same bytes"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         if [ "$PUBLISH" != true ] || { [ "$REQUIRE_TAG" = true ] && [ "$REF_TYPE" != tag ]; }; then
           echo "::notice::dry run ($REF): the packages are built and an unsigned tree is assembled; nothing is signed or published"
           exit 0

@@ -96,7 +96,7 @@ on:
       channel-level:
         type: string
         default: ''
-        description: 'The channel level a staged run publishes to and builds against (docs/release-operations.md, "The three channel levels"): empty or staging is the staging channel, as before; devel/<wave> ([a-z0-9-]+) the devel channel of that wave, above staging, and only it is written. A merge to devel with none takes the calling repository''s variable OMX_DEVEL_CHANNEL (the coordinator''s wave tool sets it for a wave''s line). With staging alone, a dry run, the build reads that wave''s channel too and publishes nothing. Never on a tag or a release.'
+        description: 'The channel level a staged run publishes to and builds against (docs/release-operations.md, "The three channel levels"): empty or staging is the staging channel, as before; devel/<wave> ([a-z0-9-]+) the devel channel of that wave, above staging, and only it is written. A merge to devel with none takes the calling repository''s variable OMX_DEVEL_CHANNEL (the coordinator''s wave tool sets it for a wave''s line); with that unset it builds and publishes nothing (build once: staging is filled by promote-wave alone). With staging alone, a dry run, the build reads that wave''s channel too and publishes nothing. Never on a tag or a release.'
       matrix:
         type: string
         default: ''
@@ -300,7 +300,9 @@ jobs:
           DEVEL_PR: ${{ startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' }}
           # the waves a wave one step behind another reads below its own tree and above staging (devel-chain.sh
           # DC_BASE_CHANNEL sets the repository's OMX_DEVEL_BASE beside OMX_DEVEL_CHANNEL): read only where the wave is
-          BASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')) && vars.OMX_DEVEL_BASE || '' }}
+          # and where a caller names the repository's own wave as its channel-level (a staging dry run of a wave line's
+          # dispatched ci.yml: its base waves are what that wave's merge will read)
+          BASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (inputs.channel-level != '' && inputs.channel-level == vars.OMX_DEVEL_CHANNEL)) && vars.OMX_DEVEL_BASE || '' }}
         run: |
           no() { echo "::error::$*"; exit 1; }
           case $LEVEL in
