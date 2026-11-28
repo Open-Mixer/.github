@@ -43,6 +43,7 @@ jobs:
       - run: tests/pr-fixes-sweep.sh
       - run: tests/scan-open-pr-subjects.sh
       - run: tests/fedora-cells.sh
+      - run: tests/installed-source.sh
       - run: tests/fedora-workflow-check.sh
       - run: tests/jobs.sh
       - run: tests/preamble-actions.sh
