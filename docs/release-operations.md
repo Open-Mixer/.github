@@ -219,7 +219,9 @@ is written. The coordinator dispatches it once a wave is DONE.
 whose name or source package's name is listed, their `cells.tsv` rows and the build records `built/<name>/` move, with
 the same refusals and the same byte comparison (`promote-wave.sh` `PROMOTE_PACKAGES`). A wave's continuous
 promotion dispatches it for each line once that line is proven, so upper-layer lanes read that layer from staging
-at once. A selection matching nothing is refused by name. The whole wave
+at once. A line names both kinds' packages (rpm `libomx-domain-devel`, deb `libomx-domain-dev`): a name only the other
+kind's tree of the wave holds is named `no <kind> of <name> in the wave`, not refused; a name that matches on no kind is
+refused by name. The whole wave
 promoted later keeps those bytes.
 
 **A version built twice (before build once).** Staging's build was published first and a published file is never
