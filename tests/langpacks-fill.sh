@@ -162,8 +162,10 @@ fresh lazy
 (cd "$work/lazy" && env OMX_TRANSLATE_URL="$URL" OMX_TRANSLATE_KEY="$KEY" RUNNER_ENVIRONMENT=self-hosted \
     python3 "$fill" --gate "$GATE" --fill "$work/lazy.sh $FILL" --languages languages.json --model draft-prose --no-push) >"$work/lazy.out" 2>&1
 rc=$?
-[ "$rc" -eq 1 ] && grep -q 'catalogs/es.json: fix.new' "$work/lazy.out" && ! grep -q 'catalogs/ca.json: fix.new' "$work/lazy.out"
-step $? "a fill that skips one missing key is red naming that key alone (rc=$rc)"
+[ "$rc" -eq 1 ] && grep -q 'catalogs/es.json: fix.new: missing' "$work/lazy.out" && ! grep -q 'catalogs/ca.json: fix.new: missing' "$work/lazy.out" &&
+    grep -q 'kept, made before this: ca' "$work/lazy.out" && [ "$(catalog_keys "$work/lazy/catalogs/ca.json" machine)" = "fix.changed fix.kept fix.new" ] &&
+    diff "$fix/catalogs/es.json" "$work/lazy/catalogs/es.json" >/dev/null
+step $? "a fill that skips one missing key is red naming that key alone, its language put back and the one before it kept (rc=$rc)"
 
 # ---- a person's own stale entry is named for a person, never written
 fresh stale
@@ -178,7 +180,7 @@ cp -r "$work/stale/catalogs" "$work/stale.before"
 run_fill "$work/stale" -- --no-push >"$work/stale.out" 2>&1
 rc=$?
 [ "$rc" -eq 1 ] && grep -q "catalogs/ca.json: fix.human: stale, a person's entry" "$work/stale.out" &&
-    [ "$(grep '"fix.human"' "$work/stale/catalogs/ca.json")" = "$(grep '"fix.human"' "$work/stale.before/ca.json")" ]
+    [ "$(human_line "$work/stale" ca)" = "$(grep '"fix.human"' "$work/stale.before/ca.json" | sed "s/,$//")" ]
 step $? "a person's stale entry is named for a person and left as written (rc=$rc)"
 
 # ---- the push: a signed commit on the pull request's branch of a local remote, then red with the line that says so
@@ -199,9 +201,12 @@ if command -v gpg >/dev/null; then
     step $? "the entries are pushed to the branch and this run is red saying the new head re-runs (rc=$rc)"
     git --git-dir="$work/remote.git" verify-commit "$new" >/dev/null 2>&1
     step $? "the pushed commit is signed"
-    [ "$(git --git-dir="$work/remote.git" show -s --format=%P "$new")" = "$start" ] &&
-        [ "$(git --git-dir="$work/remote.git" diff --name-only "$start" "$new" | tr '\n' ' ')" = "catalogs/ca.json catalogs/es.json " ]
-    step $? "it is one commit on the old head touching the two catalogs only"
+    mid=$(git --git-dir="$work/remote.git" show -s --format=%P "$new")
+    [ "$(git --git-dir="$work/remote.git" show -s --format=%P "$mid")" = "$start" ] &&
+        [ "$(git --git-dir="$work/remote.git" diff --name-only "$start" "$mid" | tr '\n' ' ')" = "catalogs/ca.json " ] &&
+        [ "$(git --git-dir="$work/remote.git" diff --name-only "$mid" "$new" | tr '\n' ' ')" = "catalogs/es.json " ] &&
+        git --git-dir="$work/remote.git" verify-commit "$mid" >/dev/null 2>&1
+    step $? "it is one signed commit a language on the old head, each touching its own catalog only"
     git -C "$work/push" clean -fdq; git -C "$work/push" fetch -q "$work/remote.git" feature && git -C "$work/push" reset -q --hard FETCH_HEAD
     (cd "$work/push" && $GATE) >/dev/null 2>&1
     step $? "the new head's check is green"
@@ -227,6 +232,33 @@ if command -v gpg >/dev/null; then
     new2=$(git --git-dir="$work/remote2.git" rev-parse refs/heads/feature)
     [ "$rc" -eq 1 ] && [ "$new2" != "$start2" ] && GNUPGHOME="$work/gnupg" git --git-dir="$work/remote2.git" verify-commit "$new2" >/dev/null 2>&1
     step $? "the secret's armored key is imported by the fill and signs the pushed commit (rc=$rc)"
+    # a fill cancelled in its second language keeps the first: each language is committed and pushed as it is made, so a
+    # job's timeout loses one language at most (omx-plugins#124: 959 keys x 6 languages ran into the 30-minute timeout
+    # and the cancel kept nothing, run 46158400337). The translate of es hangs; the run is killed once ca reached the
+    # remote, or after 20 s
+    cat > "$work/hang.sh" <<'EOS'
+#!/bin/bash
+case "$*" in *"--lang es"*) exec sleep 60 ;; esac
+exec "$@"
+EOS
+    chmod +x "$work/hang.sh"
+    git init -q -b feature "$work/push4" && cp -r "$fix/catalogs" "$fix/source.json" "$fix/languages.json" "$work/push4/"
+    git -C "$work/push4" add -A && git -C "$work/push4" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false commit -q -m start
+    git init -q --bare "$work/remote4.git" && git -C "$work/push4" push -q "$work/remote4.git" HEAD:refs/heads/feature
+    start4=$(git -C "$work/push4" rev-parse HEAD)
+    (cd "$work/push4" && exec setsid env OMX_TRANSLATE_URL="$URL" OMX_TRANSLATE_KEY="$KEY" RUNNER_ENVIRONMENT=self-hosted GITHUB_HEAD_REF=feature \
+        SIGNING_KEY_ID="$kid" python3 "$fill" --gate "$GATE" --fill "$work/hang.sh $FILL" --languages languages.json \
+        --model draft-prose --remote "$work/remote4.git") >"$work/push4.out" 2>&1 &
+    hang_pid=$!
+    for _ in $(seq 200); do
+        [ "$(git --git-dir="$work/remote4.git" rev-parse refs/heads/feature)" != "$start4" ] && break
+        python3 -c 'import time; time.sleep(0.1)'
+    done
+    kill -KILL -- "-$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null  # the whole group, as a cancelled job is
+    new4=$(git --git-dir="$work/remote4.git" rev-parse refs/heads/feature)
+    [ "$new4" != "$start4" ] && [ "$(git --git-dir="$work/remote4.git" diff --name-only "$start4" "$new4" | tr '\n' ' ')" = "catalogs/ca.json " ] &&
+        git --git-dir="$work/remote4.git" verify-commit "$new4" >/dev/null 2>&1
+    step $? "a fill killed in its second language has pushed the first, signed, touching its catalog only (got: $(git --git-dir="$work/remote4.git" diff --name-only "$start4" "$new4" 2>/dev/null | tr '\n' ' '))"
     # a checkout that is not the pull request's head is never pushed from
     fresh wronghead
     run_fill "$work/wronghead" GITHUB_HEAD_REF=feature SIGNING_KEY_ID="$kid" -- --remote "$work/remote.git" --expect-head 0000000000000000000000000000000000000000 >"$work/wronghead.out" 2>&1

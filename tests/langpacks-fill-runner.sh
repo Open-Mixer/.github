@@ -31,6 +31,10 @@ assert "steps.pr.outputs.head-sha" in str(steps[fill[0]]["with"].get("dispatch-h
 add = [i for i, x in enumerate(steps) if "actions/add-openmixer@" in str(x.get("uses", ""))]
 pk = [i for i, x in enumerate(steps) if "inputs.packages" in str(x.get("run", ""))]
 assert add and len(pk) == 1 and add[0] < pk[0] < fill[0], f"the caller's packages install at step {pk}, not once after the channel (step {add}) and before the fill"
+# one language of a whole new catalog is ~1000 keys in batches of 40 through the router (omx-plugins#124: es alone ran
+# past 45 minutes): the job's time is one language's at the least, since a language is pushed only once it is whole
+tm = j.get("timeout-minutes", 360)
+assert isinstance(tm, int) and tm >= 240, f"the fill's timeout-minutes is {tm}: a language of a new catalog does not fit"
 print("ok   langpacks-fill.yml fill")
 PY
 check() { python3 -I "$t/check.py" "$1"; }

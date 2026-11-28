@@ -10,9 +10,10 @@ of a person (`"by": "human"`), is for a person and never written here. Then one 
   - this run can fill and push (a pull request of this repository, a router address and key, a runner that is not
     GitHub-hosted, a signing key, the checkout at the pull request's head): it runs --fill (`omx-contract translate ...`)
     with `--lang <xx> --model <alias>` once per language with a gap, holds the result to what it may change (only the
-    entries named, only as `"by": "machine"` with a model; any other entry byte for byte what it was, or the catalogs are
-    put back and the run is red), runs the gate again, commits the catalogs signed and pushes them to the pull
-    request's branch. The run is then RED, with a line saying what was pushed: the check that counts is the one of the
+    entries named, only as `"by": "machine"` with a model; any other entry byte for byte what it was, or that language's
+    catalogs are put back and the run is red), runs the gate again and, as soon as a language is whole, commits its
+    catalogs signed and pushes them to the pull request's branch: one commit a language, so a job that times out or is
+    cancelled keeps every language before the one in progress and the next run fills only what is left. The run is then RED, with a line saying what was pushed: the check that counts is the one of the
     new head, which a push by a token that starts workflows (--push-token) starts and one by the job's own token does not
     (re-run the job on the new head);
   - or it fails naming each entry (catalog, key) and the exact command a person runs, with placeholders for the router's
@@ -230,66 +231,110 @@ def main(argv):
     parsed = {f: entries(f) for f in by_file}
     parsed = {f: (None if v is INVALID else v) for f, v in parsed.items()}
     langs = sorted({lang_of(f) for f in by_file})
-    restore = lambda: [open(f, "w").write(t) if t is not None else os.path.exists(f) and os.remove(f) for f, t in before.items()]
+    files_of = lambda lang: sorted(f for f in by_file if lang_of(f) == lang)
+    done = []  # the catalogs of the languages already made (and, pushing, pushed): never put back
+
+    def put_back():
+        """every catalog not yet made is what it was: the language that failed, and any later one its fill touched"""
+        for f, t in before.items():
+            if f in done:
+                continue
+            if t is not None:
+                open(f, "w").write(t)
+            elif os.path.exists(f):
+                os.remove(f)
+
+    def kept():
+        if pushed:
+            print("langpacks fill: kept, pushed before this: %s" % "; ".join("%s %s (%d)" % (l, s[:12], n) for l, s, n in pushed))
+        elif done and a.no_push:
+            print("langpacks fill: kept, made before this: %s" % ", ".join(sorted({lang_of(f) for f in done})))
+
+    # one language at a time, each committed and pushed as soon as it is whole: a job that times out or is cancelled
+    # loses the language in progress, never the ones before it (omx-plugins#124: 959 keys in six languages outlived the
+    # job's 30 minutes and the cancel kept nothing), and the next dispatch fills only what is left
+    ref = env.get("GITHUB_HEAD_REF", "")
+    name, email = env.get("COMMITTER_NAME") or COMMITTER_NAME, env.get("COMMITTER_EMAIL") or COMMITTER_EMAIL
+    key_id = None
+    pushed = []  # (lang, sha, entries)
+    total = 0
     fill_env = dict(os.environ)
     for lang in langs:
+        files = files_of(lang)
+        todo = sum(len(by_file[f]) for f in files)
+        print("langpacks fill: translate --lang %s: %d entr%s" % (lang, todo, "y" if todo == 1 else "ies"), flush=True)
         rc, out = run("%s --lang %s --model %s" % (a.fill, shlex.quote(lang), shlex.quote(a.model)), fill_env)
         sys.stdout.write(out)
+        lang_fill = [p for p in fillable if p[0] in files]
         if rc != 0:
-            restore()
+            put_back()
             transport = TRANSPORT.search(out)
             if transport:
                 where = "router not reached (%s, %s)" % (os.environ.get("OMX_TRANSLATE_URL", "no address"), transport.group(0).strip())
                 print("langpacks fill: translate --lang %s: %s; the catalogs are put back" % (lang, where))
-                name_the_gaps(fillable, person, other, a.fill, a.model, where)
             else:
+                where = "the router's answer was refused (above)"
                 print("langpacks fill: translate --lang %s refused some entries; the catalogs are put back" % lang)
-                name_the_gaps(fillable, person, other, a.fill, a.model, "the router's answer was refused (above)")
+            kept()
+            name_the_gaps([p for p in fillable if p[0] not in done], person, other, a.fill, a.model, where)
             return 1
-    for f, keys in by_file.items():
-        made = [k for k in keys if k != "-"]
-        bad = held_to(parsed[f], entries(f), made, f)
-        if bad:
-            print("langpacks fill: the fill changed more than the entries it was asked for, so nothing is kept: %s" % bad)
-            restore()
-            name_the_gaps(fillable, person, other, a.fill, a.model, "a person's entry may never be written")
+        for f in files:
+            made = [k for k in by_file[f] if k != "-"]
+            bad = held_to(parsed[f], entries(f), made, f)
+            if bad:
+                print("langpacks fill: the fill changed more than the entries it was asked for, so nothing of %s is kept: %s" % (lang, bad))
+                put_back()
+                kept()
+                name_the_gaps([p for p in fillable if p[0] not in done], person, other, a.fill, a.model, "a person's entry may never be written")
+                return 1
+        # the language is whole when the gate names no entry of its catalogs left to make
+        _, out = run(a.gate)
+        left = [p for p in parse(out)[0] if p[0] in files]
+        if left:
+            print("langpacks fill: the check is still red for %s after the fill; its catalogs are put back" % lang)
+            put_back()
+            kept()
+            name_the_gaps(left, [], [], a.fill, a.model, "the fill left these (above)")
             return 1
+        made_list = ["%s: %s" % (f, k) for f in files for k in sorted(by_file[f])]
+        total += len(made_list)
+        print("langpacks fill: made %d entr%s in %s by %s:" % (len(made_list), "y" if len(made_list) == 1 else "ies", lang, a.model))
+        for line in made_list:
+            print("  " + line)
+        if not a.no_push:
+            try:
+                key_id = key_id or import_signing_key(env)
+                git("add", "--", *files)
+                msg = "catalogs: %d entr%s made by %s in %s\n\nMade by the language packs fill through omx-contract translate; translate --check is whole for %s.\n\n%s\n" % (
+                    len(made_list), "y" if len(made_list) == 1 else "ies", a.model, lang, lang, "\n".join(made_list))
+                cenv = dict(os.environ, GIT_AUTHOR_NAME=AUTHOR_NAME, GIT_AUTHOR_EMAIL=AUTHOR_EMAIL, GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
+                git("-c", "user.name=" + name, "-c", "user.email=" + email, "-c", "user.signingkey=" + key_id,
+                    "commit", "-q", "-S", "-m", msg, env=cenv)
+                sha = git("rev-parse", "HEAD")
+                # a remote that carries its own token must not meet the checkout's persisted one
+                no_header = ["-c", "http.https://github.com/.extraheader="] if env.get("PUSH_TOKEN") else []
+                git(*no_header, "push", "-q", a.remote, "HEAD:refs/heads/%s" % ref)
+            except RuntimeError as e:
+                print("langpacks fill: the entries of %s were made but not pushed (%s)" % (lang, str(e).replace(env.get("PUSH_TOKEN", "\0"), "***")))
+                kept()
+                name_the_gaps([p for p in fillable if p[0] not in done], person, other, a.fill, a.model, "the push to the branch failed (above)")
+                return 1
+            pushed.append((lang, sha, len(made_list)))
+            print("langpacks fill: pushed %s to %s with %d entries of %s" % (sha[:12], ref, len(made_list), lang), flush=True)
+        done.extend(files)
+
     rc, out = run(a.gate)
     if rc != 0:
-        print("langpacks fill: the check is still red after the fill; the catalogs are put back")
-        restore()
+        # every machine entry is made; what is left is not one (a person's entry, the gate's own problem)
         left_fill, left_person, left_other = parse(out)
-        name_the_gaps(left_fill or fillable, left_person, left_other, a.fill, a.model, "the fill left these (above)")
+        kept()
+        name_the_gaps(left_fill, left_person, left_other, a.fill, a.model, "the check is still red after the fill (above)")
         return 1
-
-    made_list = ["%s: %s" % (f, k) for f, ks in sorted(by_file.items()) for k in sorted(ks)]
-    model = a.model
-    print("langpacks fill: made %d entr%s by %s:" % (len(made_list), "y" if len(made_list) == 1 else "ies", model))
-    for line in made_list:
-        print("  " + line)
+    print("langpacks fill: made %d entr%s by %s in %s" % (total, "y" if total == 1 else "ies", a.model, ", ".join(langs)))
     if a.no_push:
         return 0
-
-    ref = env["GITHUB_HEAD_REF"]
-    name, email = env.get("COMMITTER_NAME") or COMMITTER_NAME, env.get("COMMITTER_EMAIL") or COMMITTER_EMAIL
-    try:
-        key_id = import_signing_key(env)
-        git("add", "--", *sorted(by_file))
-        msg = "catalogs: %d entr%s made by %s in %s\n\nMade by the language packs fill through omx-contract translate; translate --check is whole.\n\n%s\n" % (
-            len(made_list), "y" if len(made_list) == 1 else "ies", model, ", ".join(langs), "\n".join(made_list))
-        cenv = dict(os.environ, GIT_AUTHOR_NAME=AUTHOR_NAME, GIT_AUTHOR_EMAIL=AUTHOR_EMAIL, GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
-        git("-c", "user.name=" + name, "-c", "user.email=" + email, "-c", "user.signingkey=" + key_id,
-            "commit", "-q", "-S", "-m", msg, env=cenv)
-        sha = git("rev-parse", "HEAD")
-        # a remote that carries its own token must not meet the checkout's persisted one
-        no_header = ["-c", "http.https://github.com/.extraheader="] if env.get("PUSH_TOKEN") else []
-        git(*no_header, "push", "-q", a.remote, "HEAD:refs/heads/%s" % ref)
-    except RuntimeError as e:
-        print("langpacks fill: the entries were made but not pushed (%s)" % str(e).replace(env.get("PUSH_TOKEN", "\0"), "***"))
-        name_the_gaps(fillable, person, other, a.fill, a.model, "the push to the branch failed (above)")
-        return 1
     print("langpacks fill: pushed %s to %s with %d entries; the new head's check re-runs (a push by the job's own token starts"
-          " no run: re-run the job on the new head). This run is red: its head is the one without them." % (sha[:12], ref, len(made_list)))
+          " no run: re-run the job on the new head). This run is red: its head is the one without them." % (pushed[-1][1][:12], ref, total))
     return 1
 
 
