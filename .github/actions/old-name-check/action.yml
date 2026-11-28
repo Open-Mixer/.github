@@ -10,7 +10,7 @@ description: Fail when a document names the organisation by its former name or l
 
 inputs:
   paths:
-    description: more paths to read as documents, space-separated git pathspecs (a site's pages and catalogs); none by default
+    description: more paths to read as documents, space-separated git pathspecs (a site's pages and catalogs), and :!path to take a tree of copied documents out; none by default
     default: ''
 
 runs:

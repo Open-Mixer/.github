@@ -13,9 +13,15 @@
 #
 # A document is a README, a markdown, reStructuredText or AsciiDoc file, any file under a docs/, doc/ or man/ folder,
 # a man page (name.N, name.N.in), debian/control, and an RPM spec above its %changelog; PATHSPEC adds more (a site's
-# pages and catalogs). A changelog (CHANGELOG*, NEWS*, debian/changelog, a spec's %changelog) is history and is not
+# pages and catalogs), and an exclude pathspec (:!path) takes a path out, for a tree that holds copies of another
+# repository's documents which that repository's own run reads. A changelog (CHANGELOG*, NEWS*, debian/changelog, a spec's %changelog) is history and is not
 # read. The former name in lower case inside an identifier (a package scope, a plugin id, a runner label, a key file)
 # is code, not prose, and passes: renaming an identifier is a code change of its own, never this check's.
+#
+# An issue cited under the former organisation is never rewritten to the same number under Open-Mixer: the Open-Mixer
+# repositories are new repositories, not the former ones renamed, and the same number names another issue there
+# (omx-dsp#41 is the bandwidth-to-Q law in the former repository and a curve family in the new one). A document states
+# the fact instead of the citation.
 set -euo pipefail
 
 OLD=Free
@@ -28,10 +34,11 @@ HISTORY='(^|/)(CHANGELOG|NEWS|HISTORY)[^/]*$|(^|/)debian/changelog$'
 check() { # <root> [pathspec...]
   local root=$1 bad=0 path n
   shift
-  local files extra=
-  files=$(git -c safe.directory="$root" -C "$root" ls-files) || { echo "old-name-check: git lists no file" >&2; return 1; }
+  local files extra='' spec include=() exclude=()
+  for spec in "$@"; do case $spec in ':!'* | ':(exclude)'*) exclude+=("$spec") ;; *) include+=("$spec") ;; esac; done
+  files=$(git -c safe.directory="$root" -C "$root" ls-files -- . "${exclude[@]}") || { echo "old-name-check: git lists no file" >&2; return 1; }
   [ -n "$files" ] || { echo "old-name-check: git lists no file" >&2; return 1; }
-  if [ "$#" -gt 0 ]; then extra=$(git -c safe.directory="$root" -C "$root" ls-files -- "$@"); fi
+  if [ "${#include[@]}" -gt 0 ]; then extra=$(git -c safe.directory="$root" -C "$root" ls-files -- "${include[@]}" "${exclude[@]}"); fi
   n=0
   while IFS= read -r path; do
     [ -n "$path" ] || continue
@@ -84,6 +91,8 @@ if [ "${1:-}" = --self-test ]; then
   run "code is not a document" green "src/x.c=/* ${OLD} */"
   run "a pathspec adds a site's pages" red "app/pages/index.vue=<p>${OLD}</p>" -- app/pages
   run "without the pathspec a site page is not read" green "app/pages/index.vue=<p>${OLD}</p>"
+  run "an exclude pathspec takes a copied tree out" green "content/projects/x/README.md=the ${OLD} name" -- ':!content/projects'
+  run "an exclude takes out only what it names" red "content/projects/x/README.md=ok" "docs/d.md=${OLD}" -- ':!content/projects'
   # sabotage: with the patterns gone, every planted line passes, so the patterns are what catch it
   sed -e "s/^NAME=.*/NAME='^\$NEVER'/" -e "s/^ADDRESS=.*/ADDRESS='^\$NEVER'/" "${BASH_SOURCE[0]}" > "$t/sab.sh"
   tree "README.md=the ${OLD} console" "docs/a.md=https://github.com/${OLD}/x" "doc/i.txt=${OLD,,}.github.io"
