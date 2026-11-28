@@ -300,7 +300,9 @@ jobs:
           DEVEL_PR: ${{ startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel' }}
           # the waves a wave one step behind another reads below its own tree and above staging (devel-chain.sh
           # DC_BASE_CHANNEL sets the repository's OMX_DEVEL_BASE beside OMX_DEVEL_CHANNEL): read only where the wave is
-          BASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel')) && vars.OMX_DEVEL_BASE || '' }}
+          # and where a caller names the repository's own wave as its channel-level (a staging dry run of a wave line's
+          # dispatched ci.yml: its base waves are what that wave's merge will read)
+          BASE: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/devel') || (startsWith(github.event_name, 'pull_request') && github.base_ref == 'devel') || (inputs.channel-level != '' && inputs.channel-level == vars.OMX_DEVEL_CHANNEL)) && vars.OMX_DEVEL_BASE || '' }}
         run: |
           no() { echo "::error::$*"; exit 1; }
           case $LEVEL in
