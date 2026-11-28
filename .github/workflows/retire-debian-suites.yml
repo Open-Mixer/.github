@@ -53,7 +53,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/channel-pull
         with:
-          publish-token: ${{ secrets.PAGES_TOKEN || github.token }}
+          # read only: the public channel is cloned with the run's own token, and the plan pushes nothing
+          publish-token: ${{ github.token }}
           channel: ${{ env.CHANNEL }}
           strip: none
       - id: plan
