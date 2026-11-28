@@ -309,6 +309,11 @@ files. The devel build is the real package at its real version, never a pre-rele
     the version is bumped, and an all-zero or unreachable `before` is red by name. No record is seeded and no bump
     wave is needed. (`package-paths/served-change.sh`, the one judge of the preflight and of `devel-bump-check`.)
   No published version is rebuilt, and no epoch is used.
+- **The source of an installed version is its build record, never a tag.** A devel publish carries no tag (tags exist
+  only on main) and no commit in its name, so a job that reads a sibling's source at the version it installed asks the
+  `installed-source` action: the build record of the tree the package came from (`<tree>/built/<name>/<version>.commit`,
+  dnf's `from_repo`), a snapshot's `.git<time>.<short>`, then the tag `v<version>`; none of the three is red by name
+  (`tests/installed-source.sh`). A `git fetch refs/tags/v<version>` of a devel-wave package dies with exit 128.
 - **The caller is told.** `build-rpm.yml` and `build-deb.yml` declare the `workflow_call` outputs `skipped` (`'true'`
   when the merge built and published nothing) and `devel-version`, from the preflight job. A caller's own job that
   reads the run's artifacts (an install check, a test of the built packages) skips on it:

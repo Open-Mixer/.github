@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: installed-source
+description: The full commit an installed OpenMixer RPM was built from, read from the channel, never an assumed tag
+
+# installed-source.sh beside this file says what is read, in order, and refused. A merge to devel publishes the real
+# version with no tag (tags exist only on main) and no commit in its name (.github#289); what names its source is the
+# channel's build record, <tree>/built/<name>/<version>.commit (publish-rpms/record-built.sh), in the tree the package
+# came from and copied with it on promotion. A job that reads a sibling's source at the version it installed (omx-dsp's
+# contract job, omx-clap-core's declarations) fetches this commit, never refs/tags/v<version>. RPM only: the package
+# must be installed (dnf) in the job's Fedora container; curl, gawk and git are needed.
+
+inputs:
+  package:
+    description: the installed binary RPM, e.g. omx-contract or plugin-hostd-protocol-devel
+    required: true
+  name:
+    description: the caller's package-name the build record is written under (record-built.sh), when it is not `package`
+    default: ''
+  repository:
+    description: the source repository, owner/name, e.g. Open-Mixer/omx-contract
+    required: true
+
+outputs:
+  commit:
+    description: the full commit the installed package was built from
+    value: ${{ steps.read.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+        NAME: ${{ inputs.name }}
+        REPOSITORY: ${{ inputs.repository }}
+        SERVER: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+        commit=$("$GITHUB_ACTION_PATH/installed-source.sh" "$PACKAGE" "${NAME:-$PACKAGE}" "$SERVER/$REPOSITORY")
+        echo "commit=$commit" >> "$GITHUB_OUTPUT"
