@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Pau Aliagas <linuxnow@gmail.com>
+name: old-name-check
+description: Fail when a document names the organisation by its former name or links to the former organisation
+
+# The organisation is Open-Mixer and the product OpenMixer. Every document a user or a developer reads (READMEs, guides,
+# man pages, debian/control, an RPM spec above its %changelog, and the paths a caller adds) says so; changelogs are
+# history and are not read, and an identifier in lower case is code, not prose. The check is proven first on planted
+# trees, with a sabotage arm, then reads the caller's checkout. The caller has checked the repository out.
+
+inputs:
+  paths:
+    description: more paths to read as documents, space-separated git pathspecs (a site's pages and catalogs); none by default
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+      run: |
+        "$GITHUB_ACTION_PATH/check.sh" --self-test
+        read -r -a extra <<<"$PATHS"
+        "$GITHUB_ACTION_PATH/check.sh" "$GITHUB_WORKSPACE" "${extra[@]}"
