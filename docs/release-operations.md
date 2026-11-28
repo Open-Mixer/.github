@@ -232,6 +232,21 @@ and its staging publish takes every architecture of the releases it built (`stag
 package of a cell outside the run's set, and the staging deb tree's skeleton is the set's architectures. `tests/release-matrix.sh`
 and `tests/staged-cells.sh` hold the guards, each sabotaged.
 
+**Superseded for every staged run (owner ruling 2026-11-26: every package in the full matrix).** A staged run, and a
+`workflow_dispatch`, whose caller passes no `matrix` build the FULL matrix (what `OMX_RELEASE_MATRIX` says, full
+when it is unset); the quick set only when the variable or an explicit `matrix: quick` says so. The quick default
+staged trixie arm64 and fc45 x86_64 alone, and every amd64 consumer of the next layer failed to install, one layer at a
+time (plugin-hostd#326 fixed one caller; this fixes them all here). `tests/release-matrix.sh` renders it.
+
+**The full matrix is declared once**, in `.github/actions/release-matrix/full.txt` (fc45 x86_64 and aarch64, trixie
+amd64 and arm64). `tests/arch-coverage.sh` holds the shared defaults (`fedora-versions`, `suite-matrix`,
+`arch-matrix` of build-rpm.yml and build-deb.yml, `rpm-arches` and `deb-arches` of check-matrix) and `quick.txt` to it,
+and `tools/arch-coverage.py <repo dir>...` renders every publishing run of a caller (a merge to devel, a tag, a staged
+dispatch at its input defaults) through these workflows and names, ARCH-NARROW, each one that builds fewer cells: an
+`arch-matrix` literal, a `matrix` input defaulting to quick, a job building its own packages for one architecture, a
+`release-matrix.json` or `packaging/release-arches` declaring fewer. Run it over the release set's checkouts before a
+wave: `python3 tools/arch-coverage.py ../omx-dsp ../plugin-hostd ...`.
+
 ### A merge to devel publishes the real package to staging
 
 **RULED (owner, 2026-11-25, .github#289):** development happens in devel. A merge to devel builds the RPMs and DEBs once
@@ -424,8 +439,8 @@ files and refresh (`dnf makecache`, `apt-get update`).
 ### How a layer uses it
 
 - **Publish to staging.** Dispatch the repository's release workflow on a branch with `staged: true` (never a tag).
-  `build-rpm.yml` and `build-deb.yml` build the quick set (fc45 on x86_64, trixie on arm64), the tested platforms and
-  never more (the ruling above), against the staging channel,
+  `build-rpm.yml` and `build-deb.yml` build the full matrix (fc45 on x86_64 and aarch64, trixie on amd64 and arm64;
+  the quick set only when told quick, the ruling of 2026-11-26 above), against the staging channel,
   sign the packages with `OPENMIXER_PACKAGES_SIGNING_KEY`, assemble `staging/rpm` and `staging/deb` with the tree scripts
   of a real publish and push through `channel-push`, then install the build of that commit from the staging channel in
   a clean container. The real channel is not written. `staged` refuses a tag, `source-ref`, `publish` and
@@ -561,8 +576,8 @@ names, no others. The run says which set it builds, and why, in a notice.
 |-----|----------------|----------------------------|---------|--------|
 | any | `quick` or `full` | the input | the input | the input |
 | a tag, or `source-ref` | empty | **full** | quick | full |
-| `staged: true` | empty or `quick` | **quick** | quick | quick |
-| `workflow_dispatch`, not a tag | empty | **quick** | quick | full |
+| `staged: true` | empty | **full** | quick | full |
+| `workflow_dispatch`, not a tag | empty | **full** | quick | full |
 | a pull request, a push to a branch | empty | full | full | full |
 
 - **A caller that changes nothing** passes no `matrix`. Its tag push builds the full matrix, as it always did,
@@ -572,8 +587,8 @@ names, no others. The run says which set it builds, and why, in a notice.
   removed) before the final release of each repository. It is an organisation variable because a tag push carries no
   inputs, and the callers' workflow files stay as they are.
 - **A caller can decide for itself** by passing `matrix`; `release-c-lib.yml` hands its own `matrix` input on.
-- **A staged run is the quick set, always** (the tested platforms, "The staging channel of a release wave"): a
-  `matrix: full` input is refused, `OMX_RELEASE_MATRIX=full` does not widen it, and a caller whose releases hold no
+- **A staged run is the full matrix unless told quick** (owner ruling 2026-11-26, superseding the quick staging of
+  2026-11-23): only `OMX_RELEASE_MATRIX=quick` or `matrix: quick` narrows it, and then a caller whose releases hold no
   quick cell of a kind is refused rather than given its full matrix.
 - The quick set wins: a caller's architectures only narrow it within the set, and when they leave no cell (an
   amd64-only caller while the set is trixie arm64) the run builds the set's own cell, never the caller's full matrix. Only
@@ -652,8 +667,8 @@ a check uses `check-matrix` (its `images`, or `cells`). Both name what they skip
 | `release-package.yml` install check from the channel | `check-matrix` (a check, after the publish) | fedora:45, debian:trixie | the same |
 | `ci.yml` language packs | `check-matrix` (an ordinary CI image list) | fedora:45, debian:trixie | the same |
 
-A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the quick
-set without it); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
+A build run by hand (`workflow_dispatch`) takes a `matrix` input (`quick`, `full`, or empty: the variable, and the full
+matrix without it, owner ruling 2026-11-26); `clap-rpm.yml` is dispatch-only and no longer runs on a pull request, by the rule no heavy Action on a push or pull request, tags and dispatch only, plus one named lint (the check of a change to its spec, pins or file is a dry-run dispatch of it). The one-cell jobs of `ci.yml` (key transition,
 staging, channel installability) are toolchain arms on an image the quick set always builds, and the test holds each to
 the set. What stays literal, each with its reason, is the `ALLOW` list of the test: the whole matrices the reusable
 workflows declare as input defaults, all handed to
