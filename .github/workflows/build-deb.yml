@@ -16,8 +16,9 @@ name: Build DEB (reusable)
 # target Pages repository. Anything that is not a tag is a dry run: it builds, lints and assembles an UNSIGNED
 # tree as an artifact.
 #
-# staged: true (a workflow_dispatch of the caller, never a tag) builds the quick set (trixie on arm64) or, told
-# full, every suite of suite-matrix on every architecture of arch-matrix, against the staging channel, and
+# staged: true (a workflow_dispatch of the caller, never a tag) builds the full matrix (owner ruling
+# 2026-11-26: every package in every cell) or, told quick, the quick set (trixie on arm64); the full matrix is
+# every suite of suite-matrix on every architecture of arch-matrix, against the staging channel, and
 # publishes it to the staging channel of the release wave:
 # staging/deb of the same target repository, signed with the same key, by the same tree script and channel-push as a
 # release (docs/release-operations.md). The next layer's builds and install checks add that channel at a higher
@@ -31,7 +32,8 @@ name: Build DEB (reusable)
 # quick or full, when the caller passes it. Without it a release (a tag, source-ref) builds what the organisation
 # variable OMX_RELEASE_MATRIX says, and the FULL matrix when it is unset: a caller that changes nothing publishes
 # every cell on a tag, as before, unless a release wave is open. A staged run and a workflow_dispatch build what the
-# variable says and the QUICK set when it is unset; a pull request always builds the full matrix. The install checks
+# variable says and the FULL set when it is unset (owner ruling 2026-11-26; the quick default staged trixie arm64 and
+# fc45 x86_64 alone and broke every amd64 consumer of the next layer); a pull request always builds the full matrix. The install checks
 # run for the built cells, no others.
 #
 # The packaging is the debian/ directory of the calling repository; its changelog version is the version and
@@ -96,7 +98,7 @@ on:
       matrix:
         type: string
         default: ''
-        description: "'quick' builds the quick set alone (fc45 x86_64 rpm, trixie arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the quick set without it; any other run the full matrix."
+        description: "'quick' builds the quick set alone (fc45 x86_64 rpm, trixie arm64 deb: .github/actions/release-matrix/quick.txt), 'full' the whole matrix. Empty: a release (a tag, source-ref) builds what the organisation variable OMX_RELEASE_MATRIX says and the full matrix without it; a staged run and a workflow_dispatch build what it says and the full matrix without it (owner ruling 2026-11-26); any other run the full matrix."
       stage:
         type: string
         default: 'all'

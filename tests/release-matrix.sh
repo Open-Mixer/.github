@@ -10,9 +10,9 @@
 #     their cells from its answer and nothing else, so an install check never runs for a cell that was not built;
 #   - which jobs each run renders, by name, with matrix.sh run as the runner runs it: a caller that passes nothing
 #     builds the full matrix on a tag and the quick set on a tag while OMX_RELEASE_MATRIX is quick; a
-#     workflow_dispatch builds the quick set, and the full matrix when the variable or the input says full; a staged
-#     run builds the quick set whatever the variable says, the full matrix only when its matrix input says full (a
-#     promotion candidate, #273), and is refused with no quick cell; a pull
+#     workflow_dispatch and a staged run build the FULL matrix (owner ruling 2026-11-26: every package in every cell,
+#     superseding the quick staging of 2026-11-23), the quick set only when the variable or the matrix input says quick,
+#     and a staged quick run is refused with no quick cell; a pull
 #     request builds the full matrix whatever the variable says; a caller built for x86_64 alone has no quick deb
 #     cell and builds its own full deb matrix;
 #   - a matrix or a variable that is neither quick nor full fails the first job;
@@ -169,15 +169,18 @@ cases = [
     ("a tag push with matrix: full while the wave is open", {"publish": True, "matrix": "full"}, "push", "tag", "quick", "full", FULL),
     ("a tag push with matrix: quick", {"publish": True, "matrix": "quick"}, "push", "tag", None, "quick", QUICK),
     ("a release of another tag (source-ref) by dispatch", {"publish": True, "source-ref": "v1.2.0"}, "workflow_dispatch", "branch", None, "full", FULL),
-    ("a staged run", {"staged": True}, "workflow_dispatch", "branch", None, "quick", QUICK),
+    # every package in every cell (owner ruling 2026-11-26): a staged run told nothing builds the full matrix; it used to
+    # stage the quick set alone (trixie arm64, fc45 x86_64) and every amd64 consumer of the next layer failed (plugin-hostd#326)
+    ("a staged run", {"staged": True}, "workflow_dispatch", "branch", None, "full", FULL),
     ("a staged run while the wave is open", {"staged": True}, "workflow_dispatch", "branch", "quick", "quick", QUICK),
-    # the testing channel carries the tested platforms alone (owner ruling 2026-11-23, .github#233): the variable never widens a staged run
-    ("a staged run with OMX_RELEASE_MATRIX=full", {"staged": True}, "workflow_dispatch", "branch", "full", "quick", QUICK),
+    ("a staged run with OMX_RELEASE_MATRIX=full", {"staged": True}, "workflow_dispatch", "branch", "full", "full", FULL),
     ("a staged run with matrix: quick", {"staged": True, "matrix": "quick"}, "workflow_dispatch", "branch", "full", "quick", QUICK),
     # a promotion candidate (#273, owner's build-once ruling 2026-11-24): told full explicitly, a staged run builds every cell
     ("a staged promotion candidate, matrix: full", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", None, "full", FULL),
     ("a staged promotion candidate, matrix: full, while the wave is open", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", "quick", "full", FULL),
-    ("a workflow_dispatch dry run", {}, "workflow_dispatch", "branch", None, "quick", QUICK),
+    ("a workflow_dispatch dry run", {}, "workflow_dispatch", "branch", None, "full", FULL),
+    ("a workflow_dispatch dry run while the wave is open", {}, "workflow_dispatch", "branch", "quick", "quick", QUICK),
+    ("a workflow_dispatch dry run with matrix: quick", {"matrix": "quick"}, "workflow_dispatch", "branch", None, "quick", QUICK),
     ("a workflow_dispatch dry run with matrix: full", {"matrix": "full"}, "workflow_dispatch", "branch", None, "full", FULL),
     ("a pull request", {}, "pull_request", "branch", None, "full", FULL),
     ("a pull request while the wave is open", {}, "pull_request", "branch", "quick", "full", FULL),
@@ -191,18 +194,19 @@ for what, inputs, event, rt, var, want_set, want in cases:
         assert (got.set, got.jobs) == (want_set, want[kind]), f"{kind}: {what} builds {got.set} {got.jobs}, want {want_set} {want[kind]}"
         assert f"{kind} matrix: {want_set} (" in log and f"{len(want[kind])} cell(s)" in log, f"{kind}: {what}: the run does not say what it builds: {log}"
         n += 1
-print(f"ok   {n} runs rendered: a tag is full unless the wave is open, a staged run and a dispatch are quick unless told full, a pull request is full")
+print(f"ok   {n} runs rendered: a tag is full unless the wave is open, a staged run and a dispatch are full unless told quick, a pull request is full")
 
-# the two quick cells and the four of a release, counted across the two workflows
-q = sum(len(run(k, {"staged": True}, "workflow_dispatch", "branch", None)[0].jobs) for k in WF)
+# the four cells of a staged run and of a release, and the two of a staged quick run, counted across the two workflows
+s = sum(len(run(k, {"staged": True}, "workflow_dispatch", "branch", None)[0].jobs) for k in WF)
+q = sum(len(run(k, {"staged": True, "matrix": "quick"}, "workflow_dispatch", "branch", None)[0].jobs) for k in WF)
 f = sum(len(run(k, {"publish": True}, "push", "tag", None)[0].jobs) for k in WF)
-assert (q, f) == (2, 4), f"a staged run builds {q} cells and a release {f}, want 2 and 4"
-print("ok   a staged run is 4 build jobs and 4 install checks, a release 6 and 6")
+assert (s, q, f) == (4, 2, 4), f"a staged run builds {s} cells, a staged quick run {q} and a release {f}, want 4, 2 and 4"
+print("ok   a staged run and a release are 4 cells each, every architecture; a staged quick run 2")
 
 # a caller built for x86_64 alone: the quick rpm cells, and of the quick deb cells the one it builds, trixie arm64
-got, _ = run("rpm", dict(X86["rpm"], staged=True), "workflow_dispatch", "branch", None)
+got, _ = run("rpm", dict(X86["rpm"], staged=True), "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs, got.first) == ("quick", QUICK["rpm"], "x86_64"), got
-got, log = run("deb", dict(X86["deb"], staged=True), "workflow_dispatch", "branch", None)
+got, log = run("deb", dict(X86["deb"], staged=True), "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs) == ("quick", ["trixie, arm64"]), f"{got} {log}"
 # a lane's dry-run dispatch with arm off while the wave is open (omx-plugins ci.yml -> release.yml, arm: false): trixie arm64,
 # never the full deb matrix. Before trixie amd64 joined the quick set this fell back to full and built bookworm amd64
@@ -219,7 +223,7 @@ assert (got.set, got.jobs) == ("quick", ["fc45, x86_64"]), f"an aarch64-only rpm
 # the development set wins over the caller's releases too: a caller listing fc44 and fc45 (plugin-hostd, plugin-db, ...)
 # builds fc45 only, never a release outside the set, and the publish jobs run in an image of the set, not of the caller's
 # first release (plugin-db 0.4.7's dry run built fc44 and refused "fc44 has no rpm cell in the quick set")
-got, log = run("rpm", {"fedora-versions": '["44", "45"]', "staged": True}, "workflow_dispatch", "branch", None)
+got, log = run("rpm", {"fedora-versions": '["44", "45"]', "staged": True}, "workflow_dispatch", "branch", "quick")
 assert (got.set, got.jobs, got.releases) == ("quick", ["fc45, x86_64"], "45"), f"a caller listing 44 45 builds {got.set} {got.jobs} {got.releases}: {log}"
 # no job but the preflight reads the caller's list of releases or suites: a publish job takes the releases and suites the
 # run built (preflight outputs), or a quick run writes empty fc44 staging metadata and runs in a release the set dropped
@@ -228,14 +232,14 @@ for wfname, caller_input in (("build-rpm.yml", "inputs.fedora-versions"), ("buil
            if n != "preflight" and caller_input in json.dumps(j)]
     assert not bad, f"{wfname}: jobs {bad} read the caller's {caller_input}, not the releases the run built (preflight outputs)"
 # one Fedora release asked for: the quick set never adds a release the caller did not name
-got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", None)
+got, _ = run("rpm", {"fedora-versions": '["45"]', "staged": True}, "workflow_dispatch", "branch", "quick")
 assert (got.jobs, got.releases) == (["fc45, x86_64"], "45"), got
 # the source and noarch packages ship from the first of the caller's architectures the set builds
-got, _ = run("rpm", {"arch-matrix": '["aarch64", "x86_64"]', "staged": True}, "workflow_dispatch", "branch", None)
+got, _ = run("rpm", {"arch-matrix": '["aarch64", "x86_64"]', "staged": True}, "workflow_dispatch", "branch", "quick")
 assert got.first == "x86_64", f"quick builds x86_64 alone, and the source package ships from {got.first}"
 got, _ = run("rpm", {"arch-matrix": '["aarch64", "x86_64"]', "publish": True}, "push", "tag", None)
 assert got.first == "aarch64", f"a full run ships the source package from {got.first}, not the caller's first architecture"
-got, _ = run("deb", {"staged": True}, "workflow_dispatch", "branch", None)
+got, _ = run("deb", {"staged": True}, "workflow_dispatch", "branch", "quick")
 assert got.releases == "trixie", f"the quick deb run publishes into {got.releases!r}"
 print("ok   a caller's narrower matrix is kept: x86_64 alone builds the quick cells it has (trixie arm64 for deb), one Fedora release stays one")
 
@@ -264,7 +268,7 @@ devel_cases = [
     ("a tag push while the wave is open, the switch on", {"publish": True}, "push", "tag", "main", "quick", "rpm-x86_64", {"rpm": "quick", "deb": "quick"}, QUICK),
     ("a release of another tag (source-ref), the switch on", {"publish": True, "source-ref": "v1.2.0"}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64",
      {"rpm": "full", "deb": "full"}, FULL),
-    ("a staged dispatch from devel, the switch on", {"staged": True}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64", {"rpm": "quick", "deb": "quick"}, QUICK),
+    ("a staged dispatch from devel, the switch on", {"staged": True}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64", {"rpm": "full", "deb": "full"}, FULL),
     ("a staged promotion candidate, the switch on", {"staged": True, "matrix": "full"}, "workflow_dispatch", "branch", "devel", None, "rpm-x86_64",
      {"rpm": "full", "deb": "full"}, FULL),
     ("a push to main, the switch on", {}, "push", "branch", "main", None, "rpm-x86_64", {"rpm": "full", "deb": "full"}, FULL),
@@ -301,28 +305,29 @@ for kind, label, mutate in (
 print(f"ok   {n} runs rendered: OMX_DEVEL_MATRIX=rpm-x86_64 makes a merge to devel fc45 x86_64 and no deb job (skipped 'true'); unset, "
       "another value, a tag, a staged run, a pull request and another branch are as before; sabotage of either arm is red")
 
-# a staged run never leaves the tested platforms unless its matrix input says full (owner ruling 2026-11-23, .github#233;
-# #273): given a caller whose releases hold no quick cell, its first job fails by name instead of staging another cell
+# a staged QUICK run (the wave says quick, or the matrix input) never leaves the tested platforms (#233, #273): given a
+# caller whose releases hold no quick cell, its first job fails by name instead of staging another cell
 for what, kind, inputs, var, word in (
-        ("a staged run of a caller with no quick cell (fc44 alone)", "rpm", {"staged": True, "fedora-versions": '["44"]'}, None, "no tested platform"),
-        ("a staged run of a caller with no quick cell (fc44 alone), OMX_RELEASE_MATRIX=full", "rpm", {"staged": True, "fedora-versions": '["44"]'}, "full", "no tested platform")):
+        ("a staged quick run of a caller with no quick cell (fc44 alone), OMX_RELEASE_MATRIX=quick", "rpm", {"staged": True, "fedora-versions": '["44"]'}, "quick", "no tested platform"),
+        ("a staged run told quick of a caller with no quick cell (fc44 alone), OMX_RELEASE_MATRIX=full", "rpm", {"staged": True, "matrix": "quick", "fedora-versions": '["44"]'}, "full", "no tested platform")):
     got, log = run(kind, inputs, "workflow_dispatch", "branch", var)
     assert got is None and word in log, f"{kind}: {what} is not refused by name: {got} {log}"
 # the dry run that is not staged keeps its fallback: no quick cell builds the caller's full matrix
 got, log = run("rpm", {"fedora-versions": '["44"]'}, "workflow_dispatch", "branch", None)
 assert got is not None and got.set == "full", f"a dry run with no quick cell: {got} {log}"
-print("ok   a staged run is the tested platforms or nothing unless told full: a caller with no quick cell is refused by name")
+print("ok   a staged quick run is the tested platforms or nothing: a caller with no quick cell is refused by name")
 
 # SABOTAGE (#273), on a copy of the action: (1) the old refusal of matrix: full on a staged run put back: the promotion
-# candidate's first job fails; (2) a staged run with no matrix input made full: the staged default is no longer quick
+# candidate's first job fails; (2) a staged run with no matrix input made quick again: the staged default is no longer
+# the full matrix (the narrowing of 2026-11-23 that the owner ruling of 2026-11-26 removed)
 import shutil
 real_act = act
 for label, old, new, inputs, want in (
         ("the staged full refusal put back", 'staged=${STAGED:-}\n',
          'staged=${STAGED:-}\nif [ "$staged" = true ] && [ "${MATRIX:-}" = full ]; then echo "::error::refused" >&2; exit 2; fi\n',
          {"staged": True, "matrix": "full"}, ("full", FULL)),
-        ("a staged run made full by default", 'set=quick source="a staged run', 'set=full source="a staged run',
-         {"staged": True}, ("quick", QUICK))):
+        ("a staged run made quick by default", 'set=${wave:-full} source="a staged run', 'set=quick source="a staged run',
+         {"staged": True}, ("full", FULL))):
     sab = f"{tmp}/sab-act"; shutil.rmtree(sab, ignore_errors=True); shutil.copytree(real_act, sab)
     src = open(f"{sab}/matrix.sh").read(); assert src.count(old) == 1, f"sabotage setup: {label}"
     open(f"{sab}/matrix.sh", "w").write(src.replace(old, new, 1))
@@ -330,7 +335,7 @@ for label, old, new, inputs, want in (
     got, log = run("rpm", inputs, "workflow_dispatch", "branch", None)
     act = real_act
     assert got is None or (got.set, got.jobs) != (want[0], want[1]["rpm"]), f"sabotage ({label}) went unseen: {got} {log}"
-print("ok   sabotage: the staged full refusal put back, and a staged default made full, each break their arm")
+print("ok   sabotage: the staged full refusal put back, and a staged default made quick, each break their arm")
 
 # ---- the callers in this repository
 lib = yaml.safe_load(open(f"{here}/.github/workflows/release-c-lib.yml"))

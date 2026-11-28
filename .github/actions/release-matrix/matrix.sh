@@ -29,13 +29,14 @@
 #   1. MATRIX, when the caller passed it (on a staged run too: see below);
 #   2. a release (a tag, or source-ref): WAVE, and FULL without it. A tag pushed by hand, with no wave open, never
 #      publishes part of the matrix because nobody said otherwise;
-#   3. a staged run or a workflow_dispatch: WAVE, and QUICK without it;
+#   3. a staged run or a workflow_dispatch: WAVE, and FULL without it;
 #   4. anything else (a pull request, a push to a branch): full, the dry run it always was.
-# A STAGED RUN is the quick set by default: the testing channel carries the tested platforms (owner ruling 2026-11-23,
-# .github#233, docs/release-operations.md "The staging channel of a release wave"). WAVE does not widen it, and a caller
-# whose matrix holds no quick cell is refused rather than given its full matrix. Only an explicit MATRIX=full widens it:
-# a promotion candidate, staged for every release and architecture so the promotion finds every cell it promotes (build
-# once, promote the same package: owner ruling 2026-11-24, which supersedes #233 for promotion candidates; .github#273).
+# A STAGED RUN, and a dispatch, build the FULL matrix by default: every package in every cell, rpm fc45 x86_64 and
+# aarch64, deb trixie amd64 and arm64 (owner ruling 2026-11-26, which supersedes the quick staging of 2026-11-23,
+# .github#233, and the x86_64-rpm/arm64-deb development matrix of 2026-11-19). A caller that passed no matrix used to
+# stage the quick set alone, and every amd64 consumer of the next layer then failed to install, one layer at a time
+# (plugin-hostd#326 fixed one caller). Only WAVE=quick, or an explicit MATRIX=quick, narrows a staged run to the quick
+# set; then a caller whose matrix holds no quick cell is refused rather than given its full matrix.
 # The quick set is the lines of quick.txt of this kind that the caller's matrix holds. When it holds none of them
 # (a library built for x86_64 alone has no arm64 deb), the run builds the caller's full matrix and says so: a run
 # never builds nothing.
@@ -79,9 +80,10 @@ quick | full)
     if [ "${REF_TYPE:-}" = tag ] || [ -n "${SOURCE_REF:-}" ]; then
         set=${wave:-full} source="a release"
     elif [ "$staged" = true ]; then
-        set=quick source="a staged run, the tested platforms"
+        # the full matrix unless the wave says quick (owner ruling 2026-11-26: every package in every cell)
+        set=${wave:-full} source="a staged run"
     elif [ "${EVENT:-}" = workflow_dispatch ]; then
-        set=${wave:-quick} source="a manual run"
+        set=${wave:-full} source="a manual run"
     else
         set=full wave='' source="a dry run of ${EVENT:-an unnamed event}"
     fi
