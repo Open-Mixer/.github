@@ -9,7 +9,9 @@
 # workflows and actions are green; public-sources-check.yml runs the action in every caller with no input to switch it
 # off, and this repository's ci.yml reads itself with it. A guard blind to one rule is caught: each sabotaged copy of the
 # checker (no missing-base rule, no same-expression rule, no add-openmixer step recognised, composite actions unread,
-# no bare-call rule)
+# no bare-call rule, refusing on every target branch, refusing on none). It never turns a main red: a run whose target
+# branch is not devel (OMX_TARGET_BRANCH, set by the action from the pull request's base or the ref) passes with a
+# notice per finding; a devel run over the same tree fails.
 # goes red in its own self-test and green on the tree it should refuse.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,6 +19,7 @@ act=$here/.github/actions/devel-base-check
 chk=$act/devel-base-check.py
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
+unset OMX_TARGET_BRANCH  # each arm names its own target; unset, the checker refuses
 
 python3 "$chk" --self-test | grep -q 'self-test green' || fail "self-test not green"
 
@@ -86,6 +89,20 @@ git -C "$tmp/ask-main" remote set-url origin "$tmp/nowhere"
 rc=0; env -u OMX_HAS_DEVEL python3 "$chk" "$tmp/ask-main" >/dev/null 2>&1 || rc=$?
 [ "$rc" = 2 ] || fail "unset OMX_HAS_DEVEL: an origin that cannot be read is not exit 2 (rc $rc)"
 
+# the scope: a main run (and a testing one) over a bare tree passes with the notice, a devel run over it fails
+for b in main testing; do
+  rc=0; OMX_HAS_DEVEL=true OMX_TARGET_BRANCH=$b python3 "$chk" "$tmp/bare" > "$tmp/scope-$b.out" 2>&1 || rc=$?
+  [ "$rc" = 0 ] || fail "a $b run over a bare tree is red (rc $rc): the gate must never turn a $b red"
+  grep -q "^::notice title=devel-base-check::.github/workflows/ci.yml: job test step 'Add the OpenMixer channel': add-openmixer reads no devel-channel" \
+    "$tmp/scope-$b.out" || fail "a $b run over a bare tree does not name the step in a notice: $(cat "$tmp/scope-$b.out")"
+done
+rc=0; OMX_HAS_DEVEL=true OMX_TARGET_BRANCH=devel python3 "$chk" "$tmp/bare" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 1 ] || fail "a devel run over a bare tree is not red (rc $rc)"
+rc=0; OMX_HAS_DEVEL=true OMX_TARGET_BRANCH=main python3 "$chk" "$tmp/missing" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] || fail "a main run over a step without devel-base is red (rc $rc)"
+grep -q "OMX_TARGET_BRANCH: \${{ github.base_ref || github.ref_name }}" "$act/action.yml" \
+  || fail "the action does not set OMX_TARGET_BRANCH from the pull request's base, else the ref"
+
 # this repository (it has a devel branch): every add-openmixer step reads the wave and its base waves
 OMX_HAS_DEVEL=true python3 "$chk" "$here" >/dev/null || fail "this repository's own workflows or actions: $(OMX_HAS_DEVEL=true python3 "$chk" "$here" 2>&1)"
 
@@ -99,17 +116,20 @@ grep -q 'uses: ./.github/actions/devel-base-check' "$here/.github/workflows/ci.y
 grep -q 'tests/devel-base-check.sh' "$here/.github/workflows/ci.yml" || fail "ci.yml does not run this test"
 
 # sabotage: each rule taken out of a copy must turn its self-test red and let the tree it should refuse through
-sabotage() { # name sed-expression tree-it-should-refuse [has-devel]
+sabotage() { # name sed-expression tree [has-devel [target [want-rc]]]: the copy's self-test is red and the tree gets want-rc (0)
   local s=$tmp/sab-$1.py
   sed -E "$2" "$chk" > "$s"
   cmp -s "$s" "$chk" && fail "sabotage $1 changed nothing (its pattern no longer matches the checker)"
   python3 "$s" --self-test >/dev/null 2>&1 && fail "sabotage $1: the self-test stayed green"
-  [ "$(run "$s" "$3" "${4:-false}")" = 0 ] || fail "sabotage $1: the tree $3 is still refused (the sabotage did not blind the rule)"
+  local rc=0; env -u OMX_TARGET_BRANCH OMX_HAS_DEVEL="${4:-false}" ${5:+OMX_TARGET_BRANCH=$5} python3 "$s" "$tmp/$3" >/dev/null 2>&1 || rc=$?
+  [ "$rc" = "${6:-0}" ] || fail "sabotage $1: the tree $3${5:+ on a $5 run} reads rc $rc, want ${6:-0} (the sabotage did not change what the rule does)"
 }
 sabotage no-missing-rule 's/^        if db == "":$/        if False:/' composite
 sabotage no-same-expression 's/if db != want:/if False:/' othercond
 sabotage no-step-recognised 's/return u.endswith\(".github\/actions\/add-openmixer"\)/return False/' missing
 sabotage no-bare-rule 's/^            if has_devel:  # a bare call/            if False:  # a bare call/' bare true
+sabotage refuse-everywhere 's/^    if target is None or target == "devel":$/    if True:/' bare true main 1
+sabotage refuse-nowhere 's/^    if target is None or target == "devel":$/    if False:/' bare true devel 0
 sabotage no-composite 's/judge_steps\(rel, "composite action"/(lambda *a: None)(rel, "composite action"/' composite
 
-echo "devel-base-check: GREEN (self-test, 8 planted trees, the devel-branch rule and its origin lookup, this repository, wiring, 5 sabotages)"
+echo "devel-base-check: GREEN (self-test, 8 planted trees, the devel-branch rule and its origin lookup, this repository, wiring, 7 sabotages, the target-branch scope)"

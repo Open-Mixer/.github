@@ -212,7 +212,8 @@ is written. The coordinator dispatches it once a wave is DONE.
 `tests/devel-push-staging.sh` (a wave's version check), `tests/staging-channel.sh` (the three pushes, by exact match)
 and `tests/publish_only_by_tag.py` (`SIGN_DEVEL`: a devel push is not a release). Every caller's `public-sources-check.yml` runs `devel-base-check`: a step passing
 `devel-channel` to `add-openmixer` without `devel-base` (the same expression with `vars.OMX_DEVEL_BASE`) is refused by name,
-and in a repository with a devel branch so is a step passing neither (`tests/devel-base-check.sh`).
+and in a repository with a devel branch so is a step passing neither; it refuses only where the run's target branch is
+devel and reports a notice elsewhere, so a main is never red (`tests/devel-base-check.sh`).
 
 ## The staging channel of a release wave
 

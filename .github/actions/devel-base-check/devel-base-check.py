@@ -18,6 +18,11 @@
 # caller's origin, git ls-remote); unset, the checker asks the root's origin itself, and an origin it cannot read is
 # exit 2, never a pass.
 #
+# The check never turns a main red: it refuses only where the run's target branch is devel (OMX_TARGET_BRANCH, which the
+# action sets to the pull request's base or else the pushed or dispatched ref: a pull request into devel, a push to
+# devel, a dispatch on devel). On any other target (main, testing, a tag) each finding is a ::notice:: and the exit is 0:
+# a main gets the fixed workflows when devel promotes. Unset (a desk run), it refuses.
+#
 # Read: .github/workflows/*.y{a,}ml (every job's steps) and .github/actions/**/action.y{a,}ml (a composite action's
 # steps). A step is an add-openmixer step when its uses names .github/actions/add-openmixer (the shared action at any
 # ref, or the local ./.github/actions/add-openmixer).
@@ -263,6 +268,7 @@ def self_test():
             if rc != want:
                 print(f"self-test FAIL {name}: rc {rc}, want {want}", file=sys.stderr)
                 fails += 1
+        fails += scope_self_test(t)
         os.environ["OMX_HAS_DEVEL"] = "false"
         os.makedirs(os.path.join(t, "nothing"))
         with open(os.devnull, "w") as null:
@@ -282,11 +288,67 @@ def self_test():
     if fails:
         print(f"devel-base-check self-test: {fails} arm(s) failed", file=sys.stderr)
         return 1
-    print(f"devel-base-check self-test green ({len(cases) + 1} arms)")
+    print(f"devel-base-check self-test green ({len(cases) + 5} arms)")
     return 0
+
+
+def scoped(root):
+    """check(root), refusing only where the run's target branch is devel; elsewhere every finding is a notice"""
+    target = os.environ.get("OMX_TARGET_BRANCH")
+    if target is None or target == "devel":
+        return check(root)
+    import io
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    so, se = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = buf_out, buf_err
+    try:
+        rc = check(root)
+    finally:
+        sys.stdout, sys.stderr = so, se
+    if rc == 0:
+        sys.stdout.write(buf_out.getvalue())
+        return 0
+    for line in (buf_out.getvalue() + buf_err.getvalue()).splitlines():
+        print(f"::notice title=devel-base-check::{line}")
+    print(f"devel-base-check: the run's target branch is {target!r}, not devel: the findings above are notices, the check "
+          "passes (it refuses on a pull request into devel, a push to devel and a dispatch on devel)")
+    return 0
+
+
+def scope_self_test(t):
+    """a bare tree in a repository with a devel branch: a devel run refuses it, a main run passes with a notice"""
+    import io
+    d = os.path.join(t, "scope")
+    os.makedirs(os.path.join(d, ".github/workflows"))
+    with open(os.path.join(d, ".github/workflows/ci.yml"), "w", encoding="utf-8") as fh:
+        fh.write("jobs:\n  a:\n    steps:\n      - uses: Open-Mixer/.github/.github/actions/add-openmixer@openmixer-v1\n")
+    fails, saved = 0, {k: os.environ.get(k) for k in ("OMX_HAS_DEVEL", "OMX_TARGET_BRANCH")}
+    os.environ["OMX_HAS_DEVEL"] = "true"
+    for target, want, notice in (("devel", 1, False), ("main", 0, True), ("testing", 0, True), (None, 1, False)):
+        if target is None:
+            os.environ.pop("OMX_TARGET_BRANCH", None)
+        else:
+            os.environ["OMX_TARGET_BRANCH"] = target
+        buf = io.StringIO()
+        so, se = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = buf
+        try:
+            rc = scoped(d)
+        finally:
+            sys.stdout, sys.stderr = so, se
+        got_notice = "::notice title=devel-base-check::" in buf.getvalue() and "no devel-channel and no devel-base" in buf.getvalue()
+        if rc != want or got_notice != notice:
+            print(f"self-test FAIL scope {target}: rc {rc} notice {got_notice}, want rc {want} notice {notice}", file=sys.stderr)
+            fails += 1
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    return fails
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
         sys.exit(self_test())
-    sys.exit(check(sys.argv[1] if len(sys.argv) > 1 else "."))
+    sys.exit(scoped(sys.argv[1] if len(sys.argv) > 1 else "."))
